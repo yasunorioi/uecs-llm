@@ -1,14 +1,14 @@
 # uecs-llm
 
-LLM-based greenhouse environment control with UECS-CCM integration.
+LLM による温室環境制御システム（UECS-CCM 連携）
 
-## Architecture
+## アーキテクチャ
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ x86 Mini PC (nipogi.local)                              │
 │  llama-server (LFM2.5 1.2B)                            │
-│  agriha_control.py  ← cron 5min                        │
+│  agriha_control.py  ← cron 5分間隔                     │
 │    └→ REST API → unipi-daemon                          │
 └───────────────────────┬─────────────────────────────────┘
                         │ HTTP / WireGuard VPN
@@ -16,99 +16,99 @@ LLM-based greenhouse environment control with UECS-CCM integration.
 │ Raspberry Pi (AgriHA OS)                                │
 │  unipi-daemon                                          │
 │    ├ sensor_loop   : DS18B20 + Misol WH65LP → MQTT     │
-│    ├ ccm_receiver  : UECS-CCM multicast → MQTT         │
-│    ├ mqtt_bridge   : MQTT ↔ MCP23008 I2C relay         │
-│    ├ gpio_watch    : DI07-14 emergency override        │
-│    └ rest_api      : FastAPI REST-MQTT converter       │
-│  Mosquitto (MQTT broker)                               │
+│    ├ ccm_receiver  : UECS-CCM マルチキャスト → MQTT     │
+│    ├ mqtt_bridge   : MQTT ↔ MCP23008 I2C リレー        │
+│    ├ gpio_watch    : DI07-14 緊急オーバーライド         │
+│    └ rest_api      : FastAPI REST-MQTT 変換             │
+│  Mosquitto (MQTT ブローカー)                            │
 └───────────────────────┬─────────────────────────────────┘
                         │ I2C / GPIO / 1-Wire / RS485
 ┌───────────────────────▼─────────────────────────────────┐
-│ UniPi 1.1 Hardware                                      │
-│  MCP23008 relay (8ch) + DS18B20 + GPIO DI + Misol RS485│
+│ UniPi 1.1 ハードウェア                                  │
+│  MCP23008 リレー(8ch) + DS18B20 + GPIO DI + Misol RS485│
 └─────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────┐
-│ VPS (optional)                                          │
-│  LINE Bot → Ollama (via VPN)                            │
+│ VPS（オプション）                                       │
+│  LINE Bot → Ollama (VPN経由)                            │
 └─────────────────────────────────────────────────────────┘
 ```
 
-## Quick Start
+## クイックスタート
 
-### 1. LLM Control Server (x86 Mini PC)
+### 1. LLM 制御サーバー（x86 Mini PC）
 
 ```bash
 git clone https://github.com/yasunorioi/uecs-llm.git
 cd uecs-llm
 make install-llm-server
 
-# Download LFM2.5 model
+# LFM2.5 モデルのダウンロード
 # https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF
 
-# Start llama-server
+# llama-server の起動
 sudo cp systemd/agriha-llm.service /etc/systemd/system/
 sudo systemctl enable --now agriha-llm
 
-# Setup 5-min control loop
+# 5分間隔の制御ループを設定
 sudo cp systemd/agriha-control.cron /etc/cron.d/agriha-control
 ```
 
-### 2. UniPi Daemon (Raspberry Pi)
+### 2. UniPi デーモン（Raspberry Pi）
 
 ```bash
 cd uecs-llm
 make install-pi-daemon
 
-# Copy and edit config
+# 設定ファイルをコピーして編集
 sudo mkdir -p /etc/agriha
 sudo cp config/unipi_daemon.example.yaml /etc/agriha/unipi_daemon.yaml
 
-# Start MQTT broker
+# MQTT ブローカーの起動
 cd docker && docker compose up -d && cd ..
 
-# Start daemon
+# デーモンの起動
 sudo cp systemd/unipi-daemon.service /etc/systemd/system/
 sudo systemctl enable --now unipi-daemon
 ```
 
-### 3. LINE Bot (VPS, optional)
+### 3. LINE Bot（VPS、オプション）
 
 ```bash
 cd uecs-llm/linebot
 cp .env.example .env
-# Edit .env with your LINE credentials
+# .env に LINE の認証情報を記入
 docker compose up -d
 ```
 
-### 4. SD Card Image (from scratch)
+### 4. SD カードイメージ（ゼロから構築）
 
 ```bash
 cd uecs-llm/image
 sudo ./build_image.sh raspios-bookworm-arm64-lite.img
-# Flash to SD card and boot
+# SD カードに書き込んで起動
 ```
 
-## Components
+## コンポーネント
 
-| Component | Location | Target | Description |
-|-----------|----------|--------|-------------|
-| `uecs_llm` | `src/uecs_llm/` | x86 / Pi5 | LLM control loop (agriha_control.py) |
-| `unipi_daemon` | `src/unipi_daemon/` | RPi | Hardware daemon (I2C, GPIO, MQTT, REST) |
-| `linebot` | `linebot/` | VPS | LINE Bot with Ollama integration |
-| `image` | `image/` | Build host | Raspbian custom image builder |
-| `config` | `config/` | — | Configuration templates |
-| `systemd` | `systemd/` | — | Service files and cron |
+| コンポーネント | 場所 | 対象環境 | 説明 |
+|---------------|------|---------|------|
+| `uecs_llm` | `src/uecs_llm/` | x86 / Pi5 | LLM 制御ループ (agriha_control.py) |
+| `unipi_daemon` | `src/unipi_daemon/` | RPi | ハードウェアデーモン (I2C, GPIO, MQTT, REST) |
+| `linebot` | `linebot/` | VPS | LINE Bot（Ollama 連携） |
+| `image` | `image/` | ビルドホスト | Raspbian カスタムイメージビルダー |
+| `config` | `config/` | — | 設定テンプレート |
+| `systemd` | `systemd/` | — | サービスファイル・cron |
 
-## Tests
+## テスト
 
 ```bash
 make test
-# or
+# または
 pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-## License
+## ライセンス
 
 MIT
