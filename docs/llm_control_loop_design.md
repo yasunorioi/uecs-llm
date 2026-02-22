@@ -1105,7 +1105,7 @@ nuc.local上にブラウザからアクセスできるChat UIを設置する。
 ブラウザ (殿のPC/スマホ)
   │  http://nuc.local:8501
   ▼
-FastAPI (:8501, nuclocal)
+FastAPI (:8501, nuc.local)
   │  ├─ GET /       → チャットUI (HTML)
   │  ├─ POST /chat  → llama-server /v1/chat/completions をプロキシ
   │  │               system_prompt.txt を自動注入

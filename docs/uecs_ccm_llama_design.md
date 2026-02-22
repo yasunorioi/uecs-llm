@@ -4,7 +4,7 @@
 > **Date**: 2026-02-20
 > **Status**: Draft（殿レビュー待ち）
 > **Model**: LFM2.5-1.2B-Instruct (Liquid AI)
-> **HW**: vx2.local / nipogi.local / **Pi5 (8GB)** ← 新規追加
+> **HW**: vx2.local / nuc.local / **Pi5 (8GB)** ← 新規追加
 
 ---
 
@@ -147,7 +147,7 @@ huggingface-cli download LiquidAI/LFM2.5-1.2B-Instruct-GGUF \
 | ランタイム | ~0.3-0.5 GB |
 | **合計** | **~1.0-1.5 GB** |
 
-全ターゲットHW（vx2/nipogi/Pi5）で余裕。
+全ターゲットHW（vx2/nuc/Pi5）で余裕。
 
 ### 1.5 非同期対応
 
@@ -338,7 +338,7 @@ systemd Restart=always, RestartSec=10
 
 ### 2.6 ターゲットHWスペックと性能見積もり
 
-| 項目 | vx2.local | nipogi.local | **Pi5 (8GB)** |
+| 項目 | vx2.local | nuc.local | **Pi5 (8GB)** |
 |------|----------|-------------|---------------|
 | CPU | Ryzen 5 7430U (6C/12T) | Intel N150 (4C/4T) | ARM Cortex-A76 (4C) |
 | RAM | 30 GB | 16 GB | **8 GB** |

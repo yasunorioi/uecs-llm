@@ -6,7 +6,7 @@ LLM による温室環境制御システム（UECS-CCM 連携）
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ x86 Mini PC (nipogi.local)                              │
+│ x86 Mini PC (nuc.local)                              │
 │  llama-server (LFM2.5 1.2B)                            │
 │  agriha_control.py  ← cron 5分間隔                     │
 │    └→ REST API → unipi-daemon                          │
