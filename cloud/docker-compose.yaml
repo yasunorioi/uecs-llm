@@ -1,9 +1,10 @@
 # AgriHA Cloud Server — VPS用 Docker Compose
 #
 # 構成:
-#   InfluxDB + Telegraf + Grafana + LINE Bot (4サービス)
+#   InfluxDB + Telegraf + Grafana + LINE Bot + Camera Web (5サービス)
 #   Telegraf は VPN経由で RPi の Mosquitto (MQTT) に接続
 #   Ollama は殿のデスクトップPC (WireGuard VPN経由, OLLAMA_URL で参照)
+#   Camera Web は RPi からscpされた画像を配信
 #
 # 使用方法:
 #   cd cloud
@@ -13,6 +14,7 @@
 # 前提:
 #   - WireGuard VPN (wg0, 10.10.0.0/24) は別途管理
 #   - Telegraf は VPN経由で RPi の Mosquitto (MQTT_BROKER_HOST) に接続
+#   - カメラ画像は RPi から scp で ~/pi-camera/ に30分ごと送信される
 
 services:
   # ========================================
@@ -102,6 +104,21 @@ services:
       - RPI_API_TIMEOUT=${RPI_API_TIMEOUT:-10}
     volumes:
       - linebot_data:/app/data
+    networks:
+      - agriha-net
+
+  # ========================================
+  # Camera Web — RPiカメラ画像の配信
+  # RPi から scp で送られた画像を nginx で静的配信
+  # ========================================
+  camera-web:
+    image: nginx:alpine
+    container_name: agriha-camera-web
+    restart: unless-stopped
+    ports:
+      - "8888:80"
+    volumes:
+      - ${CAMERA_IMAGE_DIR:-./pi-camera}:/usr/share/nginx/html:ro
     networks:
       - agriha-net
 

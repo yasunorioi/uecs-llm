@@ -144,8 +144,9 @@ muteTimes:
 # Alert Rules（アラートルール）
 # -----------------------------------------------------------------------------
 # datasourceUid: influxdb-agriha（influxdb.yaml で定義）
-# bucket: sensors / measurement: greenhouse_data（telegraf.conf の name_override）
-# sensor_type タグ: MQTT トピック greenhouse/{house_id}/sensor/{sensor_type} から抽出
+# bucket: sensors
+# measurements: ccm_sensor, ccm_control, weather_misol, ds18b20, relay_state
+# ccm_type タグ: MQTT トピック agriha/{house_id}/ccm/sensor/{ccm_type} から抽出
 # _field: "value"（JSON payload の数値フィールド）
 # 閾値は仮値。殿が後で調整する前提。
 # -----------------------------------------------------------------------------
@@ -176,8 +177,8 @@ groups:
               query: |
                 from(bucket: "sensors")
                   |> range(start: -5m)
-                  |> filter(fn: (r) => r._measurement == "greenhouse_data")
-                  |> filter(fn: (r) => r.sensor_type == "InAirTemp")
+                  |> filter(fn: (r) => r._measurement == "ccm_sensor")
+                  |> filter(fn: (r) => r.ccm_type == "InAirTemp")
                   |> filter(fn: (r) => r._field == "value")
                   |> last()
           - refId: B
@@ -243,8 +244,8 @@ groups:
               query: |
                 from(bucket: "sensors")
                   |> range(start: -5m)
-                  |> filter(fn: (r) => r._measurement == "greenhouse_data")
-                  |> filter(fn: (r) => r.sensor_type == "InAirTemp")
+                  |> filter(fn: (r) => r._measurement == "ccm_sensor")
+                  |> filter(fn: (r) => r.ccm_type == "InAirTemp")
                   |> filter(fn: (r) => r._field == "value")
                   |> last()
           - refId: B
@@ -310,8 +311,8 @@ groups:
               query: |
                 from(bucket: "sensors")
                   |> range(start: -5m)
-                  |> filter(fn: (r) => r._measurement == "greenhouse_data")
-                  |> filter(fn: (r) => r.sensor_type == "InAirHumid")
+                  |> filter(fn: (r) => r._measurement == "ccm_sensor")
+                  |> filter(fn: (r) => r.ccm_type == "InAirHumid")
                   |> filter(fn: (r) => r._field == "value")
                   |> last()
           - refId: B
@@ -377,7 +378,7 @@ groups:
               query: |
                 from(bucket: "sensors")
                   |> range(start: -5m)
-                  |> filter(fn: (r) => r._measurement == "greenhouse_data")
+                  |> filter(fn: (r) => r._measurement == "ccm_sensor")
                   |> filter(fn: (r) => r._field == "value")
                   |> group()
                   |> count()
@@ -452,8 +453,8 @@ groups:
               query: |
                 from(bucket: "sensors")
                   |> range(start: -30m)
-                  |> filter(fn: (r) => r._measurement == "greenhouse_data")
-                  |> filter(fn: (r) => r.sensor_type == "Irriopr")
+                  |> filter(fn: (r) => r._measurement == "ccm_control")
+                  |> filter(fn: (r) => r.ccm_type == "testFLOW")
                   |> filter(fn: (r) => r._field == "value")
                   |> min()
           - refId: B
@@ -528,8 +529,8 @@ groups:
               query: |
                 from(bucket: "sensors")
                   |> range(start: -24h)
-                  |> filter(fn: (r) => r._measurement == "greenhouse_data")
-                  |> filter(fn: (r) => r.sensor_type == "InAirTemp")
+                  |> filter(fn: (r) => r._measurement == "ccm_sensor")
+                  |> filter(fn: (r) => r.ccm_type == "InAirTemp")
                   |> filter(fn: (r) => r._field == "value")
                   |> last()
           - refId: B
