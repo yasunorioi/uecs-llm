@@ -100,6 +100,56 @@ sudo ./build_image.sh raspios-bookworm-arm64-lite.img
 | `config` | `config/` | — | 設定テンプレート |
 | `systemd` | `systemd/` | — | サービスファイル・cron |
 
+## tmux ダッシュボード
+
+LLM 制御サーバー（nuc.local）で tmux ベースの監視・対話ダッシュボードを起動できます。
+
+```bash
+./scripts/start-tmux.sh
+```
+
+```
+┌──────────────────┬──────────────────┐
+│ 0: llama-server  │ 2: unipi-daemon  │
+│    ログ          │    制御ログ       │
+├──────────────────┼──────────────────┤
+│ 1: MQTT monitor  │ 3: REST API      │
+│   (RPi経由)      │    状態監視       │
+├──────────────────┴──────────────────┤
+│ 4: LLM Chat (対話窓)               │
+└─────────────────────────────────────┘
+```
+
+| ペイン | 内容 |
+|--------|------|
+| 0 | llama-server のジャーナルログ |
+| 1 | RPi の MQTT ブローカーをサブスクライブ（全トピック） |
+| 2 | agriha-control（cron 制御ループ）のログ |
+| 3 | RPi の REST API からセンサー値・ステータスを定期取得 |
+| 4 | llama-server と対話できるチャット窓（system_prompt.txt 自動注入） |
+
+### 操作方法
+
+```bash
+# セッションに接続
+tmux attach -t agriha
+
+# ペイン間の移動
+Ctrl+b → 矢印キー
+
+# セッションからデタッチ（バックグラウンド維持）
+Ctrl+b → d
+
+# セッション終了
+tmux kill-session -t agriha
+```
+
+### 環境変数で設定を上書き
+
+```bash
+RPI_HOST=10.10.0.10 LLAMA_URL=http://localhost:8081 ./scripts/start-tmux.sh
+```
+
 ## テスト
 
 ```bash
