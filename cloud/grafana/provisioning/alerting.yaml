@@ -7,7 +7,7 @@
 #   docker compose restart grafana で全設定が反映される
 #
 # 注意:
-#   - LINE_CHANNEL_TOKEN, LINE_USER_ID は環境変数で設定（docker-compose.yaml の env_file）
+#   - LINE_CHANNEL_ACCESS_TOKEN, LINE_USER_ID は環境変数で設定（docker-compose.yaml の env_file）
 #   - datasourceUid は influxdb.yaml の uid: influxdb-agriha と一致
 #   - Custom Payload 機能は Grafana v12.0+ で利用可能（grafana/grafana-oss:latest で対応）
 #   - 閾値は仮値。殿が後で調整する前提
@@ -29,7 +29,7 @@ contactPoints:
           url: https://api.line.me/v2/bot/message/push
           httpMethod: POST
           authorization_scheme: Bearer
-          authorization_credentials: ${LINE_CHANNEL_TOKEN}
+          authorization_credentials: ${LINE_CHANNEL_ACCESS_TOKEN}
           maxAlerts: 0
           # Custom Payload（Grafana v12.0+, PR #103818）
           # LINE Messaging API Push Message 形式で送信
