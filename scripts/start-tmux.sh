@@ -53,7 +53,7 @@ tmux split-window -t "${SESSION}:main.0" -v
 tmux split-window -t "${SESSION}:main.2" -v
 
 # Chat窓のサイズ調整
-tmux resize-pane -t "${SESSION}:main.4" -y 12
+tmux resize-pane -t "${SESSION}:main.4" -y 15
 
 # コマンド送信
 # pane 0: llama-server ログ (systemdで稼働中)
