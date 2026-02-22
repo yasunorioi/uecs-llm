@@ -3,7 +3,7 @@
 > **Version**: 2.0
 > **Date**: 2026-02-21
 > **Status**: Draft
-> **HW**: nipogi.local (Intel N150, 16GB RAM, Ubuntu, USB-SSD起動)
+> **HW**: nuc.local (Intel N150, 16GB RAM, Ubuntu, USB-SSD起動)
 
 ---
 
@@ -43,7 +43,7 @@ ArSprout 観測ノード (192.168.1.70)
 agriha_control.py (接着層 — LFM2.5 tool calling ループ)
     │  OpenAI互換API (localhost:8081)
     ▼
-llama-server (LFM2.5 1.2B Q4, nipogi.local)
+llama-server (LFM2.5 1.2B Q4, nuc.local)
     │  tool_calls → REST API POST /api/relay/{ch}
     ▼
 unipi-daemon REST API → MQTT → MqttRelayBridge → I2C リレー
@@ -68,7 +68,7 @@ unipi-daemon REST API → MQTT → MqttRelayBridge → I2C リレー
 3. [システムプロンプト設計](#3-システムプロンプト設計)
 4. [ステート管理](#4-ステート管理)
 5. [応答速度見積もり](#5-応答速度見積もり)
-6. [nipogi.localセットアップ手順](#6-nipogilocalセットアップ手順)
+6. [nuc.localセットアップ手順](#6-nuclocalセットアップ手順)
 7. [安全制御設計](#7-安全制御設計)
 8. [アクチュエータ制御（UniPiリレー）](#8-アクチュエータ制御unipiリレー)
 9. [リレーチャンネル割当](#9-リレーチャンネル割当)
@@ -148,7 +148,7 @@ LLMがどのツールをどの順番で呼ぶかはLLM自身が判断する。
    - LLMが自律判断で安全制御を実行
 
 3. **フォールバック: リレーラッチ**
-   - LLM/nipogi.localが停止しても、MCP23008リレーは最後の状態を保持
+   - LLM/nuc.localが停止しても、MCP23008リレーは最後の状態を保持
    - 灌水ON放置を防ぐため、duration_secの指定を必須とする
    - MqttRelayBridgeの自動OFFタイマーが最終防壁
 
@@ -496,10 +496,10 @@ if __name__ == "__main__":
 
 | モード | 仕組み | 用途 |
 |--------|--------|------|
-| **LAN直接** | nipogi.localからunipi-daemon REST API (http://10.10.0.10:8080) にHTTP | nipogi.localがハウスLAN内にある場合 |
-| **VPN経由** | WireGuard VPN越しに同一REST APIにアクセス | nipogi.localが遠隔の場合 |
+| **LAN直接** | nuc.localからunipi-daemon REST API (http://10.10.0.10:8080) にHTTP | nuc.localがハウスLAN内にある場合 |
+| **VPN経由** | WireGuard VPN越しに同一REST APIにアクセス | nuc.localが遠隔の場合 |
 
-**推奨**: ハウスLAN内にnipogi.localを設置し、LAN直接モードで運用。
+**推奨**: ハウスLAN内にnuc.localを設置し、LAN直接モードで運用。
 
 ---
 
@@ -754,11 +754,11 @@ llama-serverはGGUF形式のモデルを `-m` オプションで指定するだ�
 
 ---
 
-## 6. nipogi.localセットアップ手順
+## 6. nuc.localセットアップ手順
 
 ### 6.1 前提条件
 
-- nipogi.local: Intel N150, 16GB RAM, USB-SSDからUbuntu 24.04起動
+- nuc.local: Intel N150, 16GB RAM, USB-SSDからUbuntu 24.04起動
 - ハウスLAN (192.168.1.0/24) に有線/WiFi接続済み
 - unipi-daemon REST API (http://10.10.0.10:8080) に到達可能
 
@@ -884,7 +884,7 @@ tail -f /var/log/agriha/control.log
 
 ┌─────────────────────────────────────────────────────────┐
 │ Layer 3: フォールバック（リレーラッチ + 自動OFFタイマー）│
-│   - LLM/nipogi.local停止 → リレーは最後の状態を保持     │
+│   - LLM/nuc.local停止 → リレーは最後の状態を保持     │
 │   - MqttRelayBridge duration_sec タイマー:               │
 │     灌水ONなどは必ず自動OFF時間を指定                    │
 │   - 最悪ケース: 灌水ON放置 → duration_sec で自動OFF     │
@@ -906,14 +906,14 @@ LLMはセンサーデータを読み取り、環境制御の判断を行う唯�
 ```
 正常運転（LLMが5分ごとに制御判断）
     │
-    │ nipogi.local停止 / ネットワーク断
+    │ nuc.local停止 / ネットワーク断
     ▼
 リレー現状維持（MCP23008はラッチ型）
     │ ├─ 灌水ON中 → duration_sec タイマーで自動OFF
     │ ├─ 換気扇ON中 → 回しっぱなし（電力消費のみ、安全上問題なし）
     │ └─ 全OFF中 → そのまま（最も安全な状態）
     │
-    │ nipogi.local復旧
+    │ nuc.local復旧
     │ → agriha_control.py cron再開
     │ → GET /api/status でリレー現状を確認
     │ → LLMが状況に応じて制御再開
@@ -1067,7 +1067,7 @@ ch1-3 は未割当。以下の用途に割当可能:
 
 ### 11.1 目的
 
-nipogi.local上にブラウザからアクセスできるChat UIを設置する。
+nuc.local上にブラウザからアクセスできるChat UIを設置する。
 殿がLLM（llama-server / LFM2.5）と対話してシステムプロンプトを育てるためのツール。
 
 ```
@@ -1103,15 +1103,15 @@ nipogi.local上にブラウザからアクセスできるChat UIを設置する�
 
 ```
 ブラウザ (殿のPC/スマホ)
-  │  http://nipogi.local:8501
+  │  http://nuc.local:8501
   ▼
-FastAPI (:8501, nipogi.local)
+FastAPI (:8501, nuclocal)
   │  ├─ GET /       → チャットUI (HTML)
   │  ├─ POST /chat  → llama-server /v1/chat/completions をプロキシ
   │  │               system_prompt.txt を自動注入
   │  └─ GET /prompt → 現在のシステムプロンプト表示
   ▼
-llama-server (:8081, nipogi.local)
+llama-server (:8081, nuc.local)
   │  LFM2.5 1.2B Q4
   ▼
 レスポンス（ストリーミング）
@@ -1258,13 +1258,13 @@ EOF
 sudo systemctl enable --now agriha-chat
 
 # === Step 4: 動作確認 ===
-# ブラウザで http://nipogi.local:8501 にアクセス
+# ブラウザで http://nuc.local:8501 にアクセス
 # 「内温が38℃です。どうしますか？」と質問してLLMの回答を確認
 ```
 
 ### 11.6 使い方（殿向け）
 
-1. ブラウザで `http://nipogi.local:8501` を開く
+1. ブラウザで `http://nuc.local:8501` を開く
 2. 「内温38℃、外気温32℃、風速3m/s。どう制御する？」と質問
 3. LLMの回答を確認。不十分なら `/etc/agriha/system_prompt.txt` を編集
 4. ブラウザをリロード（新しいプロンプトが自動反映）
@@ -1481,3 +1481,4 @@ ArSproutのCCM制御パケット受信・アクチュエータ駆動機能が**�
 | 判断履歴DB control_log.db（§4） | 変更なし |
 | Chat窓（§11） | 変更なし |
 | 栽培マニュアルOCR（§12） | 変更なし |
+
