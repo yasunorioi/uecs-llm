@@ -1,0 +1,123 @@
+# AgriHA Cloud Server — VPS用 Docker Compose
+#
+# 構成:
+#   InfluxDB + Telegraf + Grafana + LINE Bot (4サービス)
+#   Telegraf は VPN経由で RPi の Mosquitto (MQTT) に接続
+#   Ollama は殿のデスクトップPC (WireGuard VPN経由, OLLAMA_URL で参照)
+#
+# 使用方法:
+#   cd cloud
+#   cp .env.example .env   # 認証情報を記入
+#   docker compose up -d
+#
+# 前提:
+#   - WireGuard VPN (wg0, 10.10.0.0/24) は別途管理
+#   - Telegraf は VPN経由で RPi の Mosquitto (MQTT_BROKER_HOST) に接続
+
+services:
+  # ========================================
+  # InfluxDB - 時系列データベース
+  # ========================================
+  influxdb:
+    image: influxdb:2.7
+    container_name: agriha-influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    environment:
+      - TZ=Asia/Tokyo
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUXDB_ADMIN_PASSWORD}
+      - DOCKER_INFLUXDB_INIT_ORG=agriha
+      - DOCKER_INFLUXDB_INIT_BUCKET=sensors
+      - DOCKER_INFLUXDB_INIT_RETENTION=30d
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_ADMIN_TOKEN}
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+      - influxdb_config:/etc/influxdb2
+    networks:
+      - agriha-net
+
+  # ========================================
+  # Telegraf - MQTT→InfluxDB ブリッジ
+  # RPi(Mosquitto) → VPN → Telegraf → InfluxDB
+  # ========================================
+  telegraf:
+    image: telegraf:latest
+    container_name: agriha-telegraf
+    restart: unless-stopped
+    depends_on:
+      - influxdb
+    environment:
+      - TZ=Asia/Tokyo
+      - INFLUXDB_TOKEN=${INFLUXDB_ADMIN_TOKEN}
+      - MQTT_BROKER_HOST=${MQTT_BROKER_HOST:-10.10.0.10}
+    volumes:
+      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+    networks:
+      - agriha-net
+
+  # ========================================
+  # Grafana - 可視化・監視ダッシュボード
+  # ========================================
+  grafana:
+    image: grafana/grafana-oss:latest
+    container_name: agriha-grafana
+    restart: unless-stopped
+    depends_on:
+      - influxdb
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Tokyo
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - agriha-net
+
+  # ========================================
+  # LINE Bot - Webhook受信 + Ollama連携
+  # Ollamaは殿のデスクトップPC (OLLAMA_URL環境変数で指定)
+  # ========================================
+  linebot:
+    build: ../linebot
+    container_name: agriha-linebot
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+    env_file:
+      - .env
+    environment:
+      - OLLAMA_URL=${OLLAMA_URL}
+      - MODEL_NAME=${MODEL_NAME}
+      - RPI_API_URL=${RPI_API_URL:-http://10.10.0.10:8080}
+      - RPI_API_KEY=${RPI_API_KEY:-}
+      - RPI_API_TIMEOUT=${RPI_API_TIMEOUT:-10}
+    volumes:
+      - linebot_data:/app/data
+    networks:
+      - agriha-net
+
+networks:
+  agriha-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.29.0.0/16
+
+volumes:
+  influxdb_data:
+    name: agriha_influxdb_data
+  influxdb_config:
+    name: agriha_influxdb_config
+  grafana_data:
+    name: agriha_grafana_data
+  linebot_data:
+    name: agriha_linebot_data

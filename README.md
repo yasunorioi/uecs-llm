@@ -30,6 +30,9 @@ LLM による温室環境制御システム（UECS-CCM 連携）
 
 ┌─────────────────────────────────────────────────────────┐
 │ VPS（オプション）                                       │
+│  Telegraf : MQTT→InfluxDB ブリッジ (VPN経由)            │
+│  InfluxDB : 時系列データベース                           │
+│  Grafana  : ダッシュボード＋アラート (LINE通知)          │
 │  LINE Bot → Ollama (VPN経由)                            │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -72,12 +75,32 @@ sudo cp systemd/unipi-daemon.service /etc/systemd/system/
 sudo systemctl enable --now unipi-daemon
 ```
 
-### 3. LINE Bot（VPS、オプション）
+### 3. クラウドサーバー（VPS）
+
+VPS に InfluxDB + Telegraf + Grafana + LINE Bot をまとめてデプロイします。
+Telegraf は WireGuard VPN 経由で RPi の Mosquitto (MQTT) に接続し、センサーデータを InfluxDB に蓄積します。
+
+```bash
+cd uecs-llm/cloud
+cp .env.example .env
+# .env に認証情報を記入（下記「LINE API 認証情報の取得」参照）
+docker compose up -d
+```
+
+| サービス | ポート | 説明 |
+|---------|--------|------|
+| InfluxDB | 8086 | 時系列データベース |
+| Telegraf | — | MQTT→InfluxDB ブリッジ（VPN経由でRPi接続） |
+| Grafana | 3000 | ダッシュボード・アラート（LINE通知） |
+| LINE Bot | 8443 | Webhook受信 + Ollama連携 |
+
+#### LINE Bot 単体（Ollama同梱）
+
+Ollama を VPS 上で動かす場合は `linebot/` の docker-compose を使用：
 
 ```bash
 cd uecs-llm/linebot
 cp .env.example .env
-# .env に LINE の認証情報を記入
 docker compose up -d
 ```
 
@@ -89,6 +112,37 @@ sudo ./build_image.sh raspios-bookworm-arm64-lite.img
 # SD カードに書き込んで起動
 ```
 
+## LINE API 認証情報の取得
+
+LINE Bot を利用するには LINE Developers Console でチャネルを作成し、認証情報を取得する必要があります。
+
+### 手順
+
+1. [LINE Developers Console](https://developers.line.biz/console/) にログイン
+2. **プロバイダーを作成**（初回のみ）
+3. **Messaging API チャネルを作成**
+   - チャネル名: 任意（例: `AgriHA Bot`）
+   - チャネル説明: 任意
+4. **チャネルシークレットを取得**
+   - チャネル基本設定 → チャネルシークレット → `.env` の `LINE_CHANNEL_SECRET` に記入
+5. **チャネルアクセストークン（長期）を発行**
+   - Messaging API設定 → チャネルアクセストークン → 「発行」 → `.env` の `LINE_CHANNEL_ACCESS_TOKEN` に記入
+6. **あなたのユーザーIDを取得**
+   - チャネル基本設定 → あなたのユーザーID → `.env` の `LINE_USER_ID` に記入
+   - ※ Grafana アラートの LINE 通知先としても使用
+7. **Webhook URLを設定**
+   - Messaging API設定 → Webhook URL → `https://your-vps-domain:8443/callback`
+   - Webhookの利用 → ON
+   - 応答メッセージ → OFF（Bot が直接返答するため）
+
+### .env 設定例
+
+```bash
+LINE_CHANNEL_SECRET=abc123def456...
+LINE_CHANNEL_ACCESS_TOKEN=XXXXXXXXXXX...
+LINE_USER_ID=U1234567890abcdef...
+```
+
 ## コンポーネント
 
 | コンポーネント | 場所 | 対象環境 | 説明 |
@@ -96,6 +150,7 @@ sudo ./build_image.sh raspios-bookworm-arm64-lite.img
 | `uecs_llm` | `src/uecs_llm/` | x86 / Pi5 | LLM 制御ループ (agriha_control.py) |
 | `unipi_daemon` | `src/unipi_daemon/` | RPi | ハードウェアデーモン (I2C, GPIO, MQTT, REST) |
 | `linebot` | `linebot/` | VPS | LINE Bot（Ollama 連携） |
+| `cloud` | `cloud/` | VPS | InfluxDB + Telegraf + Grafana + LINE Bot（Docker Compose） |
 | `image` | `image/` | ビルドホスト | Raspbian カスタムイメージビルダー |
 | `config` | `config/` | — | 設定テンプレート |
 | `systemd` | `systemd/` | — | サービスファイル・cron |

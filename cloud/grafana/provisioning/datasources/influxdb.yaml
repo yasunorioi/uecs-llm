@@ -1,0 +1,16 @@
+apiVersion: 1
+
+datasources:
+  - name: InfluxDB
+    type: influxdb
+    uid: influxdb-agriha
+    access: proxy
+    url: http://influxdb:8086
+    jsonData:
+      version: Flux
+      organization: agriha
+      defaultBucket: sensors
+    secureJsonData:
+      token: ${INFLUXDB_ADMIN_TOKEN}
+    isDefault: true
+    editable: true
