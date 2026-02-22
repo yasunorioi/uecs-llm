@@ -1,102 +1,99 @@
-#!/bin/bash
-# llm-chat.sh — llama-server 対話シェル
-# system_prompt.txt を自動注入してチャット
-#
-# Usage: ./llm-chat.sh [llama-server-url]
-# Default: http://localhost:8081
+#!/usr/bin/env python3
+"""llm-chat — llama-server 対話シェル (system_prompt.txt 自動注入)"""
 
-set -euo pipefail
-
-LLAMA_URL="${1:-http://localhost:8081}"
-PROMPT_FILE="${SYSTEM_PROMPT_PATH:-/etc/agriha/system_prompt.txt}"
-ENDPOINT="${LLAMA_URL}/v1/chat/completions"
-
-# system_prompt 読み込み
-if [[ -f "$PROMPT_FILE" ]]; then
-    SYSTEM_PROMPT=$(cat "$PROMPT_FILE")
-    echo "System prompt: ${PROMPT_FILE} ($(wc -l < "$PROMPT_FILE") lines)"
-else
-    SYSTEM_PROMPT="あなたは温室環境制御AIです。"
-    echo "System prompt: (default - ${PROMPT_FILE} not found)"
-fi
-
-# JSON文字列エスケープ
-json_escape() {
-    python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))"
-}
-
-SYSTEM_JSON=$(echo -n "$SYSTEM_PROMPT" | json_escape)
-
-# 会話履歴（system以外）
-MESSAGES="[]"
-
-echo "========================================="
-echo "  AgriHA LLM Chat (${LLAMA_URL})"
-echo "  Ctrl+C or 'quit' to exit"
-echo "========================================="
-echo ""
-
-while true; do
-    printf "\033[1;34m殿>\033[0m "
-    read -r INPUT || break
-    [[ -z "$INPUT" ]] && continue
-    [[ "$INPUT" == "quit" || "$INPUT" == "exit" ]] && break
-
-    USER_JSON=$(echo -n "$INPUT" | json_escape)
-
-    # 会話履歴に追加
-    MESSAGES=$(echo "$MESSAGES" | python3 -c "
-import json, sys
-msgs = json.load(sys.stdin)
-msgs.append({'role': 'user', 'content': ${USER_JSON}})
-print(json.dumps(msgs))
-")
-
-    # リクエスト構築
-    FULL_MESSAGES=$(echo "$MESSAGES" | python3 -c "
-import json, sys
-msgs = json.load(sys.stdin)
-full = [{'role': 'system', 'content': ${SYSTEM_JSON}}] + msgs
-print(json.dumps(full))
-")
-
-    PAYLOAD=$(python3 -c "
 import json
-msgs = json.loads('''${FULL_MESSAGES}''')
-print(json.dumps({'messages': msgs, 'stream': False, 'max_tokens': 1024}))
-")
+import os
+import sys
+import readline  # noqa: F401 — enables arrow keys / history in input()
 
-    printf "\033[1;32mAI>\033[0m "
-    RESPONSE=$(curl -s -X POST "$ENDPOINT" \
-        -H "Content-Type: application/json" \
-        -d "$PAYLOAD" 2>/dev/null)
-
-    if [[ $? -ne 0 || -z "$RESPONSE" ]]; then
-        echo "(llama-server に接続できません: ${ENDPOINT})"
-        continue
-    fi
-
-    CONTENT=$(echo "$RESPONSE" | python3 -c "
-import json, sys
 try:
-    r = json.load(sys.stdin)
-    print(r['choices'][0]['message']['content'])
-except Exception as e:
-    print(f'(parse error: {e})')
-" 2>/dev/null)
+    import httpx
+    HAS_HTTPX = True
+except ImportError:
+    HAS_HTTPX = False
 
-    echo "$CONTENT"
-    echo ""
+try:
+    from urllib.request import urlopen, Request
+    from urllib.error import URLError
+except ImportError:
+    pass
 
-    # 会話履歴にAI応答を追加
-    ASSISTANT_JSON=$(echo -n "$CONTENT" | json_escape)
-    MESSAGES=$(echo "$MESSAGES" | python3 -c "
-import json, sys
-msgs = json.load(sys.stdin)
-msgs.append({'role': 'assistant', 'content': ${ASSISTANT_JSON}})
-print(json.dumps(msgs))
-")
-done
+LLAMA_URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8081"
+ENDPOINT = f"{LLAMA_URL}/v1/chat/completions"
+PROMPT_FILE = os.environ.get("SYSTEM_PROMPT_PATH", "/etc/agriha/system_prompt.txt")
 
-echo ""
-echo "終了"
+
+def load_system_prompt() -> str:
+    try:
+        with open(PROMPT_FILE, encoding="utf-8") as f:
+            text = f.read()
+        line_count = text.count("\n")
+        print(f"System prompt: {PROMPT_FILE} ({line_count} lines)")
+        return text
+    except FileNotFoundError:
+        print(f"System prompt: (default — {PROMPT_FILE} not found)")
+        return "あなたは温室環境制御AIです。"
+
+
+def chat_request(messages: list) -> str:
+    payload = json.dumps({
+        "messages": messages,
+        "stream": False,
+        "max_tokens": 1024,
+    }).encode("utf-8")
+
+    if HAS_HTTPX:
+        resp = httpx.post(ENDPOINT, content=payload,
+                          headers={"Content-Type": "application/json"},
+                          timeout=120.0)
+        data = resp.json()
+    else:
+        req = Request(ENDPOINT, data=payload,
+                      headers={"Content-Type": "application/json"})
+        with urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
+    return data["choices"][0]["message"]["content"]
+
+
+def main():
+    system_prompt = load_system_prompt()
+    history: list[dict] = []
+
+    print("=========================================")
+    print(f"  AgriHA LLM Chat ({LLAMA_URL})")
+    print("  Ctrl+C or 'quit' to exit")
+    print("=========================================")
+    print()
+
+    while True:
+        try:
+            user_input = input("\033[1;34m殿>\033[0m ")
+        except (EOFError, KeyboardInterrupt):
+            break
+
+        if not user_input.strip():
+            continue
+        if user_input.strip() in ("quit", "exit"):
+            break
+
+        history.append({"role": "user", "content": user_input})
+
+        messages = [{"role": "system", "content": system_prompt}] + history
+
+        print("\033[1;32mAI>\033[0m ", end="", flush=True)
+        try:
+            content = chat_request(messages)
+            print(content)
+            history.append({"role": "assistant", "content": content})
+        except Exception as e:
+            print(f"(error: {e})")
+            history.pop()  # remove failed user message
+
+        print()
+
+    print("\n終了")
+
+
+if __name__ == "__main__":
+    main()

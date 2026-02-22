@@ -3,11 +3,13 @@
 #
 # Usage: ./scripts/start-tmux.sh
 #
-# レイアウト:
+# nuc.local (LLM制御サーバー) 用レイアウト:
 #   ┌──────────────────┬──────────────────┐
-#   │ 0: llama-server  │ 2: unipi-daemon  │
+#   │ 0: llama-server  │ 1: agriha-control│
+#   │    (journalctl)  │    (制御ログ)     │
 #   ├──────────────────┼──────────────────┤
-#   │ 1: MQTT monitor  │ 3: journalctl    │
+#   │ 2: MQTT monitor  │ 3: REST API      │
+#   │   (RPi経由)      │    (curl監視)     │
 #   ├──────────────────┴──────────────────┤
 #   │ 4: LLM Chat (対話窓)               │
 #   └─────────────────────────────────────┘
@@ -20,10 +22,9 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # 設定（環境変数で上書き可）
 LLAMA_URL="${LLAMA_URL:-http://localhost:8081}"
-LLAMA_BIN="${LLAMA_BIN:-/opt/llama-server/bin/llama-server}"
-LLAMA_MODEL="${LLAMA_MODEL:-/opt/llama-server/models/LFM2.5-1.2B-Instruct-Q4_K_M.gguf}"
-DAEMON_CONFIG="${DAEMON_CONFIG:-/etc/agriha/unipi_daemon.yaml}"
-MQTT_HOST="${MQTT_HOST:-localhost}"
+RPI_HOST="${RPI_HOST:-10.10.0.10}"
+MQTT_HOST="${MQTT_HOST:-${RPI_HOST}}"
+REST_API="${REST_API:-http://${RPI_HOST}:8080}"
 
 # 既存セッションがあれば attach
 if tmux has-session -t "$SESSION" 2>/dev/null; then
@@ -40,40 +41,40 @@ fi
 
 # Step 1: 上段と下段に分割
 tmux new-session -d -s "$SESSION" -n main -x 200 -y 50
-#  pane 0: 上段全体
 tmux split-window -t "${SESSION}:main.0" -v
-#  pane 0: 上段, pane 1: 下段(Chat)
 
-# Step 2: 上段(pane 0)を左右に分割
+# Step 2: 上段を左右に分割
 tmux split-window -t "${SESSION}:main.0" -h
-#  pane 0: 左上, pane 1: 右上, pane 2: 下段(Chat)
 
-# Step 3: 左上(pane 0)を上下に分割
+# Step 3: 左上を上下に分割
 tmux split-window -t "${SESSION}:main.0" -v
-#  pane 0: 左上, pane 1: 左下, pane 2: 右上, pane 3: 下段(Chat)
 
-# Step 4: 右上(pane 2)を上下に分割
+# Step 4: 右上を上下に分割
 tmux split-window -t "${SESSION}:main.2" -v
-#  pane 0: 左上, pane 1: 左下, pane 2: 右上, pane 3: 右下, pane 4: 下段(Chat)
 
 # Chat窓のサイズ調整
 tmux resize-pane -t "${SESSION}:main.4" -y 12
 
 # コマンド送信
+# pane 0: llama-server ログ (systemdで稼働中)
 tmux send-keys -t "${SESSION}:main.0" \
-    "echo '=== [0] llama-server ===' && ${LLAMA_BIN} -m ${LLAMA_MODEL} --port 8081 -c 4096 -t 4 --mlock --jinja" Enter
+    "echo '=== [0] llama-server log ===' && journalctl -f -u agriha-llm --no-hostname" Enter
 
+# pane 1: MQTT monitor (RPiのブローカーに接続)
 tmux send-keys -t "${SESSION}:main.1" \
-    "echo '=== [1] MQTT monitor ===' && mosquitto_sub -h ${MQTT_HOST} -t '#' -v" Enter
+    "echo '=== [1] MQTT monitor (${MQTT_HOST}) ===' && mosquitto_sub -h ${MQTT_HOST} -t '#' -v" Enter
 
+# pane 2: agriha-control ログ (cron制御ループ)
 tmux send-keys -t "${SESSION}:main.2" \
-    "echo '=== [2] unipi-daemon ===' && cd ${PROJECT_DIR} && .venv/bin/unipi-daemon --config ${DAEMON_CONFIG}" Enter
+    "echo '=== [2] agriha-control log ===' && journalctl -f -t agriha-control --no-hostname 2>/dev/null || echo 'Waiting for cron output... (tail syslog)' && tail -f /var/log/syslog 2>/dev/null | grep -i agriha" Enter
 
+# pane 3: REST API 状態監視 (5秒おきにセンサー+ステータスを取得)
 tmux send-keys -t "${SESSION}:main.3" \
-    "echo '=== [3] journalctl ===' && journalctl -f -u agriha-llm -u unipi-daemon --no-hostname" Enter
+    "echo '=== [3] REST API monitor (${REST_API}) ===' && while true; do echo '--- sensors ---'; curl -s ${REST_API}/api/sensors 2>/dev/null | python3 -m json.tool 2>/dev/null || echo '(connection failed)'; echo '--- status ---'; curl -s ${REST_API}/api/status 2>/dev/null | python3 -m json.tool 2>/dev/null || echo '(connection failed)'; sleep 10; done" Enter
 
+# pane 4: LLM Chat
 tmux send-keys -t "${SESSION}:main.4" \
-    "echo '=== [4] LLM Chat ===' && ${SCRIPT_DIR}/llm-chat.sh ${LLAMA_URL}" Enter
+    "${SCRIPT_DIR}/llm-chat.sh ${LLAMA_URL}" Enter
 
 # Chat窓にフォーカス
 tmux select-pane -t "${SESSION}:main.4"
