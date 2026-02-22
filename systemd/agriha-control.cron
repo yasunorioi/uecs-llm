@@ -1,0 +1,4 @@
+# AgriHA LLM制御ループ — 5分間隔
+# Install: sudo cp agriha-control.cron /etc/cron.d/agriha-control
+# flock で前回プロセスが生存中ならスキップ
+*/5 * * * * root flock -n /tmp/agriha_control.lock /opt/uecs-llm/venv/bin/python3 -m uecs_llm.agriha_control >> /var/log/agriha/control.log 2>&1

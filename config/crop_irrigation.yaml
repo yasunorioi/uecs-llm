@@ -1,0 +1,106 @@
+house:
+  house_id: house01
+  crop: nasu_naga
+  cultivation: hydroponics
+  current_stage: harvest_peak
+crops:
+  nasu_naga:
+    name: 長ナス
+    source: 北海道マニュアル（日射比例灌水）
+    notes: ココバッグ・セル苗直接定植の例
+    relative_factor: 1
+    stages:
+      transplant:
+        name: 定植時
+        order: 1
+        defaults:
+          ec_ms_cm:
+            - 0.4
+            - 0.5
+          solar_threshold_mj: 1.5
+          irrigation_ml_per_plant:
+            - 100
+            - 120
+      growth_early:
+        name: 生育期初期
+        order: 2
+        defaults:
+          ec_ms_cm:
+            - 0.8
+            - 1
+          solar_threshold_mj: 1.25
+          irrigation_ml_per_plant:
+            - 120
+            - 150
+      flowering:
+        name: 開花始
+        order: 3
+        defaults:
+          ec_ms_cm:
+            - 1.2
+            - 1.6
+          solar_threshold_mj:
+            - 0.85
+            - 0.9
+          irrigation_ml_per_plant:
+            - 200
+            - 300
+      harvest_early:
+        name: 収穫初期
+        order: 4
+        defaults:
+          ec_ms_cm:
+            - 1.7
+            - 1.8
+          solar_threshold_mj: 0.9
+          irrigation_ml_per_plant:
+            - 270
+            - 300
+      harvest_peak:
+        name: 収穫盛期
+        order: 5
+        defaults:
+          ec_ms_cm:
+            - 1.8
+            - 2
+          solar_threshold_mj: 0.9
+          irrigation_ml_per_plant:
+            - 270
+            - 300
+      harvest_late:
+        name: 収穫後期
+        order: 6
+        defaults:
+          ec_ms_cm:
+            - 2
+            - 2.2
+          solar_threshold_mj:
+            - 1
+            - 1.25
+          irrigation_ml_per_plant:
+            - 250
+            - 270
+overrides: null
+control:
+  timer:
+    enabled: false
+    times: []
+    duration_sec: 0
+  rain_stop:
+    enabled: true
+    threshold_mm_per_hour: 0.5
+    resume_delay_min: 30
+  solar_proportional:
+    enabled: true
+    publish_interval_sec: 60
+    min_solar_w_m2: 10
+    daily_reset_time: "06:00"
+    max_irrigations_per_day: 0
+    min_interval_min: 30
+    night_suppress_enabled: false
+  soil_moisture:
+    enabled: false
+nutrient:
+  drain_ratio_target:
+    - 0.2
+    - 0.3
