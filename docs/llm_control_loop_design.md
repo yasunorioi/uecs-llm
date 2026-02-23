@@ -1,9 +1,10 @@
 # LLM温室制御ループ設計書
 
-> **Version**: 2.0
-> **Date**: 2026-02-21
+> **Version**: 2.1
+> **Date**: 2026-02-23
+> **cmd**: cmd_232 / subtask_517, cmd_233 / subtask_518, cmd_263 / subtask_586
 > **Status**: Draft
-> **HW**: nuc.local (Intel N150, 16GB RAM, Ubuntu, USB-SSD起動)
+> **HW**: nipogi.local (Intel N150, 16GB RAM, Ubuntu, USB-SSD起動)
 
 ---
 
@@ -43,7 +44,7 @@ ArSprout 観測ノード (192.168.1.70)
 agriha_control.py (接着層 — LFM2.5 tool calling ループ)
     │  OpenAI互換API (localhost:8081)
     ▼
-llama-server (LFM2.5 1.2B Q4, nuc.local)
+llama-server (LFM2.5 1.2B Q4, nipogi.local)
     │  tool_calls → REST API POST /api/relay/{ch}
     ▼
 unipi-daemon REST API → MQTT → MqttRelayBridge → I2C リレー
@@ -68,12 +69,15 @@ unipi-daemon REST API → MQTT → MqttRelayBridge → I2C リレー
 3. [システムプロンプト設計](#3-システムプロンプト設計)
 4. [ステート管理](#4-ステート管理)
 5. [応答速度見積もり](#5-応答速度見積もり)
-6. [nuc.localセットアップ手順](#6-nuclocalセットアップ手順)
+6. [nipogi.localセットアップ手順](#6-nipogilocalセットアップ手順)
 7. [安全制御設計](#7-安全制御設計)
 8. [アクチュエータ制御（UniPiリレー）](#8-アクチュエータ制御unipiリレー)
 9. [リレーチャンネル割当](#9-リレーチャンネル割当)
 10. [参照ドキュメント](#10-参照ドキュメント)
-11. [付録A: v1.x→v2.0 変更履歴](#付録a-v1xv20-変更履歴)
+11. [Chat窓（LLM育成用UI）](#11-chat窓llm育成用ui)
+12. [栽培マニュアルPDF/JPG読み取り](#12-栽培マニュアルpdfjpg読み取り)
+13. [日時注入仕様](#13-日時注入仕様)
+14. [付録A: v1.x→v2.0 変更履歴](#付録a-v1xv20-変更履歴)
 
 ---
 
@@ -146,7 +150,7 @@ LLMがどのツールをどの順番で呼ぶかはLLM自身が判断する。
    - LLMが自律判断で安全制御を実行
 
 3. **フォールバック: リレーラッチ**
-   - LLM/nuc.localが停止しても、MCP23008リレーは最後の状態を保持
+   - LLM/nipogi.localが停止しても、MCP23008リレーは最後の状態を保持
    - 灌水ON放置を防ぐため、duration_secの指定を必須とする
    - MqttRelayBridgeの自動OFFタイマーが最終防壁
 
@@ -494,10 +498,10 @@ if __name__ == "__main__":
 
 | モード | 仕組み | 用途 |
 |--------|--------|------|
-| **LAN直接** | nuc.localからunipi-daemon REST API (http://10.10.0.10:8080) にHTTP | nuc.localがハウスLAN内にある場合 |
-| **VPN経由** | WireGuard VPN越しに同一REST APIにアクセス | nuc.localが遠隔の場合 |
+| **LAN直接** | nipogi.localからunipi-daemon REST API (http://10.10.0.10:8080) にHTTP | nipogi.localがハウスLAN内にある場合 |
+| **VPN経由** | WireGuard VPN越しに同一REST APIにアクセス | nipogi.localが遠隔の場合 |
 
-**推奨**: ハウスLAN内にnuc.localを設置し、LAN直接モードで運用。
+**推奨**: ハウスLAN内にnipogi.localを設置し、LAN直接モードで運用。
 
 ---
 
@@ -752,11 +756,11 @@ llama-serverはGGUF形式のモデルを `-m` オプションで指定するだ�
 
 ---
 
-## 6. nuc.localセットアップ手順
+## 6. nipogi.localセットアップ手順
 
 ### 6.1 前提条件
 
-- nuc.local: Intel N150, 16GB RAM, USB-SSDからUbuntu 24.04起動
+- nipogi.local: Intel N150, 16GB RAM, USB-SSDからUbuntu 24.04起動
 - ハウスLAN (192.168.1.0/24) に有線/WiFi接続済み
 - unipi-daemon REST API (http://10.10.0.10:8080) に到達可能
 
@@ -882,7 +886,7 @@ tail -f /var/log/agriha/control.log
 
 ┌─────────────────────────────────────────────────────────┐
 │ Layer 3: フォールバック（リレーラッチ + 自動OFFタイマー）│
-│   - LLM/nuc.local停止 → リレーは最後の状態を保持     │
+│   - LLM/nipogi.local停止 → リレーは最後の状態を保持     │
 │   - MqttRelayBridge duration_sec タイマー:               │
 │     灌水ONなどは必ず自動OFF時間を指定                    │
 │   - 最悪ケース: 灌水ON放置 → duration_sec で自動OFF     │
@@ -904,14 +908,14 @@ LLMはセンサーデータを読み取り、環境制御の判断を行う唯�
 ```
 正常運転（LLMが5分ごとに制御判断）
     │
-    │ nuc.local停止 / ネットワーク断
+    │ nipogi.local停止 / ネットワーク断
     ▼
 リレー現状維持（MCP23008はラッチ型）
     │ ├─ 灌水ON中 → duration_sec タイマーで自動OFF
     │ ├─ 換気扇ON中 → 回しっぱなし（電力消費のみ、安全上問題なし）
     │ └─ 全OFF中 → そのまま（最も安全な状態）
     │
-    │ nuc.local復旧
+    │ nipogi.local復旧
     │ → agriha_control.py cron再開
     │ → GET /api/status でリレー現状を確認
     │ → LLMが状況に応じて制御再開
@@ -1061,6 +1065,530 @@ ch1-3 は未割当。以下の用途に割当可能:
 
 ---
 
+## 11. Chat窓（LLM育成用UI）
+
+### 11.1 目的
+
+nipogi.local上にブラウザからアクセスできるChat UIを設置する。
+殿がLLM（llama-server / LFM2.5）と対話してシステムプロンプトを育てるためのツール。
+
+```
+育成サイクル:
+  殿がsystem_prompt.txt [E]セクションを編集
+    → Chat窓で「内温38℃、どうする？」と質問
+    → LLMの回答を確認（適切か？安全か？）
+    → 不十分なら [E]セクションに知識を追記
+    → 再度Chat窓で確認
+    → 満足したらcron制御ループに反映（自動的に次回起動で読み込まれる）
+```
+
+### 11.2 技術選定
+
+| 方式 | RAM消費 | セットアップ | system_prompt.txt読み込み | 評価 |
+|------|---------|------------|--------------------------|------|
+| **(c) 自前FastAPI + HTML** | ~20-40MB | `pip install fastapi uvicorn` | ファイルから直接読み込み | **採用** |
+| (a) Open WebUI | 500MB-1.5GB | Docker or pip（重量級） | UI上で手動設定 | 不採用 |
+| (b) Hollama | ~30-50MB | npm build + nginx | セッションごとに手動貼り付け | 不採用 |
+| (d) 単一HTMLファイル | ~10-20MB | ファイル1つ | Modelfile経由（手間） | 代替案 |
+
+**採用理由**:
+
+- **Open WebUI不採用**: RAM 500MB-1.5GBをアイドルで消費。N150でllama-server（1-5GB）と同居すると
+  メモリが逼迫する。マルチユーザー管理・RAG・モデル管理等の不要機能が多すぎる
+- **Hollama不採用**: 軽量で良いが、system_prompt.txtからの自動読み込みに対応していない。
+  毎回手動でシステムプロンプトを貼り付ける必要がある
+- **自前FastAPI + HTML採用**: 最軽量（~20-40MB）。system_prompt.txtからの直接読み込みが
+  自然に実装できる。殿がテキストファイルを編集→ブラウザリロードで即反映。
+  全体で200行程度のコード量
+
+### 11.3 アーキテクチャ
+
+```
+ブラウザ (殿のPC/スマホ)
+  │  http://nipogi.local:8501
+  ▼
+FastAPI (:8501, nipogi.local)
+  │  ├─ GET /       → チャットUI (HTML)
+  │  ├─ POST /chat  → llama-server /v1/chat/completions をプロキシ
+  │  │               system_prompt.txt を自動注入
+  │  └─ GET /prompt → 現在のシステムプロンプト表示
+  ▼
+llama-server (:8081, nipogi.local)
+  │  LFM2.5 1.2B Q4
+  ▼
+レスポンス（ストリーミング）
+```
+
+### 11.4 実装概要
+
+```python
+#!/usr/bin/env python3
+"""AgriHA Chat窓 — システムプロンプト育成用UI"""
+
+from pathlib import Path
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, StreamingResponse
+import httpx
+import json
+
+app = FastAPI()
+LLAMA_SERVER_URL = "http://localhost:8081/v1/chat/completions"
+SYSTEM_PROMPT_PATH = Path("/etc/agriha/system_prompt.txt")
+
+
+def load_system_prompt() -> str:
+    """毎リクエストでファイルから読み込み（編集即反映）"""
+    if SYSTEM_PROMPT_PATH.exists():
+        return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+    return "あなたは温室環境制御AIです。"
+
+
+@app.get("/", response_class=HTMLResponse)
+async def chat_ui():
+    """チャットUI HTML（インライン）"""
+    return """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>AgriHA Chat</title>
+<style>
+  body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+  #messages { height: 500px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; }
+  .user { color: blue; } .assistant { color: green; }
+  #input { width: 80%; padding: 8px; } #send { padding: 8px 16px; }
+</style></head><body>
+<h2>AgriHA Chat — システムプロンプト育成</h2>
+<p><small>system_prompt.txt を編集後、ページリロードで反映</small></p>
+<div id="messages"></div>
+<input id="input" placeholder="質問を入力..." />
+<button id="send" onclick="sendMsg()">送信</button>
+<script>
+let history = [];
+async function sendMsg() {
+  const input = document.getElementById('input');
+  const msg = input.value.trim(); if (!msg) return;
+  input.value = '';
+  addMsg('user', msg);
+  history.push({role: 'user', content: msg});
+  const res = await fetch('/chat', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({messages: history})
+  });
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let full = '';
+  addMsg('assistant', '');
+  const last = document.querySelector('#messages .assistant:last-child');
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    const chunk = decoder.decode(value);
+    for (const line of chunk.split('\\n')) {
+      if (!line.trim()) continue;
+      try { const j = JSON.parse(line); full += j.message?.content || ''; }
+      catch(e) {}
+    }
+    last.textContent = full;
+  }
+  history.push({role: 'assistant', content: full});
+}
+function addMsg(role, text) {
+  const d = document.createElement('div');
+  d.className = role; d.textContent = (role==='user'?'殿: ':'AI: ') + text;
+  document.getElementById('messages').appendChild(d);
+  d.scrollIntoView();
+}
+document.getElementById('input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') sendMsg();
+});
+</script></body></html>"""
+
+
+@app.post("/chat")
+async def chat(request: Request):
+    """llama-serverにsystem_prompt付きでプロキシ"""
+    body = await request.json()
+    messages = body.get("messages", [])
+    system_prompt = load_system_prompt()
+
+    payload = {
+        "messages": [{"role": "system", "content": system_prompt}] + messages,
+        "stream": True,
+        "max_tokens": 1024,
+    }
+
+    async def generate():
+        async with httpx.AsyncClient(timeout=300) as client:
+            async with client.stream("POST", LLAMA_SERVER_URL, json=payload) as resp:
+                async for line in resp.aiter_lines():
+                    if line.strip():
+                        yield line + "\n"
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
+
+
+@app.get("/prompt")
+async def show_prompt():
+    """現在のシステムプロンプトを表示（デバッグ用）"""
+    return {"prompt": load_system_prompt()}
+```
+
+### 11.5 セットアップ手順
+
+```bash
+# === Step 1: 依存インストール ===
+pip install fastapi uvicorn httpx
+
+# === Step 2: スクリプト配置 ===
+sudo cp agriha_chat.py /opt/agriha-control/
+
+# === Step 3: systemdサービス登録 ===
+sudo tee /etc/systemd/system/agriha-chat.service << 'EOF'
+[Unit]
+Description=AgriHA Chat UI (system prompt development)
+After=network.target agriha-llm.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -m uvicorn agriha_chat:app --host 0.0.0.0 --port 8501
+WorkingDirectory=/opt/agriha-control
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl enable --now agriha-chat
+
+# === Step 4: 動作確認 ===
+# ブラウザで http://nipogi.local:8501 にアクセス
+# 「内温が38℃です。どうしますか？」と質問してLLMの回答を確認
+```
+
+### 11.6 使い方（殿向け）
+
+1. ブラウザで `http://nipogi.local:8501` を開く
+2. 「内温38℃、外気温32℃、風速3m/s。どう制御する？」と質問
+3. LLMの回答を確認。不十分なら `/etc/agriha/system_prompt.txt` を編集
+4. ブラウザをリロード（新しいプロンプトが自動反映）
+5. 同じ質問を再度投げて改善を確認
+6. `/prompt` エンドポイントで現在読み込まれているプロンプトを確認可能
+
+---
+
+## 12. 栽培マニュアルPDF/JPG読み取り
+
+### 12.1 目的
+
+殿が長ナス栽培マニュアル（PDF or スキャンJPG）を投入し、
+その内容をシステムプロンプトの[D]制御ルール・[E]暗黙知セクションに反映する。
+
+### 12.2 マルチモーダルモデル調査
+
+llama-serverで利用可能なビジョンモデル（GGUF形式）のうち、N150(16GB RAM, CPU推論)で動作可能なもの:
+
+| モデル | パラメータ | Q4サイズ | RAM必要量 | N150速度(推定) | 日本語OCR品質 |
+|--------|-----------|---------|-----------|---------------|-------------|
+| **Qwen2.5-VL 3B** | 3B | 3.2GB | ~5-6GB | 2-4 tok/s, 画像30-50秒 | **非常に良い（MTVQA1位）** |
+| Qwen3-VL 2B | 2B | 1.9GB | ~3-4GB | 3-5 tok/s, 画像30-45秒 | 良い |
+| Moondream 1.8B | 1.8B | 0.8GB | ~2GB | 5-8 tok/s, 画像20-30秒 | 悪い（英語中心） |
+| GLM-OCR 0.9B | 0.9B | 1.6GB | ~2-3GB | 6-10 tok/s, 画像15-25秒 | 中（中国語中心） |
+| Gemma 3 4B | 4B | 3.3GB | ~5-6GB | 1-3 tok/s, 画像40-60秒 | 良い |
+| MiniCPM-V 8B | 8B | 5.5GB | ~8-10GB | 0.3-0.8 tok/s | 非常に良いが遅すぎ |
+
+**N150での実用上の制約**:
+- 画像エンコードだけで30-60秒かかる（ビジョンエンコーダのオーバーヘッド）
+- テキスト生成はさらに低速（2-4 tok/s）
+- 1ページの読み取りに合計1-3分かかる見込み
+- マニュアルが数十ページある場合、バッチ処理に数時間
+
+### 12.3 Tesseract OCR（代替方式）
+
+| 比較項目 | Tesseract OCR (jpn) | Qwen2.5-VL 3B |
+|----------|---------------------|---------------|
+| **速度** | **1-3秒/ページ** | 60-180秒/ページ |
+| **RAM** | ~200-500MB | ~5-6GB |
+| **清刷り日本語** | 89-94%精度 | 70-85%精度 |
+| **劣化スキャン** | 65-80%精度 | 40-60%（幻覚リスク） |
+| **表・レイアウト理解** | 低い（テキスト抽出のみ） | 高い（構造を理解） |
+| **専門用語理解** | なし（文字認識のみ） | 文脈から推測可能 |
+| **インストール** | `apt install tesseract-ocr tesseract-ocr-jpn` | llama-server + 3GB GGUF |
+
+### 12.4 推奨方式: ハイブリッドアプローチ
+
+**Tesseract OCRを主体とし、Qwen2.5-VL 3Bを補助に使うハイブリッド方式を推奨。**
+
+```
+栽培マニュアル PDF/JPG
+    │
+    ├─[一括処理] Tesseract OCR（高速、全ページ）
+    │   → テキスト抽出（1-3秒/ページ）
+    │   → raw_text/*.txt に保存
+    │
+    ├─[選択処理] Qwen2.5-VL 3B（低速、難読ページのみ）
+    │   → 表・図・レイアウトが複雑なページ
+    │   → Tesseractで精度不足のページ
+    │   → 1-3分/ページ
+    │
+    ▼
+殿がテキストをレビュー + 編集
+    │
+    ▼
+system_prompt.txt [D][E]セクションに反映
+    │
+    ▼
+Chat窓（§11）で「この場合どう制御する？」と確認
+```
+
+**理由**:
+1. N150のCPU推論では、VLMのみで数十ページを処理するのは非実用的（数時間）
+2. 清刷りの日本語印刷物ならTesseractの精度で十分（89-94%）
+3. VLMは表やグラフの構造理解が必要な場面のみに限定
+4. 最終的に人間（殿）がレビューするため、完璧なOCRは不要
+
+### 12.5 セットアップ手順
+
+```bash
+# === Tesseract OCR ===
+sudo apt install tesseract-ocr tesseract-ocr-jpn tesseract-ocr-jpn-vert
+
+# PDFをページ画像に変換
+sudo apt install poppler-utils
+# pdftoppm manual.pdf pages/page -png
+
+# === Qwen2.5-VL 3B（補助用） ===
+# GGUF形式でダウンロード（HuggingFace）
+# RAM消費: LFM2.5 1.2B（制御用）とQwen2.5-VL 3Bは同時にロードしない
+# → 使い分け: 制御中はVLモデルのllama-serverを停止
+```
+
+### 12.6 読み取りスクリプト
+
+```bash
+#!/bin/bash
+# ocr_manual.sh — 栽培マニュアルバッチOCR
+# Usage: ./ocr_manual.sh input.pdf output_dir/
+
+INPUT="$1"
+OUTPUT_DIR="$2"
+mkdir -p "$OUTPUT_DIR"
+
+# PDFを画像に変換
+if [[ "$INPUT" == *.pdf ]]; then
+    pdftoppm "$INPUT" "$OUTPUT_DIR/page" -png -r 300
+    IMAGES="$OUTPUT_DIR"/page-*.png
+else
+    IMAGES="$INPUT"
+fi
+
+# Tesseract OCR実行
+for img in $IMAGES; do
+    base=$(basename "$img" .png)
+    echo "Processing: $base"
+    tesseract "$img" "$OUTPUT_DIR/$base" -l jpn --psm 6
+done
+
+echo "Done. Output in $OUTPUT_DIR/"
+echo "Review .txt files and incorporate into /etc/agriha/system_prompt.txt"
+```
+
+### 12.7 VLMを使った補助読み取り
+
+```python
+# llama-server マルチモーダルで難読ページを処理
+# llama-server --model <VLMモデル>.gguf --port 8082 で別ポート起動
+import httpx
+import base64
+
+LLAMA_VLM_URL = "http://localhost:8082"  # VLM専用llama-serverポート
+
+def read_page_with_vlm(image_path: str) -> str:
+    """VLM (マルチモーダルGGUFモデル) で画像からテキスト抽出"""
+    with open(image_path, "rb") as f:
+        img_b64 = base64.b64encode(f.read()).decode()
+    resp = httpx.post(
+        f"{LLAMA_VLM_URL}/v1/chat/completions",
+        json={
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "この画像は農業栽培マニュアルのページです。"
+                                              "日本語テキストを全て読み取り、表があれば構造を保持して出力してください。"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
+                ],
+            }],
+            "max_tokens": 2048,
+        },
+        timeout=120.0,
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
+```
+
+### 12.8 システムプロンプトへの反映フロー
+
+```
+1. OCR結果のテキストファイルを殿がレビュー
+2. 制御に関連する知識を抽出:
+   - 温度管理ルール → [D]セクション
+   - 灌水タイミング → [C]セクション（crop_irrigation.yaml更新）
+   - 栽培のコツ・注意点 → [E]セクション
+3. system_prompt.txt に追記
+4. Chat窓（§11）で「長ナスの定植直後、内温30℃。どうする？」と質問
+5. LLMの回答が栽培マニュアルの内容と整合するか確認
+6. 不十分なら[D][E]を修正して再テスト
+```
+
+---
+
+## 13. 日時注入仕様
+
+> **追加**: v2.1 (cmd_263 / 2026-02-23)
+
+### 13.1 設計思想
+
+LLMは自力で現在日時を把握できない。学習データのカットオフ日を「今日」と答え、
+季節・時間帯に応じた制御判断（例: 日の出前は側窓閉鎖）が機能しない。
+
+**対策**: 全LLM経路のシステムプロンプトまたはユーザーメッセージに、**毎回呼び出し時点の日時を動的注入する**。
+
+| 問題 | 症状 | 解決策 |
+|------|------|--------|
+| カットオフ日を「今日」と誤認 | 「今日は2025年3月」と回答 | JST現在日時を毎回注入 |
+| 日の出/日没を知らない | 時間帯制御ルールが不発動 | astralで計算し注入 |
+| 時間帯区分を判断できない | 「日没後全閉」が機能しない | 時間帯ラベルを明示注入 |
+
+NTP時刻源はサーバー側（RPi/VPS）のシステム時刻を使用する。
+上流NTPとして Starlink ディッシュ内蔵の Stratum 1 サーバー（192.168.100.1）を利用しており、
+オフセット < 1ms の高精度時刻が得られている。
+
+### 13.2 注入データ仕様
+
+全経路で統一されたフォーマットを使用する。
+
+```
+## 現在の日時情報
+現在日時: 2026-02-23 12:15 JST
+日の出: 06:20 / 日没: 17:14
+時間帯: 日中（日の出後〜日没前1時間）
+```
+
+#### 注入パラメータ
+
+| パラメータ | 値 | 生成方法 |
+|-----------|-----|---------|
+| 現在日時 | JST `%Y-%m-%d %H:%M` 形式 | `datetime.now(ZoneInfo("Asia/Tokyo"))` |
+| 日の出 | JST `%H:%M` 形式 | `astral.sun.sun()` — 座標: 42.888N, 141.603E, 21m |
+| 日没 | JST `%H:%M` 形式 | 同上 |
+| 時間帯 | 4区分ラベル | 下表参照 |
+
+#### 時間帯区分
+
+| ラベル | 条件 | 制御への影響 |
+|--------|------|------------|
+| 日の出前 | `now < sunrise` | 側窓閉鎖（結露防止） |
+| 日中（日の出後〜日没前1時間） | `sunrise ≤ now < sunset - 1h` | PID制御稼働 |
+| 日没前1時間 | `sunset - 1h ≤ now < sunset` | 徐々に閉鎖開始 |
+| 日没後 | `now ≥ sunset` | 全閉 |
+
+### 13.3 対応経路一覧
+
+cmd_260-262で実装済みの3経路。
+
+| 経路 | 実装ファイル | 注入方式 | 注入タイミング |
+|------|------------|---------|-------------|
+| **定期制御ループ** | `services/agriha-control/agriha_control.py` | userメッセージ先頭に埋め込み | cron起動ごと（5分間隔） |
+| **直接Chat窓** | `services/agriha-control/llm-chat.sh` | `_datetime_header()` をシステムプロンプトに付加 | メッセージ送信ごと |
+| **LINE Bot** | `linebot/system_prompt.py` | `get_system_prompt()` 動的生成 | Webhookメッセージ受信ごと |
+
+#### 定期制御ループ（agriha_control.py）の実装
+
+`get_sun_times()` + `get_time_period()` を呼び出し、userメッセージに日時ヘッダを付加する。
+
+```python
+# 現在日時（JST）
+now_jst = datetime.now(_JST)
+
+# 日の出/日没計算（astral, 座標は config から取得）
+sunrise, sunset = get_sun_times(lat=42.888, lon=141.603, elevation=21.0, dt=now_jst)
+time_period = get_time_period(now_jst, sunrise, sunset)
+
+# userメッセージに注入
+messages.append({"role": "user", "content": (
+    f"現在日時: {now_jst.strftime('%Y-%m-%dT%H:%M:%S%z')}\n"
+    f"日の出: {sunrise.strftime('%H:%M')} / 日没: {sunset.strftime('%H:%M')}\n"
+    f"現在の時間帯: {time_period}\n"
+    ...
+)})
+```
+
+#### LINE Bot（system_prompt.py）の実装
+
+```python
+def get_system_prompt() -> str:
+    """毎呼び出し時点の日時を先頭に注入して返す"""
+    now = datetime.now(_JST)
+    sunrise, sunset = _get_sun_times(now)
+    time_period = _get_time_period(now, sunrise, sunset)
+    datetime_info = (
+        f"## 現在の日時情報\n"
+        f"現在日時: {now.strftime('%Y-%m-%d %H:%M')} JST\n"
+        f"日の出: {sunrise.strftime('%H:%M')} / 日没: {sunset.strftime('%H:%M')}\n"
+        f"時間帯: {time_period}\n\n"
+    )
+    return datetime_info + _SYSTEM_PROMPT_BODY
+```
+
+### 13.4 時間帯制御への影響
+
+§3.2 [D]セクション「時間帯制御」のルールは、日時注入なしでは**LLMが発動できなかった**。
+日時注入によりこれらのルールが有効になる。
+
+```
+# system_prompt.txt [D] 時間帯制御（§3.2より）
+## 時間帯制御
+- 日の出前: 側窓閉鎖（結露防止のため）
+- 日の出後: PID制御開始
+- 日没前1時間: 徐々に閉鎖開始
+- 日没後: 全閉
+```
+
+注入された「時間帯: 日没後」という情報をLLMが読んで、全閉指示を発行する。
+時間帯ラベルはシステムプロンプトのルール文言と**同一表現**を使用し、LLMが照合しやすくしている。
+
+### 13.5 astralライブラリ
+
+```
+パッケージ: astral>=3.2
+座標: Latitude=42.888, Longitude=141.603, Elevation=21m（ArSprout設定から取得）
+タイムゾーン: Asia/Tokyo（ZoneInfo）
+精度: ±1分程度（農業制御に十分）
+```
+
+#### 共通実装パターン（全経路で同一）
+
+```python
+from astral import LocationInfo
+from astral.sun import sun as astral_sun
+from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta
+
+_JST = ZoneInfo("Asia/Tokyo")
+
+def get_sun_times(lat, lon, elevation=0, dt=None):
+    ref = dt or datetime.now(_JST)
+    location = LocationInfo(latitude=lat, longitude=lon)
+    s = astral_sun(location.observer, date=ref.date(), tzinfo=_JST)
+    return s["sunrise"], s["sunset"]
+
+def get_time_period(now, sunrise, sunset):
+    if now < sunrise:           return "日の出前"
+    if now >= sunset:           return "日没後"
+    if now >= sunset - timedelta(hours=1): return "日没前1時間"
+    return "日中（日の出後〜日没前1時間）"
+```
+
+---
+
 ## 付録A: v1.x→v2.0 変更履歴
 
 ### A.1 アーキテクチャ変更の背景
@@ -1102,4 +1630,5 @@ ArSproutのCCM制御パケット受信・アクチュエータ駆動機能が**�
 | LFM2.5 (llama-server) tool calling | ツール定義を変更（set_actuator→set_relay）、OpenAI互換API使用 |
 | システムプロンプト設計（§3） | [B]にリレーch割当追加、[D]からArSprout依存部分削除 |
 | 判断履歴DB control_log.db（§4） | 変更なし |
-
+| Chat窓（§11） | 変更なし |
+| 栽培マニュアルOCR（§12） | 変更なし |

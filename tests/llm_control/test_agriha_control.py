@@ -8,15 +8,18 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from uecs_llm.agriha_control import (
+from agriha_control import (
     TOOLS,
     call_tool,
+    get_sun_times,
+    get_time_period,
     init_db,
     llm_chat,
     load_recent_history,
@@ -618,3 +621,205 @@ class TestControlLoop:
 
         assert "get_sensors" in result["sensor_snapshot"]
         assert "get_status" in result["sensor_snapshot"]
+
+
+# ---------------------------------------------------------------------------
+# 日の出/日没ヘルパーテスト
+# ---------------------------------------------------------------------------
+
+class TestSunTimes:
+    """get_sun_times / get_time_period の単体テスト。"""
+
+    def _jst(self, year: int, month: int, day: int, hour: int, minute: int = 0) -> datetime:
+        from zoneinfo import ZoneInfo
+        return datetime(year, month, day, hour, minute, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+
+    def test_get_sun_times_returns_datetimes(self) -> None:
+        """日の出/日没が JST aware datetime として返る。"""
+        now = self._jst(2026, 2, 23, 12)
+        sunrise, sunset = get_sun_times(42.888, 141.603, 21, dt=now)
+        assert isinstance(sunrise, datetime)
+        assert isinstance(sunset, datetime)
+        assert sunrise.tzinfo is not None
+        assert sunset.tzinfo is not None
+
+    def test_get_sun_times_order(self) -> None:
+        """日の出 < 日没 である。"""
+        now = self._jst(2026, 2, 23, 12)
+        sunrise, sunset = get_sun_times(42.888, 141.603, 21, dt=now)
+        assert sunrise < sunset
+
+    def test_get_sun_times_reasonable_range(self) -> None:
+        """北海道 2月の日の出/日没が常識的な範囲に収まる。"""
+        now = self._jst(2026, 2, 23, 12)
+        sunrise, sunset = get_sun_times(42.888, 141.603, 21, dt=now)
+        # 2月北海道: 日の出 06:00-07:30、日没 17:00-18:30 が妥当な範囲
+        assert 5 <= sunrise.hour <= 8
+        assert 16 <= sunset.hour <= 19
+
+    def test_get_time_period_before_sunrise(self) -> None:
+        """日の出前 → "日の出前"。"""
+        sunrise = self._jst(2026, 2, 23, 6, 15)
+        sunset  = self._jst(2026, 2, 23, 17, 23)
+        now     = self._jst(2026, 2, 23, 4, 0)
+        assert get_time_period(now, sunrise, sunset) == "日の出前"
+
+    def test_get_time_period_daytime(self) -> None:
+        """日中 → "日中（日の出後〜日没前1時間）"。"""
+        sunrise = self._jst(2026, 2, 23, 6, 15)
+        sunset  = self._jst(2026, 2, 23, 17, 23)
+        now     = self._jst(2026, 2, 23, 11, 35)
+        assert get_time_period(now, sunrise, sunset) == "日中（日の出後〜日没前1時間）"
+
+    def test_get_time_period_near_sunset(self) -> None:
+        """日没前1時間 → "日没前1時間"。"""
+        sunrise = self._jst(2026, 2, 23, 6, 15)
+        sunset  = self._jst(2026, 2, 23, 17, 23)
+        now     = self._jst(2026, 2, 23, 16, 45)
+        assert get_time_period(now, sunrise, sunset) == "日没前1時間"
+
+    def test_get_time_period_after_sunset(self) -> None:
+        """日没後 → "日没後"。"""
+        sunrise = self._jst(2026, 2, 23, 6, 15)
+        sunset  = self._jst(2026, 2, 23, 17, 23)
+        now     = self._jst(2026, 2, 23, 20, 0)
+        assert get_time_period(now, sunrise, sunset) == "日没後"
+
+    def test_get_time_period_exactly_at_sunrise(self) -> None:
+        """日の出ちょうど → "日中"。"""
+        sunrise = self._jst(2026, 2, 23, 6, 15)
+        sunset  = self._jst(2026, 2, 23, 17, 23)
+        assert get_time_period(sunrise, sunrise, sunset) == "日中（日の出後〜日没前1時間）"
+
+    def test_get_time_period_exactly_at_sunset(self) -> None:
+        """日没ちょうど → "日没後"。"""
+        sunrise = self._jst(2026, 2, 23, 6, 15)
+        sunset  = self._jst(2026, 2, 23, 17, 23)
+        assert get_time_period(sunset, sunrise, sunset) == "日没後"
+
+
+# ---------------------------------------------------------------------------
+# 日時注入統合テスト
+# ---------------------------------------------------------------------------
+
+class TestDatetimeInjection:
+    """run_control_loop の user message への日時・日の出/日没注入を確認。"""
+
+    def _jst(self, year: int, month: int, day: int, hour: int, minute: int = 0) -> datetime:
+        from zoneinfo import ZoneInfo
+        return datetime(year, month, day, hour, minute, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+
+    def _run_and_capture_user_message(
+        self,
+        tmp_path: Path,
+        system_prompt_file: Path,
+        mock_http_client: MagicMock,
+        now: datetime,
+    ) -> str:
+        """run_control_loop を実行し、最初の user message content を返す。"""
+        captured: list[dict[str, Any]] = []
+
+        def _post(url: str, **kwargs: Any) -> MagicMock:
+            if not captured and "json" in kwargs:
+                captured.extend(kwargs["json"].get("messages", []))
+            resp = MagicMock()
+            resp.raise_for_status = MagicMock()
+            resp.json = MagicMock(return_value=_make_llm_response(content="現状維持。"))
+            return resp
+
+        llm_client = MagicMock()
+        llm_client.post = MagicMock(side_effect=_post)
+        llm_client.close = MagicMock()
+
+        config = {
+            "db_path": str(tmp_path / "test.db"),
+            "system_prompt_path": str(system_prompt_file),
+            "unipi_api": "http://test:8080",
+            "llama_server_url": "http://test:8081",
+        }
+        run_control_loop(
+            config,
+            llm_client=llm_client,
+            http_client=mock_http_client,
+            now=now,
+        )
+        user_msg = next(m for m in captured if m["role"] == "user")
+        return user_msg["content"]
+
+    def test_iso8601_datetime_in_user_message(
+        self,
+        tmp_path: Path,
+        system_prompt_file: Path,
+        mock_http_client: MagicMock,
+    ) -> None:
+        """ISO 8601 形式の現在日時が user message に含まれる。"""
+        now = self._jst(2026, 2, 23, 11, 35)
+        content = self._run_and_capture_user_message(
+            tmp_path, system_prompt_file, mock_http_client, now
+        )
+        assert "2026-02-23T11:35:00" in content
+
+    def test_sunrise_in_user_message(
+        self,
+        tmp_path: Path,
+        system_prompt_file: Path,
+        mock_http_client: MagicMock,
+    ) -> None:
+        """「日の出: HH:MM」が user message に含まれる。"""
+        now = self._jst(2026, 2, 23, 11, 35)
+        content = self._run_and_capture_user_message(
+            tmp_path, system_prompt_file, mock_http_client, now
+        )
+        assert "日の出:" in content
+
+    def test_sunset_in_user_message(
+        self,
+        tmp_path: Path,
+        system_prompt_file: Path,
+        mock_http_client: MagicMock,
+    ) -> None:
+        """「日没: HH:MM」が user message に含まれる。"""
+        now = self._jst(2026, 2, 23, 11, 35)
+        content = self._run_and_capture_user_message(
+            tmp_path, system_prompt_file, mock_http_client, now
+        )
+        assert "日没:" in content
+
+    def test_time_period_before_sunrise_in_message(
+        self,
+        tmp_path: Path,
+        system_prompt_file: Path,
+        mock_http_client: MagicMock,
+    ) -> None:
+        """深夜 → "日の出前" が user message に含まれる。"""
+        now = self._jst(2026, 2, 23, 3, 0)
+        content = self._run_and_capture_user_message(
+            tmp_path, system_prompt_file, mock_http_client, now
+        )
+        assert "日の出前" in content
+
+    def test_time_period_daytime_in_message(
+        self,
+        tmp_path: Path,
+        system_prompt_file: Path,
+        mock_http_client: MagicMock,
+    ) -> None:
+        """昼 → "日中" が user message に含まれる。"""
+        now = self._jst(2026, 2, 23, 11, 35)
+        content = self._run_and_capture_user_message(
+            tmp_path, system_prompt_file, mock_http_client, now
+        )
+        assert "日中" in content
+
+    def test_time_period_after_sunset_in_message(
+        self,
+        tmp_path: Path,
+        system_prompt_file: Path,
+        mock_http_client: MagicMock,
+    ) -> None:
+        """夜 → "日没後" が user message に含まれる。"""
+        now = self._jst(2026, 2, 23, 20, 0)
+        content = self._run_and_capture_user_message(
+            tmp_path, system_prompt_file, mock_http_client, now
+        )
+        assert "日没後" in content

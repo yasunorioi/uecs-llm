@@ -5,12 +5,24 @@ import json
 import os
 import sys
 import readline  # noqa: F401 — enables arrow keys / history in input()
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 try:
     import httpx
     HAS_HTTPX = True
 except ImportError:
     HAS_HTTPX = False
+
+# 座標（恵庭市近郊: ArSprout node_config より）
+_LAT, _LON, _ELEV = 42.888, 141.603, 21
+_JST = ZoneInfo("Asia/Tokyo")
+
+try:
+    from uecs_llm.agriha_control import get_sun_times, get_time_period
+    _HAS_SUN = True
+except ImportError:
+    _HAS_SUN = False
 
 try:
     from urllib.request import urlopen, Request
@@ -21,6 +33,25 @@ except ImportError:
 LLAMA_URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8081"
 ENDPOINT = f"{LLAMA_URL}/v1/chat/completions"
 PROMPT_FILE = os.environ.get("SYSTEM_PROMPT_PATH", "/etc/agriha/system_prompt.txt")
+
+
+def _datetime_header() -> str:
+    """現在日時・日の出/日没・時間帯を1ブロックのテキストで返す。"""
+    now = datetime.now(_JST)
+    dt_str = now.strftime("%Y-%m-%d %H:%M") + " JST"
+
+    if _HAS_SUN:
+        try:
+            sunrise, sunset = get_sun_times(_LAT, _LON, _ELEV, dt=now)
+            period = get_time_period(now, sunrise, sunset)
+            return (
+                f"現在日時: {dt_str}\n"
+                f"日の出: {sunrise.strftime('%H:%M')} / 日没: {sunset.strftime('%H:%M')}\n"
+                f"時間帯: {period}\n\n"
+            )
+        except Exception:
+            pass
+    return f"現在日時: {dt_str}\n\n"
 
 
 def load_system_prompt() -> str:
@@ -77,7 +108,7 @@ def main():
         if user_input.strip() in ("quit", "exit"):
             break
 
-        history.append({"role": "user", "content": user_input})
+        history.append({"role": "user", "content": _datetime_header() + user_input})
 
         messages = [{"role": "system", "content": system_prompt}] + history
 

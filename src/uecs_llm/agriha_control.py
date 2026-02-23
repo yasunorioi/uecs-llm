@@ -22,11 +22,14 @@ import json
 import logging
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
+from astral import LocationInfo
+from astral.sun import sun as astral_sun
 
 logger = logging.getLogger("agriha_control")
 
@@ -44,6 +47,10 @@ DEFAULT_CONFIG = {
     "temperature": 0.1,
     "max_tokens": 512,
     "inference_timeout_sec": 60,
+    # 座標（恵庭市近郊: ArSprout node_config より）
+    "latitude": 42.888,
+    "longitude": 141.603,
+    "elevation": 21,
 }
 
 # ---------------------------------------------------------------------------
@@ -159,6 +166,51 @@ def save_decision(
         ),
     )
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# 日の出/日没ヘルパー
+# ---------------------------------------------------------------------------
+
+_JST = ZoneInfo("Asia/Tokyo")
+
+
+def get_sun_times(
+    lat: float,
+    lon: float,
+    elevation: float = 0,
+    dt: datetime | None = None,
+) -> tuple[datetime, datetime]:
+    """指定座標の当日の日の出/日没時刻を返す（JST）。
+
+    Args:
+        lat: 緯度。
+        lon: 経度。
+        elevation: 標高 (m)。
+        dt: 基準日時。None の場合は現在時刻（JST）を使用。
+
+    Returns:
+        (sunrise, sunset) — どちらも JST の aware datetime。
+    """
+    ref = dt if dt is not None else datetime.now(_JST)
+    location = LocationInfo(latitude=lat, longitude=lon)
+    s = astral_sun(location.observer, date=ref.date(), tzinfo=_JST)
+    return s["sunrise"], s["sunset"]
+
+
+def get_time_period(now: datetime, sunrise: datetime, sunset: datetime) -> str:
+    """現在時刻から時間帯ラベルを返す。
+
+    Returns:
+        "日の出前" / "日中（日の出後〜日没前1時間）" / "日没前1時間" / "日没後"
+    """
+    if now < sunrise:
+        return "日の出前"
+    if now >= sunset:
+        return "日没後"
+    if now >= sunset - timedelta(hours=1):
+        return "日没前1時間"
+    return "日中（日の出後〜日没前1時間）"
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +343,7 @@ def run_control_loop(
     *,
     llm_client: Any = None,
     http_client: Any = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """メイン制御ループ（1 回実行、cron から呼ばれる）。
 
@@ -342,6 +395,18 @@ def run_control_loop(
         # 履歴
         history = load_recent_history(db, n=3)
 
+        # 現在日時（JST、タイムゾーン付き）
+        now_jst = (now if now is not None else datetime.now(_JST)).astimezone(_JST)
+
+        # 日の出/日没計算
+        sunrise, sunset = get_sun_times(
+            lat=float(cfg["latitude"]),
+            lon=float(cfg["longitude"]),
+            elevation=float(cfg["elevation"]),
+            dt=now_jst,
+        )
+        time_period = get_time_period(now_jst, sunrise, sunset)
+
         # メッセージ組み立て
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -350,7 +415,9 @@ def run_control_loop(
                 "content": (
                     f"## 直近の判断履歴\n{history}\n\n"
                     f"## 指示\n"
-                    f"現在時刻: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+                    f"現在日時: {now_jst.strftime('%Y-%m-%dT%H:%M:%S%z')}\n"
+                    f"日の出: {sunrise.strftime('%H:%M')} / 日没: {sunset.strftime('%H:%M')}\n"
+                    f"現在の時間帯: {time_period}\n"
                     f"センサーデータを確認し、5分後の気象変化を予測し、"
                     f"目標値に近づける制御アクションを実行せよ。\n"
                     f"アクションが不要なら「現状維持」と報告せよ。"
