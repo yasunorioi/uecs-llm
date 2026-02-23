@@ -185,13 +185,50 @@ class TestGrafanaDatasourceUID:
         text = dashboard_path.read_text(encoding="utf-8")
         hardcoded_uids = set(re.findall(r'"uid":\s*"([^$][^"]*)"', text))
         # Filter out common non-datasource uids
-        hardcoded_uids -= {"greenhouse_weather", "line-webhook"}
+        hardcoded_uids -= {"greenhouse_weather", "line-webhook", "-- Dashboard --"}
         for uid in hardcoded_uids:
             if uid.startswith("influx") or uid.startswith("agriha"):
                 assert uid == ds_uid, (
                     f"Dashboard has hardcoded datasource uid '{uid}' "
                     f"but influxdb.yaml defines '{ds_uid}'"
                 )
+
+
+    def test_dashboard_bucket_matches_docker_compose(self):
+        """dashboard JSON の Flux クエリの bucket == docker-compose の INIT_BUCKET."""
+        import json
+
+        dc = _read("cloud/docker-compose.yaml")
+        dc_bucket = re.search(r"DOCKER_INFLUXDB_INIT_BUCKET=(\S+)", dc).group(1)
+
+        dashboard_path = ROOT / "cloud/grafana/dashboards/greenhouse_weather.json"
+        if not dashboard_path.exists():
+            return
+        text = dashboard_path.read_text(encoding="utf-8")
+        buckets = set(re.findall(r'from\(bucket:\s*\\?"([^"\\]+)\\?"', text))
+        for bucket in buckets:
+            assert bucket == dc_bucket, (
+                f"Dashboard Flux query uses bucket '{bucket}' "
+                f"but docker-compose INIT_BUCKET is '{dc_bucket}'"
+            )
+
+    def test_dashboard_measurements_match_telegraf(self):
+        """dashboard JSON の measurement == telegraf.conf の name_override."""
+        import json
+
+        telegraf = _parse_telegraf_conf(_read("cloud/telegraf/telegraf.conf"))
+        expected = set(telegraf["measurements"])
+
+        dashboard_path = ROOT / "cloud/grafana/dashboards/greenhouse_weather.json"
+        if not dashboard_path.exists():
+            return
+        text = dashboard_path.read_text(encoding="utf-8")
+        measurements = set(re.findall(r'r\._measurement\s*==\s*\\?"([^"\\]+)\\?"', text))
+        for m in measurements:
+            assert m in expected, (
+                f"Dashboard references measurement '{m}' "
+                f"but telegraf.conf only defines {expected}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +378,10 @@ class TestFileExistence:
     def test_env_examples_exist(self):
         assert (ROOT / "cloud/.env.example").exists()
         assert (ROOT / "linebot/.env.example").exists()
+
+    def test_camera_upload_script_exists(self):
+        """RPi カメラアップロードスクリプトが存在するか。"""
+        assert (ROOT / "image/camera_upload.sh").exists()
 
     def test_gitignore_excludes_env(self):
         gitignore = _read(".gitignore")
