@@ -1,0 +1,34 @@
+# Layer 2: ルールベース制御設定
+temperature:
+  target_day: 26.0             # 日中目標温度 (℃)
+  target_night: 17.0           # 夜間目標温度 (℃) ※LOW_TEMP_THRESHOLD(16℃)+1℃以上を推奨
+  margin_open: 2.0             # 目標+Nで窓開 (℃)
+  margin_close: 1.0            # 目標-Nで窓閉 (℃)
+  window_channels: [5, 6, 7, 8]
+
+wind:
+  strong_wind_threshold_ms: 5.0  # 強風閾値 (m/s)
+  # 北風(NNW～NNE): wind_direction 1,2,16
+  north_directions: [1, 2, 16]
+  north_channels: [5, 6]        # 北側窓チャンネル（要実測確認）
+  # 南風(SSE～SSW): wind_direction 8,9,10
+  south_directions: [8, 9, 10]
+  south_channels: [7, 8]        # 南側窓チャンネル（要実測確認）
+
+rain:
+  threshold_mm_h: 0.5           # 降雨閾値 (mm/h)
+  resume_delay_min: 30          # 降雨停止後の再開猶予 (分)
+
+irrigation:
+  channel: 4                    # 灌水電磁弁チャンネル
+  crop_config_path: "/etc/agriha/crop_irrigation.yaml"
+
+unipi_api:
+  base_url: "http://localhost:8080"
+  api_key: ""
+  timeout_sec: 10
+
+location:
+  latitude: 42.888
+  longitude: 141.603
+  elevation: 21
