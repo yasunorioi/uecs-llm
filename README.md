@@ -1,81 +1,84 @@
 # uecs-llm
 
-LLM による温室環境制御システム（UECS-CCM 連携）
+LLM による温室環境制御システム — 三層自律制御アーキテクチャ（v2）
 
 ## アーキテクチャ
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ x86 Mini PC (nuc.local)                              │
-│  llama-server (LFM2.5 1.2B)                            │
-│  agriha_control.py  ← cron 5分間隔                     │
-│    └→ REST API → unipi-daemon                          │
-└───────────────────────┬─────────────────────────────────┘
-                        │ HTTP / WireGuard VPN
-┌───────────────────────▼─────────────────────────────────┐
-│ Raspberry Pi (AgriHA OS)                                │
-│  unipi-daemon                                          │
-│    ├ sensor_loop   : DS18B20 + Misol WH65LP → MQTT     │
-│    ├ ccm_receiver  : UECS-CCM マルチキャスト → MQTT     │
-│    ├ mqtt_bridge   : MQTT ↔ MCP23008 I2C リレー        │
-│    ├ gpio_watch    : DI07-14 緊急オーバーライド         │
-│    └ rest_api      : FastAPI REST-MQTT 変換             │
-│  Mosquitto (MQTT ブローカー)                            │
-└───────────────────────┬─────────────────────────────────┘
-                        │ I2C / GPIO / 1-Wire / RS485
-┌───────────────────────▼─────────────────────────────────┐
+│ Raspberry Pi (AgriHA OS) — 全制御をオンボード実行       │
+│                                                         │
+│  ┌── Layer 1: 緊急制御 ──────────────────────────────┐  │
+│  │ emergency_guard.sh (POSIX sh, cron 1分)           │  │
+│  │ 高温/低温→即時開窓・ロックアウト                   │  │
+│  └──────────────────────────────────────────────────┘  │
+│  ┌── Layer 2: ルールベース制御 ──────────────────────┐  │
+│  │ rule_engine.py (cron 5分)                         │  │
+│  │ YAML定義ルール→灌水・換気・CO2制御                │  │
+│  └──────────────────────────────────────────────────┘  │
+│  ┌── Layer 3: LLM予報制御 ──────────────────────────┐  │
+│  │ forecast_engine.py (cron 1時間)                   │  │
+│  │ Claude Haiku API→天気予報+制御計画生成             │  │
+│  │ plan_executor.py (cron 1分) → 計画実行             │  │
+│  └──────────────────────────────────────────────────┘  │
+│                                                         │
+│  unipi-daemon: センサー・リレー・MQTT・REST API         │
+│  agriha_ui: ローカルWebUI (FastAPI+htmx, ポート8502)   │
+│  Mosquitto: MQTTブローカー                              │
+├─────────────────────────────────────────────────────────┤
 │ UniPi 1.1 ハードウェア                                  │
 │  MCP23008 リレー(8ch) + DS18B20 + GPIO DI + Misol RS485│
 └─────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────┐
 │ VPS（オプション）                                       │
-│  Telegraf : MQTT→InfluxDB ブリッジ (VPN経由)            │
-│  InfluxDB : 時系列データベース                           │
-│  Grafana  : ダッシュボード＋アラート (LINE通知)          │
-│  LINE Bot → Ollama (VPN経由)                            │
+│  Telegraf→InfluxDB→Grafana（VPN経由MQTT転送）          │
+│  LINE Bot (Claude Haiku API)                            │
 └─────────────────────────────────────────────────────────┘
 ```
 
+## 設計原則
+
+- **下層が上層を黙らせる**: Layer 1ロックアウト中はLayer 2/3は動作しない
+- **各層独立動作**: 上層が死んでも下層の安全機構は生きる
+- **RPi単一構成**: x86 Mini PC不要。全てRaspberry Pi上で完結
+- **LLMはクラウドAPI**: Claude Haiku API使用。ローカルLLM不要
+
+## コンポーネント
+
+| コンポーネント | 場所 | 説明 |
+|---------------|------|------|
+| `v2_control` | `src/v2_control/` | 三層制御（emergency_guard.sh, rule_engine.py, forecast_engine.py, plan_executor.py） |
+| `unipi_daemon` | `src/unipi_daemon/` | ハードウェアデーモン（I2C, GPIO, MQTT, REST API） |
+| `agriha_ui` | `src/agriha_ui/` | ローカルWebUI（FastAPI + Jinja2 + htmx, ポート8502） |
+| `linebot` | `linebot/` | LINE Bot（VPS, Claude Haiku API） |
+| `cloud` | `cloud/` | VPS構成（InfluxDB + Telegraf + Grafana + LINE Bot） |
+| `image` | `image/` | Raspbian カスタムイメージビルダー |
+| `config` | `config/` | 設定テンプレート（thresholds.yaml, unipi_daemon.yaml等） |
+
 ## クイックスタート
 
-### 1. LLM 制御サーバー（x86 Mini PC）
-
-```bash
-git clone https://github.com/yasunorioi/uecs-llm.git
-cd uecs-llm
-make install-llm-server
-
-# LFM2.5 モデルのダウンロード
-# https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF
-
-# llama-server の起動
-sudo cp systemd/agriha-llm.service /etc/systemd/system/
-sudo systemctl enable --now agriha-llm
-
-# 5分間隔の制御ループを設定
-sudo cp systemd/agriha-control.cron /etc/cron.d/agriha-control
-```
-
-### 2. UniPi デーモン（Raspberry Pi）
+### RPi セットアップ
 
 ```bash
 cd uecs-llm
-make install-pi-daemon
+pip install -e ".[pi]"
 
-# 設定ファイルをコピーして編集
-sudo mkdir -p /etc/agriha
-sudo cp config/unipi_daemon.example.yaml /etc/agriha/unipi_daemon.yaml
-
-# MQTT ブローカーの起動
-cd docker && docker compose up -d && cd ..
-
-# デーモンの起動
+# unipi-daemon
 sudo cp systemd/unipi-daemon.service /etc/systemd/system/
 sudo systemctl enable --now unipi-daemon
+
+# 三層制御
+sudo cp systemd/agriha-guard.timer /etc/systemd/system/  # Layer 1
+sudo cp config/layer2_config.yaml /etc/agriha/
+# Layer 2/3 の cron 設定は config/ 参照
+
+# ローカルWebUI
+sudo cp systemd/agriha-ui.service /etc/systemd/system/
+sudo systemctl enable --now agriha-ui
 ```
 
-### 3. クラウドサーバー（VPS）
+### VPS セットアップ
 
 VPS に InfluxDB + Telegraf + Grafana + LINE Bot をまとめてデプロイします。
 Telegraf は WireGuard VPN 経由で RPi の Mosquitto (MQTT) に接続し、センサーデータを InfluxDB に蓄積します。
@@ -92,19 +95,9 @@ docker compose up -d
 | InfluxDB | 8086 | 時系列データベース |
 | Telegraf | — | MQTT→InfluxDB ブリッジ（VPN経由でRPi接続） |
 | Grafana | 3000 | ダッシュボード・アラート（LINE通知） |
-| LINE Bot | 8443 | Webhook受信 + Ollama連携 |
+| LINE Bot | 8443 | Webhook受信 + Claude Haiku API連携 |
 
-#### LINE Bot 単体（Ollama同梱）
-
-Ollama を VPS 上で動かす場合は `linebot/` の docker-compose を使用：
-
-```bash
-cd uecs-llm/linebot
-cp .env.example .env
-docker compose up -d
-```
-
-### 4. SD カードイメージ（ゼロから構築）
+### SD カードイメージ（ゼロから構築）
 
 ```bash
 cd uecs-llm/image
@@ -141,75 +134,13 @@ LINE Bot を利用するには LINE Developers Console でチャネルを作成�
 LINE_CHANNEL_SECRET=abc123def456...
 LINE_CHANNEL_ACCESS_TOKEN=XXXXXXXXXXX...
 LINE_USER_ID=U1234567890abcdef...
-```
-
-## コンポーネント
-
-| コンポーネント | 場所 | 対象環境 | 説明 |
-|---------------|------|---------|------|
-| `uecs_llm` | `src/uecs_llm/` | x86 / Pi5 | LLM 制御ループ (agriha_control.py) |
-| `unipi_daemon` | `src/unipi_daemon/` | RPi | ハードウェアデーモン (I2C, GPIO, MQTT, REST) |
-| `linebot` | `linebot/` | VPS | LINE Bot（Ollama 連携） |
-| `cloud` | `cloud/` | VPS | InfluxDB + Telegraf + Grafana + LINE Bot（Docker Compose） |
-| `image` | `image/` | ビルドホスト | Raspbian カスタムイメージビルダー |
-| `config` | `config/` | — | 設定テンプレート |
-| `systemd` | `systemd/` | — | サービスファイル・cron |
-
-## tmux ダッシュボード
-
-LLM 制御サーバー（nuc.local）で tmux ベースの監視・対話ダッシュボードを起動できます。
-
-```bash
-./scripts/start-tmux.sh
-```
-
-```
-┌──────────────────┬──────────────────┐
-│ 0: llama-server  │ 2: unipi-daemon  │
-│    ログ          │    制御ログ       │
-├──────────────────┼──────────────────┤
-│ 1: MQTT monitor  │ 3: REST API      │
-│   (RPi経由)      │    状態監視       │
-├──────────────────┴──────────────────┤
-│ 4: LLM Chat (対話窓)               │
-└─────────────────────────────────────┘
-```
-
-| ペイン | 内容 |
-|--------|------|
-| 0 | llama-server のジャーナルログ |
-| 1 | RPi の MQTT ブローカーをサブスクライブ（全トピック） |
-| 2 | agriha-control（cron 制御ループ）のログ |
-| 3 | RPi の REST API からセンサー値・ステータスを定期取得 |
-| 4 | llama-server と対話できるチャット窓（system_prompt.txt 自動注入） |
-
-### 操作方法
-
-```bash
-# セッションに接続
-tmux attach -t agriha
-
-# ペイン間の移動
-Ctrl+b → 矢印キー
-
-# セッションからデタッチ（バックグラウンド維持）
-Ctrl+b → d
-
-# セッション終了
-tmux kill-session -t agriha
-```
-
-### 環境変数で設定を上書き
-
-```bash
-RPI_HOST=10.10.0.10 LLAMA_URL=http://localhost:8081 ./scripts/start-tmux.sh
+ANTHROPIC_API_KEY=sk-ant-...
+CLAUDE_MODEL=claude-haiku-4-5-20251001
 ```
 
 ## テスト
 
 ```bash
-make test
-# または
 pip install -e ".[dev]"
 pytest tests/ -v
 ```
