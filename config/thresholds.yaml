@@ -1,0 +1,15 @@
+# /etc/agriha/thresholds.yaml
+# AgriHA 閾値設定ファイル
+# agriha_ui (Web UI) から編集可能
+
+emergency:
+  high_temp: 27.0       # ℃ — 超過で全窓全開 (Layer 1)
+  low_temp: 16.0        # ℃ — 以下で全窓全閉 (Layer 1)
+
+co2:
+  target_ppm: 700       # ppm — CO2 制御目標値
+
+ui:
+  port: 8502
+  auth_user: admin
+  auth_pass: agriha
