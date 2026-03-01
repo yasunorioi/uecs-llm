@@ -1,6 +1,6 @@
 """LINE Bot ツール定義と実行エンジン
 
-Ollama tool calling API (OpenAI 互換 / LFM2.5 tool_registry 互換) 用のスキーマと、
+OpenAI互換 tool calling 用のスキーマと、
 ツール実行ロジックを提供する。
 
 ツール一覧:
@@ -20,7 +20,7 @@ from rpi_client import get_sensors, set_relay
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# ツールスキーマ定義 (LFM2.5 / Ollama / OpenAI 互換 JSON Schema)
+# ツールスキーマ定義 (OpenAI 互換 JSON Schema)
 # ---------------------------------------------------------------------------
 
 TOOLS: list[dict[str, Any]] = [

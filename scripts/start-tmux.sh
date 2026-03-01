@@ -3,16 +3,14 @@
 #
 # Usage: ./scripts/start-tmux.sh
 #
-# nuc.local (LLM制御サーバー) 用レイアウト:
+# RPi (AgriHA OS) オンボード v2 レイアウト:
 #   ┌──────────────────┬──────────────────┐
-#   │ 0: llama-server  │ 1: agriha-control│
-#   │    (journalctl)  │    (制御ログ)     │
+#   │ 0: agriha-guard  │ 2: agriha-ui     │
+#   │    (Layer1ログ)  │    (WebUIログ)   │
 #   ├──────────────────┼──────────────────┤
-#   │ 2: MQTT monitor  │ 3: REST API      │
-#   │   (RPi経由)      │    (curl監視)     │
-#   ├──────────────────┴──────────────────┤
-#   │ 4: LLM Chat (対話窓)               │
-#   └─────────────────────────────────────┘
+#   │ 3: MQTT monitor  │ 1: REST API      │
+#   │                  │    (curl監視)    │
+#   └──────────────────┴──────────────────┘
 
 set -euo pipefail
 
@@ -21,10 +19,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # 設定（環境変数で上書き可）
-LLAMA_URL="${LLAMA_URL:-http://localhost:8081}"
 RPI_HOST="${RPI_HOST:-10.10.0.10}"
 MQTT_HOST="${MQTT_HOST:-${RPI_HOST}}"
-REST_API="${REST_API:-http://${RPI_HOST}:8080}"
+REST_API="${REST_API:-http://localhost:8080}"
 
 # 既存セッションがあれば attach
 if tmux has-session -t "$SESSION" 2>/dev/null; then
@@ -49,35 +46,25 @@ tmux split-window -t "${SESSION}:main.0" -h
 # Step 3: 左上を上下に分割
 tmux split-window -t "${SESSION}:main.0" -v
 
-# Step 4: 右上を上下に分割
-tmux split-window -t "${SESSION}:main.2" -v
-
-# Chat窓のサイズ調整
-tmux resize-pane -t "${SESSION}:main.4" -y 15
-
 # コマンド送信
-# pane 0: llama-server ログ (systemdで稼働中)
+# pane 0: agriha-guard ログ (Layer 1 緊急制御)
 tmux send-keys -t "${SESSION}:main.0" \
-    "echo '=== [0] llama-server log ===' && journalctl -f -u agriha-llm --no-hostname" Enter
+    "echo '=== [0] agriha-guard log (Layer 1) ===' && journalctl -f -u agriha-guard --no-hostname" Enter
 
 # pane 1: MQTT monitor (RPiのブローカーに接続)
 tmux send-keys -t "${SESSION}:main.1" \
     "echo '=== [1] MQTT monitor (${MQTT_HOST}) ===' && mosquitto_sub -h ${MQTT_HOST} -t '#' -v" Enter
 
-# pane 2: agriha-control ログ (cron制御ループ)
+# pane 2: agriha-ui ログ (WebUI)
 tmux send-keys -t "${SESSION}:main.2" \
-    "echo '=== [2] agriha-control log ===' && journalctl -f -t agriha-control --no-hostname 2>/dev/null || echo 'Waiting for cron output... (tail syslog)' && tail -f /var/log/syslog 2>/dev/null | grep -i agriha" Enter
+    "echo '=== [2] agriha-ui log (WebUI) ===' && journalctl -f -u agriha-ui --no-hostname" Enter
 
-# pane 3: REST API 状態監視 (5秒おきにセンサー+ステータスを取得)
+# pane 3: REST API 状態監視 (10秒おきにセンサー+ステータスを取得)
 tmux send-keys -t "${SESSION}:main.3" \
     "echo '=== [3] REST API monitor (${REST_API}) ===' && while true; do echo '--- sensors ---'; curl -s ${REST_API}/api/sensors 2>/dev/null | python3 -m json.tool 2>/dev/null || echo '(connection failed)'; echo '--- status ---'; curl -s ${REST_API}/api/status 2>/dev/null | python3 -m json.tool 2>/dev/null || echo '(connection failed)'; sleep 10; done" Enter
 
-# pane 4: LLM Chat
-tmux send-keys -t "${SESSION}:main.4" \
-    "${SCRIPT_DIR}/llm-chat.sh ${LLAMA_URL}" Enter
-
-# Chat窓にフォーカス
-tmux select-pane -t "${SESSION}:main.4"
+# pane 0 にフォーカス
+tmux select-pane -t "${SESSION}:main.0"
 
 echo "Session '$SESSION' created."
 if [ -t 0 ]; then
