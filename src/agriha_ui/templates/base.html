@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}AgriHA{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="site-header__inner">
+      <span class="site-header__logo">🌿 AgriHA</span>
+      <nav class="nav">
+        <a class="nav__link" href="/">ダッシュボード</a>
+        <a class="nav__link" href="/settings">設定</a>
+        <a class="nav__link" href="/history">制御履歴</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="main-content">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <span>AgriHA v2 | ポート8502</span>
+  </footer>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>
