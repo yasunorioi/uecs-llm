@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% block title %}設定 | AgriHA{% endblock %}
+
+{% block content %}
+<h1 class="page-title">設定</h1>
+
+{# ─── フラッシュメッセージ ────────────────────────── #}
+{% if flash %}
+<div class="alert alert--success flash-message" id="flash-msg">
+  ✓ {{ flash }}
+</div>
+{% endif %}
+
+{# ─── システムプロンプト ─────────────────────────── #}
+<section class="section">
+  <h2 class="section__title">システムプロンプト</h2>
+  <p class="section__desc">LLM（Layer 3）に与えるシステム指示を編集できます。</p>
+  <form action="/settings/prompt" method="post">
+    <div class="form-group">
+      <textarea
+        name="prompt_text"
+        rows="20"
+        cols="80"
+        wrap="soft"
+        class="textarea-mono"
+        placeholder="システムプロンプトを入力...">{{ system_prompt or '' }}</textarea>
+    </div>
+    <button type="submit" class="btn btn--primary">保存</button>
+  </form>
+</section>
+
+{# ─── 緊急閾値設定 ───────────────────────────────── #}
+<section class="section">
+  <h2 class="section__title">緊急閾値設定</h2>
+  <p class="section__desc">Layer 1（緊急制御）の動作閾値を設定します。</p>
+  <form action="/settings/thresholds" method="post">
+    <div class="form-row">
+      <label class="form-label" for="high_temp">高温閾値</label>
+      <div class="form-input-group">
+        <input
+          type="number"
+          id="high_temp"
+          name="high_temp"
+          step="0.1"
+          min="20"
+          max="40"
+          value="{{ thresholds.emergency.high_temp if thresholds and thresholds.emergency else '27.0' }}"
+          class="input input--number">
+        <span class="input-unit">℃</span>
+      </div>
+      <p class="form-hint">この温度を超えると全窓全開（緊急冷却）</p>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label" for="low_temp">低温閾値</label>
+      <div class="form-input-group">
+        <input
+          type="number"
+          id="low_temp"
+          name="low_temp"
+          step="0.1"
+          min="0"
+          max="25"
+          value="{{ thresholds.emergency.low_temp if thresholds and thresholds.emergency else '16.0' }}"
+          class="input input--number">
+        <span class="input-unit">℃</span>
+      </div>
+      <p class="form-hint">この温度を下回ると全窓全閉（緊急保温）</p>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label" for="co2_target">CO2 目標値</label>
+      <div class="form-input-group">
+        <input
+          type="number"
+          id="co2_target"
+          name="co2_target"
+          step="1"
+          min="400"
+          max="2000"
+          value="{{ thresholds.co2.target_ppm if thresholds and thresholds.co2 else '700' }}"
+          class="input input--number">
+        <span class="input-unit">ppm</span>
+      </div>
+      <p class="form-hint">CO2濃度の目標値（Layer 3 が参照）</p>
+    </div>
+
+    <button type="submit" class="btn btn--primary">保存</button>
+  </form>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // フラッシュメッセージを3秒後にフェードアウト
+  const flash = document.getElementById('flash-msg');
+  if (flash) {
+    setTimeout(() => flash.classList.add('fade-out'), 3000);
+  }
+</script>
+{% endblock %}

@@ -1,0 +1,215 @@
+{# dashboard_partial.html — htmx partial更新用（base.htmlを継承しない）
+   テンプレート変数は dashboard.html と同一:
+     sensors, lockout, rule_engine, forecast, relays, last_update
+#}
+
+{# ─── ヘッダー行 ─────────────────────────────────── #}
+<div class="dashboard-header">
+  <h1 class="page-title">AgriHA ダッシュボード</h1>
+  <span class="last-update">最終更新: {{ last_update }}</span>
+</div>
+
+{# ─── ロックアウト状態 ────────────────────────────── #}
+{% if lockout and lockout.active %}
+<div class="alert alert--danger lockout-banner">
+  🚨 <strong>ロックアウト中</strong> — {{ lockout.reason }}
+  （残り {{ lockout.remaining_sec }} 秒）
+</div>
+{% else %}
+<div class="alert alert--success">
+  ✅ <strong>正常</strong> — ロックアウトなし
+</div>
+{% endif %}
+
+{# ─── 主要センサーカード ─────────────────────────── #}
+<section class="section">
+  <h2 class="section__title">センサー値</h2>
+  <div class="card-grid">
+
+    <div class="card card--sensor">
+      <div class="card__label">🌡 気温（室内）</div>
+      <div class="card__value">
+        {% if sensors and sensors.get('agriha/h01/ccm/InAirTemp') %}
+          {{ "%.1f"|format(sensors['agriha/h01/ccm/InAirTemp'].value) }} ℃
+        {% elif sensors and sensors.get('InAirTemp') %}
+          {{ "%.1f"|format(sensors['InAirTemp'].value) }} ℃
+        {% else %}
+          ---
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card card--sensor">
+      <div class="card__label">💧 湿度（室内）</div>
+      <div class="card__value">
+        {% if sensors and sensors.get('agriha/h01/ccm/InAirHumi') %}
+          {{ "%.1f"|format(sensors['agriha/h01/ccm/InAirHumi'].value) }} %
+        {% elif sensors and sensors.get('InAirHumi') %}
+          {{ "%.1f"|format(sensors['InAirHumi'].value) }} %
+        {% else %}
+          ---
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card card--sensor">
+      <div class="card__label">🌫 CO2濃度</div>
+      <div class="card__value">
+        {% if sensors and sensors.get('agriha/h01/ccm/InCO2') %}
+          {{ sensors['agriha/h01/ccm/InCO2'].value|int }} ppm
+        {% elif sensors and sensors.get('InCO2') %}
+          {{ sensors['InCO2'].value|int }} ppm
+        {% else %}
+          ---
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card card--sensor">
+      <div class="card__label">☀ 日射量</div>
+      <div class="card__value">
+        {% if sensors and sensors.get('agriha/h01/ccm/InSolar') %}
+          {{ sensors['agriha/h01/ccm/InSolar'].value|int }} W/m²
+        {% elif sensors and sensors.get('InSolar') %}
+          {{ sensors['InSolar'].value|int }} W/m²
+        {% else %}
+          ---
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card card--sensor">
+      <div class="card__label">🌱 土壌水分</div>
+      <div class="card__value">
+        {% if sensors and sensors.get('SoilMoisture') %}
+          {{ "%.1f"|format(sensors['SoilMoisture'].value) }} %
+        {% else %}
+          ---
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card card--sensor">
+      <div class="card__label">💦 排水量</div>
+      <div class="card__value">
+        {% if sensors and sensors.get('DrainFlow') %}
+          {{ "%.1f"|format(sensors['DrainFlow'].value) }} L
+        {% else %}
+          ---
+        {% endif %}
+      </div>
+    </div>
+
+  </div>{# /card-grid #}
+
+  {# その他のセンサー #}
+  {% set known_keys = [
+    'agriha/h01/ccm/InAirTemp', 'agriha/h01/ccm/InAirHumi',
+    'agriha/h01/ccm/InCO2', 'agriha/h01/ccm/InSolar',
+    'InAirTemp', 'InAirHumi', 'InCO2', 'InSolar',
+    'SoilMoisture', 'DrainFlow'
+  ] %}
+  {% if sensors %}
+    {% set other_sensors = sensors.items() | selectattr('0', 'not in', known_keys) | list %}
+    {% if other_sensors %}
+    <details class="other-sensors">
+      <summary>その他のセンサー（{{ other_sensors | length }} 件）</summary>
+      <table class="table">
+        <thead>
+          <tr><th>センサーキー</th><th>値</th></tr>
+        </thead>
+        <tbody>
+          {% for key, data in other_sensors %}
+          <tr>
+            <td>{{ key }}</td>
+            <td>{{ data.value if data.value is not none else '---' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
+    {% endif %}
+  {% endif %}
+</section>
+
+{# ─── 三層制御状態 ────────────────────────────────── #}
+<section class="section">
+  <h2 class="section__title">制御レイヤー状態</h2>
+  <div class="layer-status">
+
+    <div class="layer-card layer-card--layer1">
+      <div class="layer-card__header">
+        <span class="layer-badge layer-badge--1">Layer 1</span>
+        <span class="layer-card__name">緊急制御</span>
+      </div>
+      <div class="layer-card__body">
+        {% if lockout and lockout.active %}
+          <span class="status-dot status-dot--danger"></span>
+          ロックアウト中（残り {{ lockout.remaining_sec }}秒）
+        {% else %}
+          <span class="status-dot status-dot--ok"></span>
+          待機中
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="layer-card layer-card--layer2">
+      <div class="layer-card__header">
+        <span class="layer-badge layer-badge--2">Layer 2</span>
+        <span class="layer-card__name">ルール制御</span>
+      </div>
+      <div class="layer-card__body">
+        {% if rule_engine %}
+          <div>最終実行: {{ rule_engine.last_run }}</div>
+          {% if rule_engine.actions %}
+            <ul class="action-list">
+              {% for act in rule_engine.actions %}
+                <li>{{ act }}</li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <span class="text-muted">アクションなし</span>
+          {% endif %}
+        {% else %}
+          <span class="text-muted">データなし</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="layer-card layer-card--layer3">
+      <div class="layer-card__header">
+        <span class="layer-badge layer-badge--3">Layer 3</span>
+        <span class="layer-card__name">LLM予報</span>
+      </div>
+      <div class="layer-card__body">
+        {% if forecast %}
+          <div>生成: {{ forecast.generated_at }}</div>
+          <div>{{ forecast.summary }}</div>
+          <div class="text-muted">アクション {{ forecast.action_count }} 件</div>
+        {% else %}
+          <span class="text-muted">予報なし</span>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>{# /layer-status #}
+</section>
+
+{# ─── リレー状態 ─────────────────────────────────── #}
+<section class="section">
+  <h2 class="section__title">リレー状態</h2>
+  <div class="relay-grid">
+    {% if relays %}
+      {% for ch in range(1, 9) %}
+        {% set ch_key = 'ch' ~ ch %}
+        {% set state = relays.get(ch_key) %}
+        <div class="relay-chip {% if state %}relay-chip--on{% else %}relay-chip--off{% endif %}">
+          <span class="relay-chip__label">ch{{ ch }}</span>
+          <span class="relay-chip__state">{{ 'ON' if state else 'OFF' }}</span>
+        </div>
+      {% endfor %}
+    {% else %}
+      <span class="text-muted">リレー情報なし</span>
+    {% endif %}
+  </div>
+</section>

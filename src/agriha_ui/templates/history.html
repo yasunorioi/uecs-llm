@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block title %}制御履歴 | AgriHA{% endblock %}
+
+{% block content %}
+<h1 class="page-title">制御履歴（直近24時間）</h1>
+
+{# ─── 件数サマリ ─────────────────────────────────── #}
+<div class="history-summary">
+  <span class="history-badge history-badge--layer1">
+    Layer 1: {{ layer_counts.layer1 if layer_counts else 0 }} 回
+  </span>
+  <span class="history-separator">|</span>
+  <span class="history-badge history-badge--layer2">
+    Layer 2: {{ layer_counts.layer2 if layer_counts else 0 }} 回
+  </span>
+  <span class="history-separator">|</span>
+  <span class="history-badge history-badge--layer3">
+    Layer 3: {{ layer_counts.layer3 if layer_counts else 0 }} 回
+  </span>
+</div>
+
+{# ─── 履歴テーブル ───────────────────────────────── #}
+{% if decisions %}
+<div class="table-wrapper">
+  <table class="table history-table">
+    <thead>
+      <tr>
+        <th>時刻</th>
+        <th>層</th>
+        <th>アクション</th>
+        <th>詳細</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in decisions %}
+      <tr class="history-row history-row--{{ d.layer | lower | replace(' ', '') }}">
+        <td class="history-cell--time">{{ d.timestamp }}</td>
+        <td class="history-cell--layer">
+          {% if 'layer1' in d.layer | lower or '1' in d.layer %}
+            <span class="layer-badge layer-badge--1">Layer 1</span>
+          {% elif 'layer2' in d.layer | lower or '2' in d.layer %}
+            <span class="layer-badge layer-badge--2">Layer 2</span>
+          {% elif 'layer3' in d.layer | lower or '3' in d.layer %}
+            <span class="layer-badge layer-badge--3">Layer 3</span>
+          {% else %}
+            <span class="layer-badge">{{ d.layer }}</span>
+          {% endif %}
+        </td>
+        <td class="history-cell--action">{{ d.action }}</td>
+        <td class="history-cell--detail">{{ d.detail }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty-state">
+  <p>制御履歴はありません</p>
+</div>
+{% endif %}
+{% endblock %}
