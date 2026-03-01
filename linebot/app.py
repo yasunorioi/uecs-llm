@@ -23,11 +23,11 @@ from linebot.v3.messaging import (
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 
 # TODO: v2 LLMクライアントに差し替え
-# from llm_client import generate_response_sync, check_ollama_health, MODEL_NAME
+# from llm_client import generate_response_sync, check_llm_health, MODEL_NAME
 MODEL_NAME = "placeholder"  # v2では agriha_client.py 等に差し替え
 
 
-async def check_ollama_health() -> bool:  # TODO: v2 LLMヘルスチェックに差し替え
+async def check_llm_health() -> bool:  # TODO: v2 LLMヘルスチェックに差し替え
     return True
 
 
@@ -83,7 +83,7 @@ def log_message(user_id: str, role: str, message: str, model: str, session_id: s
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    ok = await check_ollama_health()
+    ok = await check_llm_health()
     if ok:
         logger.info("LLM client is ready.")
     else:
@@ -97,7 +97,7 @@ app = FastAPI(title="agriha-linebot", lifespan=lifespan)
 @app.get("/health")
 async def health():
     """ヘルスチェック"""
-    llm_ok = await check_ollama_health()
+    llm_ok = await check_llm_health()
     return {"status": "ok", "llm": "up" if llm_ok else "down"}
 
 
