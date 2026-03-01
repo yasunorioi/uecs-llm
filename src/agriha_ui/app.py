@@ -32,8 +32,8 @@ UI_AUTH_USER = os.getenv("UI_AUTH_USER", "admin")
 UI_AUTH_PASS = os.getenv("UI_AUTH_PASS", "agriha")
 
 # ── ランタイムデータファイルパス ───────────────────────────────────────────
-RULE_ENGINE_STATE_PATH = "/var/lib/agriha/rule_engine_state.json"
-CURRENT_PLAN_PATH = "/var/lib/agriha/current_plan.json"
+RULE_ENGINE_STATE_PATH = os.getenv("RULE_ENGINE_STATE_PATH", "/var/lib/agriha/rule_engine_state.json")
+CURRENT_PLAN_PATH = os.getenv("CURRENT_PLAN_PATH", "/var/lib/agriha/current_plan.json")
 
 # ── FastAPI / テンプレート設定 ─────────────────────────────────────────────
 _HERE = Path(__file__).parent

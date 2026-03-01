@@ -56,53 +56,32 @@ LLM による温室環境制御システム — 三層自律制御アーキテ�
 | `image` | `image/` | Raspbian カスタムイメージビルダー |
 | `config` | `config/` | 設定テンプレート（thresholds.yaml, unipi_daemon.yaml等） |
 
-## クイックスタート
+## セットアップ
 
-### RPi セットアップ
-
-```bash
-cd uecs-llm
-pip install -e ".[pi]"
-
-# unipi-daemon
-sudo cp systemd/unipi-daemon.service /etc/systemd/system/
-sudo systemctl enable --now unipi-daemon
-
-# 三層制御
-sudo cp systemd/agriha-guard.timer /etc/systemd/system/  # Layer 1
-sudo cp config/layer2_config.yaml /etc/agriha/
-# Layer 2/3 の cron 設定は config/ 参照
-
-# ローカルWebUI
-sudo cp systemd/agriha-ui.service /etc/systemd/system/
-sudo systemctl enable --now agriha-ui
-```
-
-### VPS セットアップ
-
-VPS に InfluxDB + Telegraf + Grafana + LINE Bot をまとめてデプロイします。
-Telegraf は WireGuard VPN 経由で RPi の Mosquitto (MQTT) に接続し、センサーデータを InfluxDB に蓄積します。
+### RPi（本番環境）
 
 ```bash
-cd uecs-llm/cloud
+git clone https://github.com/yasunorioi/uecs-llm.git ~/uecs-llm
+cd ~/uecs-llm
 cp .env.example .env
-# .env に認証情報を記入（下記「LINE API 認証情報の取得」参照）
-docker compose up -d
+nano .env  # ANTHROPIC_API_KEY を記入
+./setup.sh
 ```
 
-| サービス | ポート | 説明 |
-|---------|--------|------|
-| InfluxDB | 8086 | 時系列データベース |
-| Telegraf | — | MQTT→InfluxDB ブリッジ（VPN経由でRPi接続） |
-| Grafana | 3000 | ダッシュボード・アラート（LINE通知） |
-| LINE Bot | 8443 | Webhook受信 + Claude Haiku API連携 |
+これだけで以下が完了する:
+- Python venv作成 + パッケージインストール
+- /etc/agriha/ に設定ファイル配置
+- /var/lib/agriha/ データディレクトリ作成
+- systemd サービス有効化（unipi-daemon, agriha-ui）
+- 三層制御 cron 設定
 
-### SD カードイメージ（ゼロから構築）
+### VPS（クラウドサーバー）
 
 ```bash
-cd uecs-llm/image
-sudo ./build_image.sh raspios-bookworm-arm64-lite.img
-# SD カードに書き込んで起動
+cd ~/uecs-llm/cloud
+cp .env.example .env
+nano .env  # LINE Bot 認証情報を記入
+docker compose up -d
 ```
 
 ## LINE API 認証情報の取得
