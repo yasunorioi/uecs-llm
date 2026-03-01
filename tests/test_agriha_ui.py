@@ -165,12 +165,9 @@ async def test_settings_ok(client: AsyncClient, tmp_config: dict[str, str]) -> N
 
 
 # 5. GET /settings (system_prompt.txt不在) → 200, 空テキストで表示
-async def test_settings_no_prompt_file(client: AsyncClient, tmp_config: dict[str, str], tmp_path: Path) -> None:
-    nonexistent = str(tmp_path / "nonexistent_prompt.txt")
-    with (
-        patch.object(app_module, "AGRIHA_THRESHOLDS_PATH", tmp_config["thresholds"]),
-        patch.object(app_module, "SYSTEM_PROMPT_PATH", nonexistent),
-    ):
+async def test_settings_no_prompt_file(client: AsyncClient, tmp_config: dict[str, str]) -> None:
+    # load_system_prompt のデフォルト引数はimport時評価済み → 関数自体をパッチ
+    with patch("agriha_ui.app.load_system_prompt", return_value=""):
         r = await client.get("/settings")
     assert r.status_code == 200
 
@@ -238,18 +235,26 @@ async def test_save_thresholds_invalid(client: AsyncClient, tmp_config: dict[str
 
 # 10. GET /history → 200, 制御履歴テーブルが表示される
 async def test_history_ok(client: AsyncClient, tmp_config: dict[str, str]) -> None:
-    with patch.object(app_module, "CONTROL_LOG_DB", tmp_config["db"]):
+    # query_decisions のデフォルト引数はimport時評価済み → 関数自体をパッチ
+    mock_decisions = [
+        {"timestamp": "2026-01-01 14:00", "layer": "Layer 1", "action": "緊急開窓", "detail": "気温28.5℃"},
+        {"timestamp": "2026-01-01 13:55", "layer": "Layer 2", "action": "灌水ON", "detail": "日射累積200"},
+        {"timestamp": "2026-01-01 13:50", "layer": "Layer 3", "action": "予報アクション", "detail": "降雨予報"},
+    ]
+    with patch("agriha_ui.app.query_decisions", return_value=mock_decisions):
         r = await client.get("/history")
     assert r.status_code == 200
-    assert "emergency" in r.text or "layer" in r.text.lower()
+    assert "緊急開窓" in r.text
+    assert "灌水ON" in r.text
 
 
 # 11. GET /history (DB不在) → 200, 空リストで表示される
-async def test_history_no_db(client: AsyncClient, tmp_path: Path) -> None:
-    nonexistent_db = str(tmp_path / "no_such.db")
-    with patch.object(app_module, "CONTROL_LOG_DB", nonexistent_db):
+async def test_history_no_db(client: AsyncClient) -> None:
+    # query_decisions のデフォルト引数はimport時評価済み → 関数自体をパッチ
+    with patch("agriha_ui.app.query_decisions", return_value=[]):
         r = await client.get("/history")
     assert r.status_code == 200
+    assert "制御履歴はありません" in r.text
 
 
 # 12. Basic Auth未認証 → 401
