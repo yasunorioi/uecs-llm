@@ -72,7 +72,7 @@ echo "  → ${DATA_DIR} 作成完了"
 # Step 4: systemd サービスファイルインストール + enable
 echo "[4/6] systemdサービスインストール..."
 sudo cp "${SCRIPT_DIR}/systemd/unipi-daemon.service" /etc/systemd/system/
-sudo cp "${SCRIPT_DIR}/services/agriha-ui.service" /etc/systemd/system/
+sudo cp "${SCRIPT_DIR}/systemd/agriha-ui.service" /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable unipi-daemon agriha-ui
 echo "  → unipi-daemon, agriha-ui を有効化"
