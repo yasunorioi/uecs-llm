@@ -48,8 +48,10 @@ unipi-daemon = "unipi_daemon.main:main"
 agriha-control = "uecs_llm.agriha_control:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/uecs_llm", "src/unipi_daemon"]
+packages = ["src/uecs_llm", "src/unipi_daemon", "src/v2_control"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+pythonpath = ["src"]
+addopts = "--import-mode=importlib"
