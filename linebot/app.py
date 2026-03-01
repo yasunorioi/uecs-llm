@@ -1,7 +1,7 @@
 """
 LINE Bot Webhook Handler — FastAPI
 
-LINE Webhook → Ollama (qwen3:8b) → LINE Reply
+LINE Webhook → LLM API → LINE Reply
 """
 
 import os
@@ -22,7 +22,17 @@ from linebot.v3.messaging import (
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 
-from llm_client import generate_response_sync, check_ollama_health, MODEL_NAME
+# TODO: v2 LLMクライアントに差し替え
+# from llm_client import generate_response_sync, check_ollama_health, MODEL_NAME
+MODEL_NAME = "placeholder"  # v2では agriha_client.py 等に差し替え
+
+
+async def check_ollama_health() -> bool:  # TODO: v2 LLMヘルスチェックに差し替え
+    return True
+
+
+def generate_response_sync(user_text: str) -> str:  # TODO: v2 LLM呼び出しに差し替え
+    return "LLMクライアント未設定です。v2クライアントを設定してください。"
 from quiz_scenarios import get_random_quiz
 
 logging.basicConfig(level=logging.INFO)
@@ -75,9 +85,9 @@ async def lifespan(app: FastAPI):
     init_db()
     ok = await check_ollama_health()
     if ok:
-        logger.info("Ollama is reachable.")
+        logger.info("LLM client is ready.")
     else:
-        logger.warning("Ollama is NOT reachable. Responses will fail until Ollama starts.")
+        logger.warning("LLM client is NOT ready.")
     yield
 
 
@@ -87,8 +97,8 @@ app = FastAPI(title="agriha-linebot", lifespan=lifespan)
 @app.get("/health")
 async def health():
     """ヘルスチェック"""
-    ollama_ok = await check_ollama_health()
-    return {"status": "ok", "ollama": "up" if ollama_ok else "down"}
+    llm_ok = await check_ollama_health()
+    return {"status": "ok", "llm": "up" if llm_ok else "down"}
 
 
 @app.post("/callback")
@@ -108,7 +118,7 @@ async def callback(request: Request):
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_text_message(event: MessageEvent):
     """
-    テキストメッセージを受信し、Ollamaに投げてLINE Replyする。
+    テキストメッセージを受信し、LLMに投げてLINE Replyする。
     WebhookHandlerは同期ハンドラのみ対応のため、同期APIを使用。
     """
     user_text = event.message.text
