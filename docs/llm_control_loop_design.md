@@ -1,6 +1,6 @@
 # LLM温室制御ループ設計書
 
-> **Version**: 3.1
+> **Version**: 3.2
 > **Date**: 2026-03-02
 > **Status**: Draft
 > **HW**: RPi (ArSprout RPi, 10.10.0.10, Raspbian Lite, WireGuard VPN)
@@ -68,6 +68,11 @@ ArSprout 観測ノード (192.168.1.70)
 │   Layer 3: agriha_control.py (cron毎時→Claude Haiku API) │
 │            1時間予報JSON生成→plan_executor.pyが実行       │
 │                                                           │
+│ [外部データ入力]                                          │
+│   Open-Meteo API (無料・APIキー不要・JMAモデル)           │
+│     → weather_fetcher.py → TTL1hキャッシュ               │
+│     → forecast_engine user_message に注入（§3.7参照）    │
+│                                                           │
 │ [アクチュエータ出力]                                      │
 │   REST API (:8080)                                       │
 │     POST /api/relay/{ch} → MQTT relay/{ch}/set           │
@@ -106,6 +111,7 @@ ArSprout 観測ノード (192.168.1.70)
 2. [LLMの責務範囲](#2-llmの責務範囲)
 3. [1時間予報＋緊急フラグ方式](#3-1時間予報緊急フラグ方式)
    - [3.6 gradient_controller（勾配制御層）](#36-gradient_controller勾配制御層)
+   - [3.7 天気予報API統合](#37-天気予報api統合)
 4. [Claude Haiku API 接着層](#4-claude-haiku-api-接着層)
 5. [システムプロンプト設計](#5-システムプロンプト設計)
 6. [ステート管理](#6-ステート管理)
@@ -115,7 +121,7 @@ ArSprout 観測ノード (192.168.1.70)
 10. [リレーチャンネル割当](#10-リレーチャンネル割当)
 11. [RPiセットアップ手順](#11-rpiセットアップ手順)
 12. [参照ドキュメント](#12-参照ドキュメント)
-13. [付録A: v2.0→v3.0 変更履歴](#付録a-v20v30-変更履歴)
+13. [付録A: v2.0→v3.2 変更履歴](#付録a-v20v32-変更履歴)
 
 ---
 
@@ -282,6 +288,12 @@ cron (0 * * * *) → agriha_control.py 起動
     ├─ Step 3: システムプロンプト + 履歴 + 指示を組み立て
     │          「現在のセンサーデータを確認し、向こう1時間の
     │           アクション計画を JSON で生成せよ」
+    │
+    ├─ Step 3.5: 天気予報フェッチ（§3.7参照）
+    │            → weather_fetcher.py: Open-Meteo API から向こう6時間予報を取得
+    │            → キャッシュ確認（/var/lib/agriha/weather_cache.json, TTL 1時間）
+    │            → user_message に「## 天気予報（向こう6時間）」セクションを注入
+    │            → フェイルセーフ: API失敗時は「天気予報なし」でLLM呼び出し続行
     │
     ├─ Step 4: Claude Haiku API に送信（tools配列付き）
     │          → LLMが自発的にツールを呼ぶ:
@@ -494,6 +506,172 @@ gradient_controllerはこのフォーマットの `target/priority` を入力と
 > このフォーマットは既存の§3.3 `actions` 配列と**併存**する。
 > LLMが出力する1つのJSONに `target/priority/reason` ブロックと `actions` 配列の
 > 両方を含める（v3.1以降）。
+
+---
+
+### 3.7 天気予報API統合
+
+外部天気予報APIをforecast_engineに統合し、LLMが翌時間の気象条件を考慮して制御計画を立てられるようにする。
+**「予報が外れても勾配制御が吸収する設計。精度で悩むな」**（殿方針）。
+
+#### 3.7.1 API選定結果
+
+**比較表（7候補）:**
+
+| API | 無料枠 | 1時間予報 | 日射量(W/m²) | APIキー | レート制限 | 推奨度 |
+|-----|--------|-----------|-------------|---------|-----------|--------|
+| **Open-Meteo** | 完全無料 | ✓ | ✓ (JMA MSM) | **不要** | 10,000回/日 | **◎ 第1推奨** |
+| Visual Crossing | 1,000レコード/日 | ✓ | ✓ | 必要 | 中 | ○ 第2推奨(バックアップ) |
+| 気象庁forecast API | 完全無料 | ✗ (6時間単位) | ✗ | 不要 | なし | △ 補助的参照のみ |
+| OpenWeatherMap | 1,000回/日 | ✓ | **有料** | 必要 | 中 | ✗ 不採用 |
+| WeatherAPI | 100万回/月 | ✓ | **Enterprise** | 必要 | 中 | ✗ 不採用 |
+| AccuWeather | 50回/日 (試用) | ✓ | ✓ | 必要 | 低 | ✗ 不採用(試用のみ) |
+| Tomorrow.io | 500回/日 | ✓ | **有料** | 必要 | 中 | ✗ 不採用 |
+
+**選定: Open-Meteo**
+
+選定理由:
+- 完全無料・APIキー不要（月額忌避・マクガイバー精神に合致）
+- 日射量(W/m²)を無料で取得可能（灌水の日射比例制御に必須）
+- VPD(飽差)を無料で提供（病害リスク判断に有用）
+- JMAデータ（MSM 5km解析メッシュ）ベースで北海道精度良好
+- 10,000回/日の枠（cron毎時=24回/日で余裕十分）
+
+**バックアップ: Visual Crossing**
+- Open-Meteoが商用利用不可と判断された場合の代替（APIキー取得必要）
+- 日射量込み・15日予報対応
+
+> **⚠️ 商用利用注意事項（殿判断事項）**: Open-MeteoのCC BY 4.0ライセンスは
+> 「農家へのサービス提供」が商用利用に該当するか解釈の余地あり。
+> 顧客への販売モデルを確立する段階で、Visual Crossingへの移行を検討せよ。
+
+**補助的参照: 気象庁forecast API**
+- `https://www.jma.go.jp/bosai/forecast/data/forecast/016000.json`（石狩地方）
+- 6時間単位・日射量なし → 1時間制御には不向き。概況把握のみに使用可
+
+**恵庭市エンドポイント（Open-Meteo）:**
+```
+https://api.open-meteo.com/v1/forecast?latitude=42.888&longitude=141.603
+  &hourly=temperature_2m,relative_humidity_2m,precipitation_probability,
+  precipitation,rain,wind_speed_10m,wind_direction_10m,
+  shortwave_radiation,direct_radiation,diffuse_radiation,
+  surface_pressure,vapour_pressure_deficit
+  &wind_speed_unit=ms&forecast_days=7&timezone=Asia%2FTokyo
+```
+
+#### 3.7.2 データフロー
+
+```
+Open-Meteo API (HTTPS)
+    │
+    ▼
+weather_fetcher.py
+    ├─ キャッシュ確認: /var/lib/agriha/weather_cache.json（TTL 60分）
+    │    ├─ 有効なキャッシュあり → キャッシュから返却
+    │    └─ キャッシュ古/なし  → Open-Meteo API fetch → キャッシュ更新
+    │
+    ├─ フェイルセーフ: try/except → logging.warning → None 返却
+    │    → None の場合: forecast_engine は「天気予報なし」でLLM呼び出し続行
+    │
+    └─ 向こう6時間分（hourlyの6エントリ）を返却
+         → 気温(℃), 湿度(%), 降水確率(%), 降水量(mm),
+           風速(m/s), 風向(°), 日射量(W/m²), 気圧(hPa), VPD(kPa)
+```
+
+**fetchタイミング:** run_forecast() Step3後・Step4前（Step3.5）に配置。
+LLM API呼び出しの直前に天気データをuser_messageに注入する。
+
+**取得データ一覧:**
+
+| パラメータ | 単位 | 用途 |
+|-----------|------|------|
+| temperature_2m | ℃ | 外気温予報（側窓制御参考） |
+| relative_humidity_2m | % | 外気湿度（換気効果判断） |
+| precipitation_probability | % | 降水確率（灌水判断・窓制御） |
+| precipitation / rain | mm | 降水量（窓閉め判断） |
+| wind_speed_10m | m/s | 風速（強風時窓制御） |
+| wind_direction_10m | ° | 風向（片側制御§9参照） |
+| shortwave_radiation | W/m² | 全天日射量（灌水日射比例制御の主入力） |
+| surface_pressure | hPa | 気圧（参考） |
+| vapour_pressure_deficit | kPa | VPD（病害リスク補助指標） |
+
+**キャッシュ設計:**
+- パス: `/var/lib/agriha/weather_cache.json`
+- TTL: 60分（cron毎時起動と整合。API呼び出しは最大1回/時間）
+- 形式: `{"fetched_at": "ISO8601", "hourly": {...}}` (Open-Meteoレスポンスそのまま)
+
+#### 3.7.3 LLMプロンプト注入フォーマット
+
+forecast_engine.py の user_message 構築部（L422付近、日出日没の直後・指示セクションの前）に
+「## 天気予報（向こう6時間）」セクションを挿入する。
+
+**トークン効率重視の1行/時間フォーマット:**
+```
+## 天気予報（向こう6時間）
+14:00 曇 8.2℃ 湿62% 風3.1m/s北 雨0mm 射45W/m²
+15:00 曇 7.8℃ 湿65% 風2.9m/s北 雨0mm 射30W/m²
+16:00 曇 7.1℃ 湿68% 風2.5m/s北北西 雨0mm 射12W/m²
+17:00 雨 6.5℃ 湿78% 風3.8m/s北西 雨0.4mm 射0W/m²
+18:00 雨 6.2℃ 湿82% 風4.2m/s北西 雨1.1mm 射0W/m²
+19:00 雨 6.0℃ 湿85% 風4.0m/s北西 雨0.8mm 射0W/m²
+```
+
+**フォーマット仕様:**
+- 天気記号: 射量>200W/m²→「晴」, 50-200→「曇」, 0-50→「薄曇」, 降水確率>50%→「雨」
+- 風向: 45°刻みで「北/北東/東/南東/南/南西/西/北西」に変換
+- フォーマット例: `{HH:MM} {天気記号} {気温:.1f}℃ 湿{湿度:.0f}% 風{風速:.1f}m/s{風向} 雨{降水量:.1f}mm 射{日射量:.0f}W/m²`
+
+**gradient_controller（§3.6）との連携:**
+- LLMが出力する `priority` フィールドには、天気予報（降雨予測・日射見込み）が考慮される
+- 例: 「17時から降雨予測 → humidity優先度UP → ventilation_priority=true」
+- gradient_controllerは§3.7のweather_fetcherと直接連携しない。LLMの判断結果（§3.6.3 `priority`）を通じて間接的に天気が反映される
+
+**フェイルセーフ時のプロンプト:**
+```
+## 天気予報
+天気予報の取得に失敗しました。Misolの外気センサーデータを参照してください。
+```
+
+#### 3.7.4 設定ファイル拡張
+
+`layer3_config.yaml` に `weather` セクションを追加:
+
+```yaml
+weather:
+  provider: open-meteo          # 主力プロバイダー
+  latitude: 42.888              # 恵庭市
+  longitude: 141.603
+  forecast_hours: 6             # 向こう何時間分を取得・注入するか
+  cache_ttl_minutes: 60         # キャッシュ有効期間（分）
+  cache_path: /var/lib/agriha/weather_cache.json
+  fallback_provider: visual-crossing  # バックアップ（APIキーが必要）
+  # visual_crossing_api_key: YOUR_KEY  # 商用移行時に設定
+```
+
+#### 3.7.5 実装ロードマップ
+
+天気予報API統合の実装は以下のステップで行う:
+
+| Step | 内容 | 規模 |
+|------|------|------|
+| **Step1** | `weather_fetcher.py` 新規モジュール作成 | ~80行 |
+|           | Open-Meteo fetchクライアント（httpx） | |
+|           | TTLキャッシュ（JSON read/write） | |
+|           | フェイルセーフ（try/except → None返却） | |
+|           | pytest（モックfetch/キャッシュHIT/キャッシュMISS/フェイルセーフ） | |
+| **Step2** | `forecast_engine.py` 改修 | ~30行 |
+|           | Step3.5: weather_fetcher呼び出しをuser_message構築直前に追加 | |
+|           | user_message拡張: 天気予報セクション整形・注入 | |
+|           | 既存astral日時注入との連携（同一try/exceptパターン） | |
+| **Step3** | `layer3_config.yaml` 拡張 | ~10行 |
+|           | weatherセクション追加（§3.7.4の内容） | |
+| **Step4** | pytest追加 | ~40行 |
+|           | forecast_engine統合テスト（weather注入あり/なし両ケース） | |
+
+> **設計根拠**: 「予報が外れても勾配制御が吸収する設計。精度で悩むな」（殿方針）。
+> 天気予報は「LLMへの参考情報」であり、制御の決定権はgradient_controller（§3.6）が持つ。
+> Open-Meteo fetch失敗でもMisolの実測外気センサーでフォールバック可能。
+> 「壊れても動く設計。天気APIが落ちても温室は制御できる」（マクガイバー精神）。
 
 ---
 
@@ -1472,12 +1650,13 @@ tail -f /var/log/agriha/control.log
 
 ---
 
-## 付録A: v2.0→v3.1 変更履歴
+## 付録A: v2.0→v3.2 変更履歴
 
 ### A.1 アーキテクチャ変更の背景
 
 2026-02-28の殿との設計議論で、温室LLM制御の根本思想が転換された（v3.0）。
 2026-03-02の設計議論で gradient_controller（勾配制御層）が追加された（v3.1）。
+2026-03-02の部屋子リサーチ結果を統合し、天気予報API統合設計が追加された（v3.2）。
 
 1. **三層構造の導入**: LLMは「知恵」層として最上位に位置し、下位層（ルールベース、緊急停止）が独立動作する設計に変更
 2. **LLM責務の限定**: LLMの判断はCO2制御と露点管理の2場面のみ。灌水・側窓の基本制御はルールベースに委譲
@@ -1521,6 +1700,10 @@ tail -f /var/log/agriha/control.log
 | **v3.1** | **3軸ゲイン設計（§3.6.1）** | **気温・湿度・CO2の相矛盾するゲイン。priority順に重み配分。農家の腕をゲインで表現** |
 | **v3.1** | **病害リスクスコア（§3.6.2）** | **dew_hours/dry_hoursの仮実装。インターフェース定義済み、将来データで差し替え** |
 | **v3.1** | **LLM予報フォーマット改訂（§3.6.3）** | **target/priority/overrides/reasonを§3.3 actionsと併存。gradient_controllerへの入力仕様** |
+| **v3.2** | **天気予報API統合設計（§3.7）** | **Open-Meteo選定（完全無料・APIキー不要・JMAモデル・日射量VPD付き）。weather_fetcher.py設計+TTL1hキャッシュ+フェイルセーフ** |
+| **v3.2** | **API選定比較表（§3.7.1）** | **7候補比較。Open-Meteo◎/Visual Crossing○/気象庁△。商用利用問題は殿判断事項として明記** |
+| **v3.2** | **天気予報フォーマット（§3.7.3）** | **1行/時間のトークン効率重視フォーマット。射量/降水/風向を簡潔に表現。gradient_controller間接連携** |
+| **v3.2** | **実装ロードマップ（§3.7.5）** | **Step1-4: weather_fetcher.py新規+forecast_engine改修+layer3_config拡張+pytest追加** |
 
 ### A.4 継続利用される設計要素
 
