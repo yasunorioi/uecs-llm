@@ -1,7 +1,7 @@
 # LLM温室制御ループ設計書
 
-> **Version**: 3.0
-> **Date**: 2026-02-28
+> **Version**: 3.1
+> **Date**: 2026-03-02
 > **Status**: Draft
 > **HW**: RPi (ArSprout RPi, 10.10.0.10, Raspbian Lite, WireGuard VPN)
 
@@ -62,6 +62,9 @@ ArSprout 観測ノード (192.168.1.70)
 │            27℃超/16℃以下で問答無用。LLM不要              │
 │   Layer 2: rule_engine (cron+日射比例灌水+温度閾値側窓)  │
 │            日常の95%。LLM不要                             │
+│            ↑ gradient_controller がパラメータ動的調整     │
+│   gradient_controller (forecast_engine出力→勾配計算→     │
+│            rule_engineパラメータ調整。§3.6参照)           │
 │   Layer 3: agriha_control.py (cron毎時→Claude Haiku API) │
 │            1時間予報JSON生成→plan_executor.pyが実行       │
 │                                                           │
@@ -102,6 +105,7 @@ ArSprout 観測ノード (192.168.1.70)
 1. [三層制御アーキテクチャ](#1-三層制御アーキテクチャ)
 2. [LLMの責務範囲](#2-llmの責務範囲)
 3. [1時間予報＋緊急フラグ方式](#3-1時間予報緊急フラグ方式)
+   - [3.6 gradient_controller（勾配制御層）](#36-gradient_controller勾配制御層)
 4. [Claude Haiku API 接着層](#4-claude-haiku-api-接着層)
 5. [システムプロンプト設計](#5-システムプロンプト設計)
 6. [ステート管理](#6-ステート管理)
@@ -291,6 +295,13 @@ cron (0 * * * *) → agriha_control.py 起動
     ├─ Step 5: アクション計画JSONをファイルに保存
     │          /var/lib/agriha/current_plan.json
     │
+    ├─ Step 5.5: gradient_controller による rule_engine パラメータ調整（§3.6参照）
+    │            → forecast_engineの出力（target/priority/overrides）を受け取る
+    │            → 実測センサー値と目標レンジの差分からゲイン計算
+    │            → 3軸（気温・湿度・CO2）のpriority重みを配分
+    │            → 病害リスクスコアを更新（§3.6.2参照）
+    │            → 調整済みパラメータをrule_engineに渡す（次サイクル適用）
+    │
     ├─ Step 6: LLMの最終応答（判断理由）をログに記録
     │
     └─ Step 7: プロセス終了（次のcron起動まで待機）
@@ -351,6 +362,138 @@ LLMの1時間予報を待たず、Layer 1が即座に動作する場面:
 | **合計** | | | **~$1/月（数百円）** |
 
 > v2.0（cron 10分間隔）では月約$9だったが、1時間予報方式で大幅に削減。
+
+### 3.6 gradient_controller（勾配制御層）
+
+forecast_engine（Layer 3）の予報出力を受けて、rule_engine（Layer 2）のパラメータを動的に調整する層。
+**「LLMは予報を出すだけ。制御はPythonの勾配計算」**（殿語録）。
+
+**位置づけ:**
+
+```
+Layer 3 (forecast_engine) → target/priority/reason JSON
+    ↓
+gradient_controller → 実測値との差分→ゲイン計算→パラメータ調整
+    ↓
+Layer 2 (rule_engine) → 調整済みパラメータで制御実行
+```
+
+**設計ポイント:**
+
+- forecast_engineの出力（目標レンジ・優先順位・特殊フラグ）を受けて、rule_engineの制御パラメータ（温度閾値・灌水タイミング等）を動的調整する
+- 実測値と目標値の差から開度・強度を比例計算する
+- **目標付近ではゲインを落としてソフトランディング**（オーバーシュート防止）
+- **変化率制限**: 1サイクルで最大N%しかパラメータを動かさない（急変防止）
+- LLM予報が外れても実測フィードバックで自己修正する
+
+**設計根拠（殿語録）:**
+
+- 「LLMは予報を出すだけ。制御はPythonの勾配計算」
+- 「目標値付近をフラフラ安定が理想。オーバーシュートは病害・生育障害」
+- 「天気自体がハルシネーションする。予測が外れる前提の設計」
+- 「ガードレールは保険であって日常ではない」
+
+#### 3.6.1 3軸ゲイン（気温・湿度・CO2）
+
+制御対象の3軸は互いに矛盾する。**「攻めるゲインの数値が農家の腕」**（殿語録）。
+
+| 軸 | ゲイン特性 | トレードオフ |
+|----|------------|--------------|
+| 気温 | **安全寄り**（低ゲイン） | 失敗の代償大（病害・生育障害）。急変禁止 |
+| 湿度 | **中間**（状況依存） | 攻めすぎ→病害リスク、守りすぎ→蒸散効率低下 |
+| CO2 | **攻めと換気のトレードオフ** | 側窓を開ける＝CO2逃げる。換気と相反 |
+
+**3軸は全部同時には満たせない**。農家の「今日の攻め方」を `system_prompt.txt` で表現し、
+forecast_engineが `priority` フィールドに優先順位を出力する。
+gradient_controllerはそのpriority順にゲインの重みを配分する。
+
+**概念コード:**
+
+```python
+# gradient_controller ゲイン配分（概念コード）
+priority = forecast_output["priority"]   # 例: ["humidity", "temp", "co2"]
+gains = {"temp": 0.33, "humidity": 0.33, "co2": 0.34}  # デフォルト均等配分
+
+# priority順に重みをシフト
+gains[priority[0]] += 0.2   # 最優先軸のゲイン増
+gains[priority[-1]] -= 0.2  # 最低優先軸のゲイン減
+
+for axis in ["temp", "humidity", "co2"]:
+    delta = actual[axis] - target_mid[axis]
+
+    # 目標付近ではゲインを落とす（ソフトランディング）
+    if abs(delta) < tolerance[axis]:
+        gains[axis] *= 0.5  # 目標付近: ゲイン半減
+
+    # 変化率制限（1サイクル最大10%）
+    param_new = param_old[axis] + gains[axis] * delta
+    param_new = clamp(param_new, param_old[axis] * 0.9, param_old[axis] * 1.1)
+```
+
+#### 3.6.2 病害リスクスコア
+
+**目的: 科学的実証データを受け入れるための器を先に用意する。今は仮実装、将来データが溜まったら差し替え。**
+「データが取れてから再設計しないための保険。器を用意するだけ」（殿語録）。
+
+**仮実装:**
+
+```python
+def get_disease_risk() -> float:
+    """病害リスクスコア（仮実装。将来は実証データで差し替え）
+
+    Returns:
+        float: 0.0 = リスク低、1.0 以上 = 警戒
+    """
+    # dew_hours: 過去24hで露点付近（temp - dewpoint < 2.0℃）が続いた時間
+    # dry_hours: 過去24hで日射が十分（solar > 200 W/m²）だった時間
+    risk_score = dew_hours / max(dry_hours, 1)
+    return risk_score
+```
+
+**インターフェース設計:**
+
+- `get_disease_risk() -> float` を定義し、中身を差し替え可能にする
+- 将来: 1年分のログ蓄積後、病害発生実績と突合して実証ベースに移行する
+
+**LLMへの渡し方:**
+
+- プロンプトにrisk_scoreと内訳を載せて判断材料にする
+- 例: `「risk=4.0, 露点付近8h, 乾燥機会2h → 灰色かび警戒」`
+
+#### 3.6.3 LLM予報フォーマット改訂（§3.3拡張）
+
+既存の§3.3アクション計画JSON（実行スケジュール中心）に加え、
+forecast_engineが出力する**目標パラメータ仕様**を追記する。
+gradient_controllerはこのフォーマットの `target/priority` を入力として動作する。
+
+```jsonc
+// forecast_engine 出力フォーマット（v3.1追記）
+{
+  "target": {
+    "temp":     [22, 26],    // 目標気温レンジ [min, max] ℃
+    "humidity": [65, 75],    // 目標湿度レンジ [min, max] %
+    "co2":      [400, 800]   // 目標CO2レンジ [min, max] ppm
+  },
+  "priority": ["humidity", "temp", "co2"],  // gradient_controllerがゲイン配分に使う優先順位
+  "overrides": {
+    "ventilation_priority": true  // 換気優先フラグ（true時: 窓閉めを抑制）
+  },
+  "reason": "昨日の多湿+露点接近8h。灰色かび警戒。CO2犠牲にしてでも換気優先"
+}
+```
+
+**フィールド仕様:**
+
+| フィールド | 型 | 必須 | 説明 |
+|-----------|-----|------|------|
+| `target` | object | ✓ | 各軸の目標レンジ。gradient_controllerがゲイン計算に使用 |
+| `priority` | array[string] | ✓ | 優先順位リスト（先頭が最優先）。3軸ゲイン重みに反映 |
+| `overrides` | object | — | 特殊制御フラグ（`ventilation_priority`, `heating_priority` 等） |
+| `reason` | string | ✓ | 判断理由（ログ・デバッグ用）。gradient_controllerログに記録 |
+
+> このフォーマットは既存の§3.3 `actions` 配列と**併存**する。
+> LLMが出力する1つのJSONに `target/priority/reason` ブロックと `actions` 配列の
+> 両方を含める（v3.1以降）。
 
 ---
 
@@ -1329,11 +1472,12 @@ tail -f /var/log/agriha/control.log
 
 ---
 
-## 付録A: v2.0→v3.0 変更履歴
+## 付録A: v2.0→v3.1 変更履歴
 
 ### A.1 アーキテクチャ変更の背景
 
-2026-02-28の殿との設計議論で、温室LLM制御の根本思想が転換された。
+2026-02-28の殿との設計議論で、温室LLM制御の根本思想が転換された（v3.0）。
+2026-03-02の設計議論で gradient_controller（勾配制御層）が追加された（v3.1）。
 
 1. **三層構造の導入**: LLMは「知恵」層として最上位に位置し、下位層（ルールベース、緊急停止）が独立動作する設計に変更
 2. **LLM責務の限定**: LLMの判断はCO2制御と露点管理の2場面のみ。灌水・側窓の基本制御はルールベースに委譲
@@ -1359,20 +1503,24 @@ tail -f /var/log/agriha/control.log
 
 ### A.3 新規追加された設計要素
 
-| v3.0 設計要素 | 説明 |
-|--------------|------|
-| 三層制御アーキテクチャ（§1） | 爆発/ガムテ/知恵の3層、各層独立動作保証 |
-| LLM責務範囲（§2） | CO2制御と露点管理の2場面に限定 |
-| 1時間予報+緊急フラグ方式（§3） | cron毎時予報+計画実行+緊急割り込み |
-| Claude Haiku API接着層（§4） | Anthropic SDK、RPiから直接HTTPS |
-| LLM自然減衰モデル（§7） | 初期→中期→成熟期の三段階、最終的にLLM不要化 |
-| 怒り駆動開発（§5.3） | 農家クレーム→system_prompt.txt蓄積→制御ロジック |
-| 機能優先順位（概要） | リモート制御→状態確認→異常通知→自動制御 |
-| emergency_guard.sh（§1.2, §8） | LLM非依存の緊急停止+LINE通知 |
-| Layer S3: アクション計画（§6.1） | current_plan.json による1時間計画管理 |
-| 4層安全モデル（§8.1） | 物理層+緊急停止(if文)+LLMプロンプト+フォールバック |
-| astral日時注入（§4.3） | 日の出/日没+時間帯4区分をLLMプロンプトに自動注入 |
-| 緊急停止閾値27℃/16℃（§1.2, §8） | 旧閾値40℃/5℃から農家実運用に即した値に変更 |
+| バージョン | 設計要素 | 説明 |
+|-----------|---------|------|
+| v3.0 | 三層制御アーキテクチャ（§1） | 爆発/ガムテ/知恵の3層、各層独立動作保証 |
+| v3.0 | LLM責務範囲（§2） | CO2制御と露点管理の2場面に限定 |
+| v3.0 | 1時間予報+緊急フラグ方式（§3） | cron毎時予報+計画実行+緊急割り込み |
+| v3.0 | Claude Haiku API接着層（§4） | Anthropic SDK、RPiから直接HTTPS |
+| v3.0 | LLM自然減衰モデル（§7） | 初期→中期→成熟期の三段階、最終的にLLM不要化 |
+| v3.0 | 怒り駆動開発（§5.3） | 農家クレーム→system_prompt.txt蓄積→制御ロジック |
+| v3.0 | 機能優先順位（概要） | リモート制御→状態確認→異常通知→自動制御 |
+| v3.0 | emergency_guard.sh（§1.2, §8） | LLM非依存の緊急停止+LINE通知 |
+| v3.0 | Layer S3: アクション計画（§6.1） | current_plan.json による1時間計画管理 |
+| v3.0 | 4層安全モデル（§8.1） | 物理層+緊急停止(if文)+LLMプロンプト+フォールバック |
+| v3.0 | astral日時注入（§4.3） | 日の出/日没+時間帯4区分をLLMプロンプトに自動注入 |
+| v3.0 | 緊急停止閾値27℃/16℃（§1.2, §8） | 旧閾値40℃/5℃から農家実運用に即した値に変更 |
+| **v3.1** | **gradient_controller（§3.6）** | **forecast_engineとrule_engineの間の勾配制御層。3軸ゲイン+病害リスクスコア+LLM予報フォーマット改訂** |
+| **v3.1** | **3軸ゲイン設計（§3.6.1）** | **気温・湿度・CO2の相矛盾するゲイン。priority順に重み配分。農家の腕をゲインで表現** |
+| **v3.1** | **病害リスクスコア（§3.6.2）** | **dew_hours/dry_hoursの仮実装。インターフェース定義済み、将来データで差し替え** |
+| **v3.1** | **LLM予報フォーマット改訂（§3.6.3）** | **target/priority/overrides/reasonを§3.3 actionsと併存。gradient_controllerへの入力仕様** |
 
 ### A.4 継続利用される設計要素
 
