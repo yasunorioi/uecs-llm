@@ -1,0 +1,28 @@
+# Layer 3: LLM 1時間予報設定
+# 設計書: docs/v2_three_layer_design.md §6.3
+claude:
+  model: "claude-haiku-4-5-20251001"
+  max_tokens: 1024
+  max_tool_rounds: 5
+  api_timeout_sec: 30.0
+  # ANTHROPIC_API_KEY は環境変数から読み込み
+
+system_prompt_path: "/etc/agriha/system_prompt.txt"
+
+db:
+  path: "/var/lib/agriha/control_log.db"
+  history_count: 3              # プロンプトに含める直近判断件数
+
+state:
+  plan_path: "/var/lib/agriha/current_plan.json"
+  last_decision_path: "/var/lib/agriha/last_decision.json"
+
+unipi_api:
+  base_url: "http://localhost:8080"
+  api_key: ""
+  timeout_sec: 10
+
+location:
+  latitude: 42.888
+  longitude: 141.603
+  elevation: 21
