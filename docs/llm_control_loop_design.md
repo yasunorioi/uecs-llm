@@ -1,6 +1,6 @@
 # LLM温室制御ループ設計書
 
-> **Version**: 3.2
+> **Version**: 3.3
 > **Date**: 2026-03-02
 > **Status**: Draft
 > **HW**: RPi (ArSprout RPi, 10.10.0.10, Raspbian Lite, WireGuard VPN)
@@ -17,19 +17,21 @@
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  Layer 3: 知恵（LLM）                                    │
-│    cron 毎時 → Claude Haiku API → 1時間アクション計画    │
-│    CO2制御と露点判断のみ。通常24回/日+緊急数回           │
-│    system_prompt.txt が本体。月数百円                     │
-│    → 欠けた場合: Layer 2のルールベースで95%回る          │
+│    イベント駆動: CO2<300ppm/湿度>80%/天気急変時のみ呼ぶ  │
+│    「呼ばれた時だけ来る専門医」。通常2-5回/日            │
+│    出力 = 次の1時間のPID目標値オーバーライド             │
+│    CO2/露点の相反判断のみ。気温管理はLayer 2に委譲        │
+│    → 欠けた場合: Layer 2のPIDが自律的に回る             │
 ├─────────────────────────────────────────────────────────┤
-│  Layer 2: ガムテ（ルールベース）                          │
-│    cron + 日射比例灌水 + 温度閾値側窓 + 重み補正          │
-│    日常の95%をカバー。LLMなしでも動く                     │
+│  Layer 2: ガムテ（ルールベース + PID制御）                │
+│    PIDデーモン常駐: 1時間毎の天気予報でPID目標値更新      │
+│    日射比例灌水 + 温度PID側窓 + 病害リスク補正           │
+│    LLMオーバーライドなき時はPIDが自律制御                 │
 │    → 欠けた場合: Layer 1の緊急停止で最低限の安全確保     │
 ├─────────────────────────────────────────────────────────┤
 │  Layer 1: 爆発（緊急停止）                                │
 │    if文 + LINE curl。27℃超で全開、16℃以下で全閉          │
-│    LLMもルールベースも関係なし。問答無用で物理的に動く    │
+│    LLMもPIDも関係なし。問答無用で物理的に動く             │
 │    → 最終防壁。何があっても動く                          │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -60,18 +62,18 @@ ArSprout 観測ノード (192.168.1.70)
 │ [三層制御]                                                │
 │   Layer 1: emergency_guard.sh (if文+LINE curl)           │
 │            27℃超/16℃以下で問答無用。LLM不要              │
-│   Layer 2: rule_engine (cron+日射比例灌水+温度閾値側窓)  │
-│            日常の95%。LLM不要                             │
-│            ↑ gradient_controller がパラメータ動的調整     │
-│   gradient_controller (forecast_engine出力→勾配計算→     │
-│            rule_engineパラメータ調整。§3.6参照)           │
-│   Layer 3: agriha_control.py (cron毎時→Claude Haiku API) │
-│            1時間予報JSON生成→plan_executor.pyが実行       │
+│   Layer 2: pid_controller (常駐デーモン)                  │
+│            天気予報→PID目標値更新→リレー操作              │
+│            日射比例灌水・温度PID側窓・病害リスク補正       │
+│            LLMオーバーライドなき時は自律制御              │
+│   Layer 3: agriha_control.py (イベント駆動)               │
+│            CO2<300ppm/湿度>80%/天気急変 → Claude Haiku   │
+│            出力=pid_override.json（次1時間PID目標値）      │
 │                                                           │
 │ [外部データ入力]                                          │
-│   Open-Meteo API (無料・APIキー不要・JMAモデル)           │
+│   Visual Crossing API (商用OK・1,000レコ/日・APIキー要)   │
 │     → weather_fetcher.py → TTL1hキャッシュ               │
-│     → forecast_engine user_message に注入（§3.7参照）    │
+│     → pid_controller PID目標値更新 + LLM呼び出し判定     │
 │                                                           │
 │ [アクチュエータ出力]                                      │
 │   REST API (:8080)                                       │
@@ -82,13 +84,13 @@ ArSprout 観測ノード (192.168.1.70)
 │   CommandGate  ← gpio_watch (DI緊急スイッチ)             │
 │   ロックアウト中は全リレー操作を拒否 (423)                │
 └──────────────┬──────────────────────────────────────────┘
-               │  HTTPS (Anthropic API)
+               │  HTTPS (Anthropic API) ← イベント駆動（通常2-5回/日）
                ▼
          Claude Haiku API
-         → tool_calls: get_sensors, get_status, set_relay
-         → 1時間アクション計画JSON返却
+         → tool_calls: get_sensors, get_status
+         → pid_override.json（次の1時間PID目標値）返却
 
-フェイルセーフ: LLM停止時はLayer 2ルールベース+Layer 1緊急停止で稼働継続
+フェイルセーフ: LLM停止時はLayer 2 PIDが自律制御+Layer 1緊急停止で稼働継続
 安全制御: Layer 1 = if文+curl（LLM非依存）
           unipi-daemon CommandGate（緊急スイッチ→300秒ロックアウト）
 
@@ -102,6 +104,10 @@ ArSprout 観測ノード (192.168.1.70)
 > **v3.0変更点**: アーキテクチャを三層構造に全面転換。
 > LLMは「知恵」層として1時間予報のみ担当。日常制御の95%はルールベース。
 > 緊急停止はLLMを一切介さないif文+curlの独立系統。
+>
+> **v3.3変更点**: LLMをイベント駆動化（cron毎時→CO2/湿度閾値/天気急変トリガー）。
+> Layer 2にPID制御を導入。天気予報でPIDゲイン・目標値を更新。
+> LLM出力はアクション計画JSON→pid_override.json（PID目標値オーバーライド）に変更。
 
 ---
 
@@ -109,9 +115,10 @@ ArSprout 観測ノード (192.168.1.70)
 
 1. [三層制御アーキテクチャ](#1-三層制御アーキテクチャ)
 2. [LLMの責務範囲](#2-llmの責務範囲)
-3. [1時間予報＋緊急フラグ方式](#3-1時間予報緊急フラグ方式)
-   - [3.6 gradient_controller（勾配制御層）](#36-gradient_controller勾配制御層)
-   - [3.7 天気予報API統合](#37-天気予報api統合)
+3. [PID制御＋イベント駆動LLM方式](#3-pid制御イベント駆動llm方式)
+   - [3.6 PIDコントローラ設計](#36-pidコントローラ設計)
+   - [3.7 天気予報API統合（Visual Crossing）](#37-天気予報api統合visual-crossing)
+   - [3.8 イベントトリガー監視設計](#38-イベントトリガー監視設計)
 4. [Claude Haiku API 接着層](#4-claude-haiku-api-接着層)
 5. [システムプロンプト設計](#5-システムプロンプト設計)
 6. [ステート管理](#6-ステート管理)
@@ -121,7 +128,7 @@ ArSprout 観測ノード (192.168.1.70)
 10. [リレーチャンネル割当](#10-リレーチャンネル割当)
 11. [RPiセットアップ手順](#11-rpiセットアップ手順)
 12. [参照ドキュメント](#12-参照ドキュメント)
-13. [付録A: v2.0→v3.2 変更履歴](#付録a-v20v32-変更履歴)
+13. [付録A: v2.0→v3.3 変更履歴](#付録a-v20v33-変更履歴)
 
 ---
 
@@ -183,16 +190,23 @@ fi
 - Starlink回線が断絶しても、RPiローカルで動作する（LINE通知のみ不達）
 - cron間隔: `*/1`（1分毎）。LLMの1時間間隔を待たない
 
-### 1.3 Layer 2: ガムテ（ルールベース）
+### 1.3 Layer 2: ガムテ（ルールベース + PID制御）
 
 **日常の95%を担当。LLMなしでも回る。**
 
 ```
 制御対象と方式:
   灌水     = タイマー + 日射比例。cron + crop_irrigation.yaml の閾値
-  側窓     = 温度閾値。気温>目標+2℃で開、気温<目標-1℃で閉
+  側窓     = PID制御（v3.3新規）。気温誤差→比例+積分+微分でゆるやか調整
   EC       = ドサトロン手動調整。制御対象外
   換気扇   = 温度連動ON/OFF（閾値ベース）
+
+PID設計（v3.3新規）:
+  pid_controller デーモン常駐 → 1時間毎に天気予報を取得してPID目標値更新
+  晴天: Pゲイン高め（日射による急昇温に追従）
+  曇天: Pゲイン低め（緩やかな変動）
+  LLMオーバーライド（pid_override.json）を最優先で適用
+  pid_state.json に積分項・前回誤差を永続化（再起動時に継続）
 
 重み補正:
   crop_irrigation.yaml のステージ別パラメータで灌水量・温度目標を調整
@@ -200,24 +214,26 @@ fi
 ```
 
 **独立動作保証**:
-- LLM（Layer 3）が停止しても、日射比例灌水と温度閾値制御は継続
-- RPi上のcronとPythonスクリプトのみで動作（外部API不要）
+- LLM（Layer 3）が停止しても、PIDが自律制御を継続
+- RPi上のcronとPythonスクリプトのみで動作（天気API失敗時はデフォルトゲインで動作）
 
 ### 1.4 Layer 3: 知恵（LLM）
 
-**たまに相談する知恵袋。system_prompt.txt が本体。**
+**叩き起こされた時だけ来る専門医。system_prompt.txt が本体。**
 
-CO2と露点の判断だけがLLMの仕事。詳細は§2（LLMの責務範囲）参照。
+「LLMはPIDのダイヤルを回す手。呼ばれた時だけ来る専門医」（殿語録）。
 
-- cron 毎時（`0 * * * *`）にClaude Haiku APIを呼び出し
-- 向こう1時間のアクション計画JSONを生成
-- RPi上のplan_executor.pyが計画通りに実行
-- 通常24回/日 + 緊急割り込み数回
-- 月コスト: 数百円程度
+- **イベント駆動** — CO2<300ppm/湿度>80%/天気急変時のみ Claude Haiku APIを呼び出し
+- 出力 = pid_override.json（次の1時間のPID目標値オーバーライド）
+- 呼ばれない時間帯はLayer 2のPIDが自律制御
+- CO2/露点の相反判断のみ（気温管理はLayer 2 PIDに委譲）
+- 通常2-5回/日（v3.0の24回/日から大幅削減）
+- 「LLMは次の1時間だけ出力。24時間計画は出させない（ハレーション防止）」（殿語録）
+- 月コスト: 数十円程度（v3.0の数百円から削減）
 
 **独立動作保証**:
-- Layer 3が停止してもLayer 1+2で安全に稼働
-- Anthropic API障害時はLayer 2にフォールバック
+- Layer 3が停止してもLayer 2 PIDが自律制御を継続（最も影響が小さい層）
+- Anthropic API障害時はLayer 2 PIDにフォールバック
 - system_prompt.txtが方針の正データ源。コード変更なしで制御方針を更新可能
 
 ---
@@ -245,114 +261,154 @@ LLMの真のクリティカル判断は**2場面のみ**。
 ### 2.3 1日の呼び出し回数と頻度
 
 ```
-定時予報:   24回/日（1時間毎）
-緊急割込み: 数回/日（閾値超過時、LLMを待たずにLayer 1が先行動作）
-合計:       ~30回/日以下
+イベント駆動呼び出し: 2-5回/日（v3.3方式）
+  - CO2 < 300ppm トリガー: 換気密閉判断
+  - 湿度 > 80% トリガー: 露点リスク判断
+  - 天気急変トリガー: 雨予報等で天候が急変した時
+緊急停止:    Layer 1が独立動作（LLM呼び出しなし）
+
+（参考: v3.0方式 = 定時予報24回/日 + 緊急数回 = ~30回/日）
 
 1回のAPI呼び出し:
-  入力: ~2,000トークン（システムプロンプト+履歴+センサーデータ）
-  出力: ~300トークン（アクション計画JSON+判断理由）
+  入力: ~700トークン（system_prompt簡素化後+センサーデータ）
+  出力: ~200トークン（pid_override.json+判断理由）
   コスト: Claude Haiku 1回あたり ~$0.001未満
 
-月間コスト: ~30回/日 × 30日 × $0.001 ≈ $1未満（数百円程度）
+月間コスト: ~5回/日 × 30日 × $0.001 ≈ $0.15（数十円程度）
+（v3.0の~$1/月から大幅削減）
 ```
 
 ---
 
-## 3. 1時間予報＋緊急フラグ方式
+## 3. PID制御＋イベント駆動LLM方式
 
 ### 3.1 概要
 
 ```
-定時予報（cron 毎時）                    緊急割り込み（cron 毎分）
+PID常駐制御（cron 毎分）              イベント駆動LLM（条件トリガー）
 ┌──────────────────────┐           ┌─────────────────────────┐
-│ agriha_control.py    │           │ emergency_guard.sh      │
-│ Claude Haiku API     │           │ if文 + curl             │
-│ → 1時間計画JSON      │           │ LLMを待たない           │
-│ → plan_executor.py   │           │ 27℃超/16℃以下で即動作  │
+│ pid_controller.py    │           │ agriha_control.py       │
+│ 天気予報でゲイン更新  │ ←呼び出し│ CO2<300/湿度>80/天気急変│
+│ → リレーPID操作      │ ─override→│ → Claude Haiku API      │
+│ 呼ばれない時は自律制御│           │ → pid_override.json     │
 └──────────────────────┘           └─────────────────────────┘
       ↓ 通常制御                          ↓ 緊急制御（最優先）
-      ▼                                   ▼
-  unipi-daemon REST API → MCP23008 I2C → リレー ch1-8
+      ▼                         ┌─────────────────────────┐
+  unipi-daemon REST API         │ emergency_guard.sh      │
+  → MCP23008 I2C → リレー ch1-8│ if文+curl。LLM/PID不要  │
+                                 └─────────────────────────┘
 ```
 
-### 3.2 定時予報ループの流れ
+### 3.2 イベント駆動制御ループの流れ
+
+**PID常駐制御ループ（cron 毎分 or デーモン）:**
 
 ```
-cron (0 * * * *) → agriha_control.py 起動
+cron (*/1 * * * *) → pid_controller.py 起動
+    │
+    ├─ Step 1: センサー値取得（GET /api/sensors）
+    │
+    ├─ Step 2: 天気予報キャッシュ確認（§3.7参照）
+    │          → weather_fetcher.py: Visual Crossing API, TTL 1時間
+    │          → 天気条件に応じてPIDゲインを更新:
+    │             晴天(射量>400W/m²): Kp×1.5（日射急昇温に追従）
+    │             曇天(射量<100W/m²): Kp×0.7（緩やかな変動）
+    │          → イベントトリガー判定（§3.8参照）
+    │             CO2 < 300ppm → agriha_control.py 起動
+    │             湿度 > 80%  → agriha_control.py 起動
+    │             天気急変検知 → agriha_control.py 起動
+    │
+    ├─ Step 3: pid_override.json 確認（§3.3参照）
+    │          → 有効期限内のオーバーライドがあれば適用
+    │          → 期限切れ or なしの場合はデフォルトPID目標値を使用
+    │
+    ├─ Step 4: PID計算 → リレー操作
+    │          → 誤差(error) = 目標気温 - 実測気温
+    │          → Kp×error + Ki×integral + Kd×derivative
+    │          → pid_state.json に積分項・前回誤差を保存
+    │          → POST /api/relay/{ch} でリレー制御
+    │
+    └─ Step 5: pid_state.json 更新・ログ記録
+```
+
+**LLMイベント駆動ループ（トリガー発火時のみ）:**
+
+```
+イベントトリガー（§3.8）→ agriha_control.py 起動
     │
     ├─ Step 1: unipi-daemon REST API への接続確認
     │
-    ├─ Step 2: 直近の判断履歴をSQLiteから読み込み（§6参照）
+    ├─ Step 2: 天気予報データ読み込み（§3.7参照）
+    │          → weather_fetcher.py キャッシュから取得
+    │          → user_message に「## 天気予報（向こう6時間）」セクション注入
     │
-    ├─ Step 3: システムプロンプト + 履歴 + 指示を組み立て
-    │          「現在のセンサーデータを確認し、向こう1時間の
-    │           アクション計画を JSON で生成せよ」
-    │
-    ├─ Step 3.5: 天気予報フェッチ（§3.7参照）
-    │            → weather_fetcher.py: Open-Meteo API から向こう6時間予報を取得
-    │            → キャッシュ確認（/var/lib/agriha/weather_cache.json, TTL 1時間）
-    │            → user_message に「## 天気予報（向こう6時間）」セクションを注入
-    │            → フェイルセーフ: API失敗時は「天気予報なし」でLLM呼び出し続行
+    ├─ Step 3: システムプロンプト + センサー + 指示を組み立て
+    │          「CO2/露点の判断のみ。次の1時間のPID目標値オーバーライドをJSONで出力せよ」
     │
     ├─ Step 4: Claude Haiku API に送信（tools配列付き）
     │          → LLMが自発的にツールを呼ぶ:
-    │            (1) get_sensors  → REST API GET /api/sensors
-    │                → CCM(内温/湿度/CO2) + DS18B20 + Misol(外気/風/降雨)
-    │            (2) get_status   → REST API GET /api/status
-    │                → リレー状態(ch1-8) + ロックアウト状態
-    │            (3) 判断 → 1時間アクション計画JSON生成
-    │                → 必要に応じて即時set_relay実行も
+    │            (1) get_sensors  → CCM(内温/湿度/CO2) + DS18B20 + Misol
+    │            (2) get_status   → リレー状態 + ロックアウト状態
+    │            (3) 判断 → pid_override.json 生成（next 1時間のPID目標値）
     │
-    ├─ Step 5: アクション計画JSONをファイルに保存
-    │          /var/lib/agriha/current_plan.json
+    ├─ Step 5: pid_override.json を /var/lib/agriha/ に保存
+    │          → pid_controller.py が次サイクルで適用
     │
-    ├─ Step 5.5: gradient_controller による rule_engine パラメータ調整（§3.6参照）
-    │            → forecast_engineの出力（target/priority/overrides）を受け取る
-    │            → 実測センサー値と目標レンジの差分からゲイン計算
-    │            → 3軸（気温・湿度・CO2）のpriority重みを配分
-    │            → 病害リスクスコアを更新（§3.6.2参照）
-    │            → 調整済みパラメータをrule_engineに渡す（次サイクル適用）
-    │
-    ├─ Step 6: LLMの最終応答（判断理由）をログに記録
-    │
-    └─ Step 7: プロセス終了（次のcron起動まで待機）
+    └─ Step 6: 判断理由をログに記録・プロセス終了
 ```
 
-### 3.3 アクション計画JSON
+### 3.3 pid_override.json（LLMオーバーライド出力）
 
-LLMが生成するアクション計画の形式:
+LLMが生成するPID目標値オーバーライドの形式。
+パス: `/var/lib/agriha/pid_override.json`
+pid_controller.pyが毎サイクル確認し、有効期限内なら優先適用する。
 
-```json
+**「LLMはPIDのダイヤルを回す手。リレーを直接叩かない」**（殿語録）。
+
+```jsonc
+// pid_override.json（v3.3 LLMオーバーライド）
 {
-  "generated_at": "2026-02-28T14:00:00+09:00",
-  "valid_until": "2026-02-28T15:00:00+09:00",
-  "summary": "日射強く気温上昇傾向。CO2は換気で自然値。露点リスクなし。",
-  "actions": [
-    {
-      "execute_at": "+0min",
-      "relay_ch": 5,
-      "value": 1,
-      "duration_sec": 30,
-      "reason": "北側窓50%開（気温上昇対応）"
-    },
-    {
-      "execute_at": "+30min",
-      "relay_ch": 4,
-      "value": 1,
-      "duration_sec": 300,
-      "reason": "灌水5分（日射比例閾値到達見込み）"
-    }
-  ],
-  "co2_advisory": "換気中のためCO2自然値で推移。密閉判断不要",
-  "dewpoint_risk": "low",
-  "next_check_note": "15時に日射減衰見込み。側窓調整の可能性あり"
+  "generated_at": "2026-03-02T14:00:00+09:00",
+  "valid_until":  "2026-03-02T15:00:00+09:00",  // 次の1時間のみ有効
+  "trigger":      "co2_low",                      // 発火トリガー種別
+  "pid_targets": {
+    "temp_setpoint":  24.0,   // ℃ — PID目標気温
+    "humidity_max":   78.0,   // % — 湿度上限（超過時換気優先）
+    "co2_mode":       "seal"  // "seal"=密閉CO2蓄積 / "vent"=換気CO2放出
+  },
+  "pid_gains_override": {
+    "Kp": 1.8,   // 比例ゲイン（天気による通常値を上書き）
+    "Ki": 0.05,
+    "Kd": 0.2
+  },
+  "ventilation_priority": true,   // true: 換気を気温制御より優先
+  "reason": "CO2が280ppmまで低下。密閉モードに切替。露点リスク低のため換気制限",
+  "trigger_values": {
+    "co2_ppm": 280,
+    "humidity_pct": 72
+  }
 }
 ```
 
+**フィールド仕様:**
+
+| フィールド | 型 | 必須 | 説明 |
+|-----------|-----|------|------|
+| `generated_at` | ISO8601 | ✓ | 生成時刻 |
+| `valid_until` | ISO8601 | ✓ | 有効期限（常に1時間以内）|
+| `trigger` | string | ✓ | 発火トリガー: `co2_low`, `humidity_high`, `weather_change` |
+| `pid_targets` | object | ✓ | PID制御の目標値。pid_controller.pyがこれを使用 |
+| `pid_gains_override` | object | — | ゲインのオーバーライド（省略時は天気ベース値を使用）|
+| `ventilation_priority` | bool | — | 換気優先フラグ |
+| `reason` | string | ✓ | 判断理由（ログ・デバッグ用）|
+
+> **plan_executor.py について**: v3.0で使用していた `actions[]` 配列実行器は廃止候補。
+> PIDがリレーを直接操作するため、計画スケジューラ（plan_executor）は不要になる。
+> v3.3移行期は互換性のため残すが、新規実装では不使用とする。
+
 ### 3.4 緊急割り込み
 
-LLMの1時間予報を待たず、Layer 1が即座に動作する場面:
+PIDを超え、Layer 1が即座に動作する場面（LLM/PID一切関与しない）:
 
 | 条件 | 動作 | LLMの関与 |
 |------|------|-----------|
@@ -361,93 +417,126 @@ LLMの1時間予報を待たず、Layer 1が即座に動作する場面:
 | 降雨検知 (rainfall > 0.5mm/h) | 窓系リレー全OFF | **なし** |
 | 緊急スイッチ押下 | CommandGate 300秒ロックアウト | **なし** |
 
-> **重要**: 緊急割り込みが発動した場合でも、次回の定時予報（毎時cron）で
-> LLMは現在の状態を get_status で確認し、緊急割り込み後の状態を考慮した
-> 新たなアクション計画を生成する。
+**LLMイベントトリガー（Layer 3を叩き起こす条件、Layer 1とは別系統）:**
+
+| 条件 | 動作 | 詳細 |
+|------|------|------|
+| CO2 < 300ppm | LLM起動（密閉判断） | 換気しすぎでCO2が低下 → 密閉タイミング判断 |
+| 湿度 > 80% | LLM起動（露点判断） | 病害リスク → 暖房か換気かの判断 |
+| 天気急変検知 | LLM起動（計画変更） | 晴→雨（降水確率50%→80%以上）等 |
+
+詳細は§3.8（イベントトリガー監視設計）参照。
+
+> **重要**: Layer 1緊急停止は、LLMもPIDも無関係に独立動作する。
+> イベントトリガーによるLLM起動後も、Layer 1は並行して毎分監視を継続する。
 
 ### 3.5 コスト見積もり
 
 | 項目 | 数量 | 単価 | 月額 |
 |------|------|------|------|
-| 定時予報 | 24回/日 × 30日 = 720回 | ~$0.001/回 | ~$0.72 |
-| 緊急割り込み | LLMを呼ばない | $0 | $0 |
-| **合計** | | | **~$1/月（数百円）** |
+| LLMイベント駆動 | ~5回/日 × 30日 = 150回 | ~$0.001/回 | ~$0.15 |
+| 緊急停止(Layer 1) | LLMを呼ばない | $0 | $0 |
+| PID制御(Layer 2) | RPiローカル計算のみ | $0 | $0 |
+| **合計** | | | **~$0.15/月（数十円）** |
 
-> v2.0（cron 10分間隔）では月約$9だったが、1時間予報方式で大幅に削減。
+| バージョン | 方式 | LLM回数/日 | 月額概算 |
+|-----------|------|-----------|---------|
+| v2.0 | cron 10分間隔 | 144回 | ~$9 |
+| v3.0 | cron 1時間間隔 | 24回 | ~$1 |
+| **v3.3** | **イベント駆動** | **~5回** | **~$0.15** |
 
-### 3.6 gradient_controller（勾配制御層）
+> 「PIDが回れば回るほどLLMの出番が減る。それが正しい設計」（殿語録）。
 
-forecast_engine（Layer 3）の予報出力を受けて、rule_engine（Layer 2）のパラメータを動的に調整する層。
-**「LLMは予報を出すだけ。制御はPythonの勾配計算」**（殿語録）。
+### 3.6 PIDコントローラ設計（v3.3 Layer 2常駐）
 
-**位置づけ:**
+Layer 2に常駐するPIDデーモン。天気予報でゲイン・目標値を更新し、リレーをゆるやかに操作する。
+**「LLMがリレーを直接叩かない。Pythonデーモンが常駐してPIDを回す」**（殿語録）。
+
+**位置づけ（v3.3改訂）:**
 
 ```
-Layer 3 (forecast_engine) → target/priority/reason JSON
-    ↓
-gradient_controller → 実測値との差分→ゲイン計算→パラメータ調整
-    ↓
-Layer 2 (rule_engine) → 調整済みパラメータで制御実行
+Visual Crossing API → 天気予報 → PIDゲインテーブル更新
+                                       ↓
+                          pid_state.json（積分項・前回誤差）
+                                       ↓
+センサー実測値 → [error = setpoint - actual] → PID計算 → リレー操作
+                                       ↑
+                          pid_override.json（LLMオーバーライド）
 ```
 
 **設計ポイント:**
 
-- forecast_engineの出力（目標レンジ・優先順位・特殊フラグ）を受けて、rule_engineの制御パラメータ（温度閾値・灌水タイミング等）を動的調整する
-- 実測値と目標値の差から開度・強度を比例計算する
-- **目標付近ではゲインを落としてソフトランディング**（オーバーシュート防止）
-- **変化率制限**: 1サイクルで最大N%しかパラメータを動かさない（急変防止）
-- LLM予報が外れても実測フィードバックで自己修正する
+- 天気予報（1時間毎fetch）でPIDゲインを動的更新: 晴天はKp高め、曇天はKp低め
+- **「PIDには未来がない。天気予報急変時にLLMが介入してPID目標値をオーバーライド」**（殿語録）
+- 積分項の過剰蓄積（Wind-up）を防ぐため、積分項を上限クリップ
+- 1サイクル最大変化率を制限（急変動防止）
+- LLMオーバーライド（pid_override.json）を最優先適用
 
-**設計根拠（殿語録）:**
+#### 3.6.1 PIDゲインテーブル（天気条件別）
 
-- 「LLMは予報を出すだけ。制御はPythonの勾配計算」
-- 「目標値付近をフラフラ安定が理想。オーバーシュートは病害・生育障害」
-- 「天気自体がハルシネーションする。予測が外れる前提の設計」
-- 「ガードレールは保険であって日常ではない」
+**「PIDゲイン値自体を天気予報で変える。晴天=Pゲイン高め、曇天=低め」**（殿語録）。
 
-#### 3.6.1 3軸ゲイン（気温・湿度・CO2）
+| 天気条件 | 日射量 | Kp | Ki | Kd | 備考 |
+|---------|--------|-----|-----|-----|------|
+| 晴天 | > 400 W/m² | 1.5 | 0.05 | 0.2 | 急昇温に追従。やや攻め |
+| 薄曇 | 100-400 W/m² | 1.0 | 0.05 | 0.2 | 標準ゲイン |
+| 曇天 | < 100 W/m² | 0.7 | 0.03 | 0.1 | 変動緩やか。ゆっくり制御 |
+| 降雨 | 0 W/m² | 0.5 | 0.02 | 0.1 | 雨天=窓閉め方向。低ゲイン |
 
-制御対象の3軸は互いに矛盾する。**「攻めるゲインの数値が農家の腕」**（殿語録）。
-
-| 軸 | ゲイン特性 | トレードオフ |
-|----|------------|--------------|
-| 気温 | **安全寄り**（低ゲイン） | 失敗の代償大（病害・生育障害）。急変禁止 |
-| 湿度 | **中間**（状況依存） | 攻めすぎ→病害リスク、守りすぎ→蒸散効率低下 |
-| CO2 | **攻めと換気のトレードオフ** | 側窓を開ける＝CO2逃げる。換気と相反 |
-
-**3軸は全部同時には満たせない**。農家の「今日の攻め方」を `system_prompt.txt` で表現し、
-forecast_engineが `priority` フィールドに優先順位を出力する。
-gradient_controllerはそのpriority順にゲインの重みを配分する。
+**「攻めるゲインの数値が農家の腕」**（殿語録）。
+上記テーブルは初期値。system_prompt.txtへの農家フィードバックで調整する。
 
 **概念コード:**
 
 ```python
-# gradient_controller ゲイン配分（概念コード）
-priority = forecast_output["priority"]   # 例: ["humidity", "temp", "co2"]
-gains = {"temp": 0.33, "humidity": 0.33, "co2": 0.34}  # デフォルト均等配分
+# pid_controller.py（概念コード）
+def update_gains_from_weather(solar_w_m2: float) -> dict:
+    """天気予報の日射量からPIDゲインを更新"""
+    if solar_w_m2 > 400:
+        return {"Kp": 1.5, "Ki": 0.05, "Kd": 0.2}
+    elif solar_w_m2 > 100:
+        return {"Kp": 1.0, "Ki": 0.05, "Kd": 0.2}
+    elif solar_w_m2 > 0:
+        return {"Kp": 0.7, "Ki": 0.03, "Kd": 0.1}
+    else:  # 降雨
+        return {"Kp": 0.5, "Ki": 0.02, "Kd": 0.1}
 
-# priority順に重みをシフト
-gains[priority[0]] += 0.2   # 最優先軸のゲイン増
-gains[priority[-1]] -= 0.2  # 最低優先軸のゲイン減
-
-for axis in ["temp", "humidity", "co2"]:
-    delta = actual[axis] - target_mid[axis]
-
-    # 目標付近ではゲインを落とす（ソフトランディング）
-    if abs(delta) < tolerance[axis]:
-        gains[axis] *= 0.5  # 目標付近: ゲイン半減
-
-    # 変化率制限（1サイクル最大10%）
-    param_new = param_old[axis] + gains[axis] * delta
-    param_new = clamp(param_new, param_old[axis] * 0.9, param_old[axis] * 1.1)
+def pid_step(setpoint, actual, state, gains) -> float:
+    """PID計算（1ステップ）"""
+    error     = setpoint - actual
+    integral  = clamp(state["integral"] + error, -50, 50)  # Wind-up防止
+    derivative = error - state["prev_error"]
+    output    = gains["Kp"]*error + gains["Ki"]*integral + gains["Kd"]*derivative
+    # 変化率制限: 1サイクル最大10%
+    output = clamp(output, state["prev_output"]*0.9, state["prev_output"]*1.1)
+    return output, {"integral": integral, "prev_error": error, "prev_output": output}
 ```
 
-#### 3.6.2 病害リスクスコア
+#### 3.6.2 pid_state.json（PID状態永続化）
+
+PIDデーモン再起動時に積分項・前回誤差を引き継ぐための状態ファイル。
+パス: `/var/lib/agriha/pid_state.json`
+
+```jsonc
+{
+  "updated_at": "2026-03-02T14:05:00+09:00",
+  "axis": "temp",
+  "setpoint":   24.0,          // 現在の目標気温
+  "integral":   3.2,           // 積分項（再起動で引き継ぐ）
+  "prev_error": 0.8,           // 前回誤差
+  "prev_output": 0.4,          // 前回出力
+  "current_gains": {           // 現在適用中のゲイン
+    "Kp": 1.0, "Ki": 0.05, "Kd": 0.2
+  },
+  "weather_condition": "薄曇", // 現在の天気条件（ゲイン選択根拠）
+  "llm_override_active": false // pid_override.json が現在有効か
+}
+```
+
+#### 3.6.3 病害リスクスコア（§3.6.2から継続）
 
 **目的: 科学的実証データを受け入れるための器を先に用意する。今は仮実装、将来データが溜まったら差し替え。**
 「データが取れてから再設計しないための保険。器を用意するだけ」（殿語録）。
-
-**仮実装:**
 
 ```python
 def get_disease_risk() -> float:
@@ -462,216 +551,210 @@ def get_disease_risk() -> float:
     return risk_score
 ```
 
-**インターフェース設計:**
-
-- `get_disease_risk() -> float` を定義し、中身を差し替え可能にする
-- 将来: 1年分のログ蓄積後、病害発生実績と突合して実証ベースに移行する
-
-**LLMへの渡し方:**
-
-- プロンプトにrisk_scoreと内訳を載せて判断材料にする
-- 例: `「risk=4.0, 露点付近8h, 乾燥機会2h → 灰色かび警戒」`
-
-#### 3.6.3 LLM予報フォーマット改訂（§3.3拡張）
-
-既存の§3.3アクション計画JSON（実行スケジュール中心）に加え、
-forecast_engineが出力する**目標パラメータ仕様**を追記する。
-gradient_controllerはこのフォーマットの `target/priority` を入力として動作する。
-
-```jsonc
-// forecast_engine 出力フォーマット（v3.1追記）
-{
-  "target": {
-    "temp":     [22, 26],    // 目標気温レンジ [min, max] ℃
-    "humidity": [65, 75],    // 目標湿度レンジ [min, max] %
-    "co2":      [400, 800]   // 目標CO2レンジ [min, max] ppm
-  },
-  "priority": ["humidity", "temp", "co2"],  // gradient_controllerがゲイン配分に使う優先順位
-  "overrides": {
-    "ventilation_priority": true  // 換気優先フラグ（true時: 窓閉めを抑制）
-  },
-  "reason": "昨日の多湿+露点接近8h。灰色かび警戒。CO2犠牲にしてでも換気優先"
-}
-```
-
-**フィールド仕様:**
-
-| フィールド | 型 | 必須 | 説明 |
-|-----------|-----|------|------|
-| `target` | object | ✓ | 各軸の目標レンジ。gradient_controllerがゲイン計算に使用 |
-| `priority` | array[string] | ✓ | 優先順位リスト（先頭が最優先）。3軸ゲイン重みに反映 |
-| `overrides` | object | — | 特殊制御フラグ（`ventilation_priority`, `heating_priority` 等） |
-| `reason` | string | ✓ | 判断理由（ログ・デバッグ用）。gradient_controllerログに記録 |
-
-> このフォーマットは既存の§3.3 `actions` 配列と**併存**する。
-> LLMが出力する1つのJSONに `target/priority/reason` ブロックと `actions` 配列の
-> 両方を含める（v3.1以降）。
+- `get_disease_risk() -> float` インターフェースを維持し、中身を差し替え可能にする
+- 病害リスクスコアはイベントトリガー（§3.8）の湿度閾値調整にも利用する
+- プロンプトにrisk_scoreと内訳を載せてLLMの判断材料にする（例: `「risk=4.0, 露点付近8h → 灰色かび警戒」`）
 
 ---
 
-### 3.7 天気予報API統合
+### 3.7 天気予報API統合（Visual Crossing）
 
-外部天気予報APIをforecast_engineに統合し、LLMが翌時間の気象条件を考慮して制御計画を立てられるようにする。
-**「予報が外れても勾配制御が吸収する設計。精度で悩むな」**（殿方針）。
+外部天気予報APIをpid_controllerとagriha_controlに統合する。
+**「予報が外れてもPIDが吸収する設計。精度で悩むな」**（殿方針）。
 
-#### 3.7.1 API選定結果
+#### 3.7.1 API選定結果（v3.3改訂）
 
 **比較表（7候補）:**
 
-| API | 無料枠 | 1時間予報 | 日射量(W/m²) | APIキー | レート制限 | 推奨度 |
-|-----|--------|-----------|-------------|---------|-----------|--------|
-| **Open-Meteo** | 完全無料 | ✓ | ✓ (JMA MSM) | **不要** | 10,000回/日 | **◎ 第1推奨** |
-| Visual Crossing | 1,000レコード/日 | ✓ | ✓ | 必要 | 中 | ○ 第2推奨(バックアップ) |
-| 気象庁forecast API | 完全無料 | ✗ (6時間単位) | ✗ | 不要 | なし | △ 補助的参照のみ |
-| OpenWeatherMap | 1,000回/日 | ✓ | **有料** | 必要 | 中 | ✗ 不採用 |
-| WeatherAPI | 100万回/月 | ✓ | **Enterprise** | 必要 | 中 | ✗ 不採用 |
-| AccuWeather | 50回/日 (試用) | ✓ | ✓ | 必要 | 低 | ✗ 不採用(試用のみ) |
-| Tomorrow.io | 500回/日 | ✓ | **有料** | 必要 | 中 | ✗ 不採用 |
+| API | 無料枠 | 1時間予報 | 日射量(W/m²) | APIキー | 商用利用 | 推奨度 |
+|-----|--------|-----------|-------------|---------|---------|--------|
+| **Visual Crossing** | 1,000レコード/日 | ✓ | ✓ (solarradiation) | 必要 | **OK** | **◎ 採用（v3.3）** |
+| Open-Meteo | 完全無料 | ✓ | ✓ (JMA MSM) | 不要 | ⚠️ 要確認 | △ 商用利用問題で降格 |
+| 気象庁forecast API | 完全無料 | ✗ (6時間単位) | ✗ | 不要 | OK | △ 補助的参照のみ |
+| OpenWeatherMap | 1,000回/日 | ✓ | **有料** | 必要 | OK | ✗ 不採用 |
+| WeatherAPI | 100万回/月 | ✓ | **Enterprise** | 必要 | OK | ✗ 不採用 |
+| AccuWeather | 50回/日 (試用) | ✓ | ✓ | 必要 | OK | ✗ 不採用(試用のみ) |
+| Tomorrow.io | 500回/日 | ✓ | **有料** | 必要 | OK | ✗ 不採用 |
 
-**選定: Open-Meteo**
+**採用: Visual Crossing（v3.3 殿裁定）**
 
-選定理由:
-- 完全無料・APIキー不要（月額忌避・マクガイバー精神に合致）
-- 日射量(W/m²)を無料で取得可能（灌水の日射比例制御に必須）
-- VPD(飽差)を無料で提供（病害リスク判断に有用）
-- JMAデータ（MSM 5km解析メッシュ）ベースで北海道精度良好
-- 10,000回/日の枠（cron毎時=24回/日で余裕十分）
+採用理由:
+- **商用利用OK**（農家へのサービス提供に問題なし）
+- 日射量(solarradiation W/m²)・solarenergy(MJ/m²)対応
+- 1,000レコード/日の無料枠（pid_controller=24回/日 + LLM=5回/日で余裕）
+- 15日予報対応（天気急変トリガーに十分な予報範囲）
 
-**バックアップ: Visual Crossing**
-- Open-Meteoが商用利用不可と判断された場合の代替（APIキー取得必要）
-- 日射量込み・15日予報対応
+> Open-MeteoのCC BY 4.0ライセンスは「農家へのサービス提供」が商用利用に該当するか
+> 解釈の余地があったため、商用利用明示OKのVisual Crossingに切替（2026-03-02殿裁定）。
 
-> **⚠️ 商用利用注意事項（殿判断事項）**: Open-MeteoのCC BY 4.0ライセンスは
-> 「農家へのサービス提供」が商用利用に該当するか解釈の余地あり。
-> 顧客への販売モデルを確立する段階で、Visual Crossingへの移行を検討せよ。
-
-**補助的参照: 気象庁forecast API**
-- `https://www.jma.go.jp/bosai/forecast/data/forecast/016000.json`（石狩地方）
-- 6時間単位・日射量なし → 1時間制御には不向き。概況把握のみに使用可
-
-**恵庭市エンドポイント（Open-Meteo）:**
+**恵庭市エンドポイント（Visual Crossing）:**
 ```
-https://api.open-meteo.com/v1/forecast?latitude=42.888&longitude=141.603
-  &hourly=temperature_2m,relative_humidity_2m,precipitation_probability,
-  precipitation,rain,wind_speed_10m,wind_direction_10m,
-  shortwave_radiation,direct_radiation,diffuse_radiation,
-  surface_pressure,vapour_pressure_deficit
-  &wind_speed_unit=ms&forecast_days=7&timezone=Asia%2FTokyo
+https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/
+  42.888,141.603?unitGroup=metric&key={API_KEY}&contentType=json
+  &elements=datetime,temp,humidity,precip,precipprob,windspeed,winddir,
+            solarradiation,solarenergy,pressure
 ```
 
 #### 3.7.2 データフロー
 
 ```
-Open-Meteo API (HTTPS)
+Visual Crossing API (HTTPS)
     │
     ▼
 weather_fetcher.py
     ├─ キャッシュ確認: /var/lib/agriha/weather_cache.json（TTL 60分）
     │    ├─ 有効なキャッシュあり → キャッシュから返却
-    │    └─ キャッシュ古/なし  → Open-Meteo API fetch → キャッシュ更新
+    │    └─ キャッシュ古/なし  → Visual Crossing API fetch → キャッシュ更新
     │
     ├─ フェイルセーフ: try/except → logging.warning → None 返却
-    │    → None の場合: forecast_engine は「天気予報なし」でLLM呼び出し続行
+    │    → None の場合: PIDはデフォルトゲイン継続、LLM呼び出し時は「天気予報なし」で続行
     │
-    └─ 向こう6時間分（hourlyの6エントリ）を返却
-         → 気温(℃), 湿度(%), 降水確率(%), 降水量(mm),
-           風速(m/s), 風向(°), 日射量(W/m²), 気圧(hPa), VPD(kPa)
+    └─ 向こう6時間分のhourlyデータを返却
+         → 気温(℃), 湿度(%), 降水量(mm), 降水確率(%),
+           風速(km/h), 風向(°), 日射量(W/m²), 日射エネルギー(MJ/m²), 気圧(hPa)
 ```
 
-**fetchタイミング:** run_forecast() Step3後・Step4前（Step3.5）に配置。
-LLM API呼び出しの直前に天気データをuser_messageに注入する。
+**fetchタイミング:**
+- `pid_controller.py`: 毎サイクル（天気キャッシュ確認）→ PIDゲイン更新に使用
+- `agriha_control.py`: イベント発火時 → LLMプロンプトへ天気データ注入
 
-**取得データ一覧:**
+**取得データ一覧（Visual Crossing）:**
 
-| パラメータ | 単位 | 用途 |
+| フィールド | 単位 | 用途 |
 |-----------|------|------|
-| temperature_2m | ℃ | 外気温予報（側窓制御参考） |
-| relative_humidity_2m | % | 外気湿度（換気効果判断） |
-| precipitation_probability | % | 降水確率（灌水判断・窓制御） |
-| precipitation / rain | mm | 降水量（窓閉め判断） |
-| wind_speed_10m | m/s | 風速（強風時窓制御） |
-| wind_direction_10m | ° | 風向（片側制御§9参照） |
-| shortwave_radiation | W/m² | 全天日射量（灌水日射比例制御の主入力） |
-| surface_pressure | hPa | 気圧（参考） |
-| vapour_pressure_deficit | kPa | VPD（病害リスク補助指標） |
+| temp | ℃ | 外気温予報（PID目標値補正参考） |
+| humidity | % | 外気湿度（換気効果判断・イベントトリガー） |
+| precip | mm | 降水量（窓閉め判断） |
+| precipprob | % | 降水確率（天気急変検知） |
+| windspeed | km/h | 風速（強風時窓制御） |
+| winddir | ° | 風向（片側制御§9参照） |
+| solarradiation | W/m² | 全天日射量（PIDゲイン選択・灌水日射比例制御） |
+| solarenergy | MJ/m² | 積算日射量（灌水日射比例制御） |
+| pressure | hPa | 気圧（参考） |
 
 **キャッシュ設計:**
 - パス: `/var/lib/agriha/weather_cache.json`
-- TTL: 60分（cron毎時起動と整合。API呼び出しは最大1回/時間）
-- 形式: `{"fetched_at": "ISO8601", "hourly": {...}}` (Open-Meteoレスポンスそのまま)
+- TTL: 60分（pid_controller毎分起動でも最大1回/時間のfetch）
+- 形式: `{"fetched_at": "ISO8601", "provider": "visual-crossing", "hourly": [...]}`
 
 #### 3.7.3 LLMプロンプト注入フォーマット
 
-forecast_engine.py の user_message 構築部（L422付近、日出日没の直後・指示セクションの前）に
+agriha_control.py（イベント駆動LLM呼び出し時）のuser_message に
 「## 天気予報（向こう6時間）」セクションを挿入する。
 
-**トークン効率重視の1行/時間フォーマット:**
+**トークン効率重視の1行/時間フォーマット（変更なし）:**
 ```
 ## 天気予報（向こう6時間）
 14:00 曇 8.2℃ 湿62% 風3.1m/s北 雨0mm 射45W/m²
 15:00 曇 7.8℃ 湿65% 風2.9m/s北 雨0mm 射30W/m²
-16:00 曇 7.1℃ 湿68% 風2.5m/s北北西 雨0mm 射12W/m²
+16:00 薄曇 7.1℃ 湿68% 風2.5m/s北北西 雨0mm 射12W/m²
 17:00 雨 6.5℃ 湿78% 風3.8m/s北西 雨0.4mm 射0W/m²
 18:00 雨 6.2℃ 湿82% 風4.2m/s北西 雨1.1mm 射0W/m²
 19:00 雨 6.0℃ 湿85% 風4.0m/s北西 雨0.8mm 射0W/m²
 ```
 
-**フォーマット仕様:**
-- 天気記号: 射量>200W/m²→「晴」, 50-200→「曇」, 0-50→「薄曇」, 降水確率>50%→「雨」
-- 風向: 45°刻みで「北/北東/東/南東/南/南西/西/北西」に変換
-- フォーマット例: `{HH:MM} {天気記号} {気温:.1f}℃ 湿{湿度:.0f}% 風{風速:.1f}m/s{風向} 雨{降水量:.1f}mm 射{日射量:.0f}W/m²`
-
-**gradient_controller（§3.6）との連携:**
-- LLMが出力する `priority` フィールドには、天気予報（降雨予測・日射見込み）が考慮される
-- 例: 「17時から降雨予測 → humidity優先度UP → ventilation_priority=true」
-- gradient_controllerは§3.7のweather_fetcherと直接連携しない。LLMの判断結果（§3.6.3 `priority`）を通じて間接的に天気が反映される
-
-**フェイルセーフ時のプロンプト:**
-```
-## 天気予報
-天気予報の取得に失敗しました。Misolの外気センサーデータを参照してください。
-```
+**PIDコントローラ（§3.6）との連携:**
+- pid_controller.pyは天気予報データを**直接参照**してPIDゲインを更新する
+- LLMのpid_override.json内の `pid_gains_override` が最優先（天気ベースゲインを上書き）
+- 天気急変検知はイベントトリガー（§3.8）で判定し、LLMを叩き起こす
 
 #### 3.7.4 設定ファイル拡張
 
-`layer3_config.yaml` に `weather` セクションを追加:
+`layer3_config.yaml` の `weather` セクション（v3.3改訂）:
 
 ```yaml
 weather:
-  provider: open-meteo          # 主力プロバイダー
+  provider: visual-crossing     # 採用プロバイダー（v3.3: Open-Meteoから変更）
+  api_key: ${VISUAL_CROSSING_API_KEY}  # 環境変数から注入
   latitude: 42.888              # 恵庭市
   longitude: 141.603
   forecast_hours: 6             # 向こう何時間分を取得・注入するか
   cache_ttl_minutes: 60         # キャッシュ有効期間（分）
   cache_path: /var/lib/agriha/weather_cache.json
-  fallback_provider: visual-crossing  # バックアップ（APIキーが必要）
-  # visual_crossing_api_key: YOUR_KEY  # 商用移行時に設定
+  # fallback_provider: open-meteo  # APIキー不要だが商用利用要注意
 ```
 
 #### 3.7.5 実装ロードマップ
 
-天気予報API統合の実装は以下のステップで行う:
-
 | Step | 内容 | 規模 |
 |------|------|------|
 | **Step1** | `weather_fetcher.py` 新規モジュール作成 | ~80行 |
-|           | Open-Meteo fetchクライアント（httpx） | |
+|           | Visual Crossing fetchクライアント（httpx） | |
 |           | TTLキャッシュ（JSON read/write） | |
 |           | フェイルセーフ（try/except → None返却） | |
 |           | pytest（モックfetch/キャッシュHIT/キャッシュMISS/フェイルセーフ） | |
-| **Step2** | `forecast_engine.py` 改修 | ~30行 |
-|           | Step3.5: weather_fetcher呼び出しをuser_message構築直前に追加 | |
-|           | user_message拡張: 天気予報セクション整形・注入 | |
-|           | 既存astral日時注入との連携（同一try/exceptパターン） | |
-| **Step3** | `layer3_config.yaml` 拡張 | ~10行 |
-|           | weatherセクション追加（§3.7.4の内容） | |
-| **Step4** | pytest追加 | ~40行 |
-|           | forecast_engine統合テスト（weather注入あり/なし両ケース） | |
+| **Step2** | `pid_controller.py` 新規モジュール作成 | ~120行 |
+|           | PIDゲインテーブル + update_gains_from_weather() | |
+|           | pid_step() + pid_state.json read/write | |
+|           | pid_override.json 適用ロジック | |
+|           | イベントトリガー判定（§3.8呼び出し） | |
+| **Step3** | `agriha_control.py` 改修 | ~30行 |
+|           | cron毎時呼び出し→イベント発火時のみ起動に変更 | |
+|           | weather_fetcher呼び出し + LLMプロンプト注入 | |
+|           | 出力: pid_override.json 保存（actions[]廃止）| |
+| **Step4** | `layer3_config.yaml` 拡張 | ~10行 |
+| **Step5** | pytest追加 | ~50行 |
+|           | PIDゲイン更新テスト、pid_override適用テスト | |
 
-> **設計根拠**: 「予報が外れても勾配制御が吸収する設計。精度で悩むな」（殿方針）。
-> 天気予報は「LLMへの参考情報」であり、制御の決定権はgradient_controller（§3.6）が持つ。
-> Open-Meteo fetch失敗でもMisolの実測外気センサーでフォールバック可能。
-> 「壊れても動く設計。天気APIが落ちても温室は制御できる」（マクガイバー精神）。
+> 「壊れても動く設計。天気APIが落ちてもPIDはデフォルトゲインで自律制御」（マクガイバー精神）。
+
+---
+
+### 3.8 イベントトリガー監視設計（v3.3新設）
+
+pid_controller.py内でイベントトリガーを監視し、条件成立時にagriha_control.pyを起動する。
+**「LLMはPIDには手が届かない。PIDが異常を検知した時だけLLMを叩き起こす」**。
+
+#### 3.8.1 トリガー定義
+
+| トリガー名 | 条件 | 閾値（初期値） | 判断させる内容 |
+|-----------|------|--------------|-------------|
+| `co2_low` | CO2 < 閾値 | 300 ppm | 密閉タイミング / 換気継続判断 |
+| `humidity_high` | 湿度 > 閾値 | 80 % | 露点リスク / 暖房か換気か |
+| `weather_change` | 天気急変検知 | 降水確率変化 ≥ 30pt/時間 | 雨対応 / 窓閉め計画変更 |
+
+**閾値設定:**
+- `trigger_config.yaml`（または`layer3_config.yaml`の`triggers`セクション）に定義
+- 農家フィードバックで調整可能（怒り駆動でsystem_prompt.txtとともに更新）
+- 病害リスクスコア（§3.6.3）が高い時は `humidity_high` 閾値を75%に引き下げ
+
+#### 3.8.2 天気急変検知ロジック
+
+```python
+# event_trigger.py（概念コード）
+def detect_weather_change(current_forecast, prev_forecast) -> bool:
+    """天気急変を検知（降水確率の急増）"""
+    if prev_forecast is None:
+        return False
+    for i in range(6):  # 向こう6時間
+        prob_change = current_forecast[i]["precipprob"] - prev_forecast[i]["precipprob"]
+        if prob_change >= 30:  # 30%pt以上の急増
+            return True
+    return False
+
+def check_triggers(sensors, weather_forecast, prev_weather_forecast) -> list[str]:
+    """全トリガー判定。発火したトリガー名リストを返す"""
+    fired = []
+    if sensors["co2"] < TRIGGER_CO2_LOW:
+        fired.append("co2_low")
+    if sensors["humidity"] > TRIGGER_HUMIDITY_HIGH:
+        fired.append("humidity_high")
+    if detect_weather_change(weather_forecast, prev_weather_forecast):
+        fired.append("weather_change")
+    return fired
+```
+
+#### 3.8.3 多重発火防止とクールダウン
+
+同一トリガーが連続して発火し、LLMを無駄に起動しないための制御:
+
+| 項目 | 設計 |
+|------|------|
+| クールダウン | 1トリガーにつき最低30分間は再発火しない |
+| 同時発火上限 | 1サイクルで最大1回のLLM呼び出し（複数トリガー同時発火でも1回） |
+| 深夜静穏 | 23:00-05:00は `co2_low` トリガー無効（温室密閉夜間のCO2蓄積は許容） |
+| 発火ログ | `/var/lib/agriha/trigger_log.jsonl` に記録（監査・調整用） |
+| 状態ファイル | `/var/lib/agriha/trigger_state.json`（最後の発火時刻・クールダウン管理）|
 
 ---
 
@@ -1018,13 +1101,19 @@ if __name__ == "__main__":
   ├─ [A] 役割定義（固定）
   ├─ [B] ハウス固有情報（設定ファイルから生成）
   ├─ [C] 作物パラメータ（crop_irrigation.yamlから生成）
-  ├─ [D] 制御ルール（ArSproutマニュアルから抽出）
+  ├─ [D] 制御ルール  ← v3.3で大幅縮小（気温管理をPIDに委譲）
   ├─ [E] 暗黙知（農家フィードバック+怒り駆動で蓄積）
   ├─ [F] 安全制約（絶対遵守）
-  └─ [G] 出力形式（1時間アクション計画JSON）
+  └─ [G] 出力形式（pid_override.json — v3.3改訂）
 ```
 
 > **v3.0変更**: [G]セクションを追加。LLMに1時間アクション計画JSONの出力形式を指示。
+>
+> **v3.3変更（system_prompt.txtダイエット）**: 「system_prompt.txtの条件蓄積=ルールベースに降ろすべきサイン」（殿語録）。
+> - [D]制御ルール: 気温管理のルール（換気温度閾値・側窓開閉条件）をPIDコントローラに移管。LLMには残さない
+> - LLMに残す条件: **CO2/露点の相反判断のみ**（換気とCO2の相反、暖房vs換気の判断）
+> - [G]出力形式: `actions[]` 配列 → `pid_override.json` スキーマに変更（§3.3参照）
+> - トークン削減目標: ~1,270トークン → ~500トークン（D/Gセクション簡素化）
 
 ### 5.2 プロンプト全文（テンプレート）
 
@@ -1140,20 +1229,25 @@ agriha_control.py 次回実行で自動反映
 
 ### 5.4 トークン数見積もり
 
-| セクション | 推定トークン数 |
-|-----------|-------------|
-| [A] 役割定義 | ~100 |
-| [B] ハウス固有情報 | ~120 |
-| [C] 作物パラメータ | ~150 |
-| [D] 制御ルール | ~400 |
-| [E] 暗黙知 | ~200（初期、蓄積で増加） |
-| [F] 安全制約 | ~150 |
-| [G] 出力形式 | ~150 |
-| **合計** | **~1,270** |
+**v3.0（旧）:**
+
+| セクション | v3.0 | v3.3目標 | 変更内容 |
+|-----------|------|---------|---------|
+| [A] 役割定義 | ~100 | ~80 | イベント駆動に合わせた役割説明 |
+| [B] ハウス固有情報 | ~120 | ~120 | 変更なし |
+| [C] 作物パラメータ | ~150 | ~100 | CO2/露点関連のみ残す |
+| [D] 制御ルール | ~400 | **~80** | **気温管理ルールをPIDに移管。CO2/露点判断のみ残す** |
+| [E] 暗黙知 | ~200 | ~100 | 気温管理の暗黙知はPIDパラメータに移管 |
+| [F] 安全制約 | ~150 | ~50 | LLMが直接リレーを叩かないため制約縮小 |
+| [G] 出力形式 | ~150 | **~50** | **pid_override.jsonスキーマのみ** |
+| **合計** | **~1,270** | **~580** | **v3.3目標: ~57%削減** |
 
 Claude Haikuのコンテキストウィンドウは200Kトークン。余裕は十分。
-システムプロンプト1,270 + 履歴300 + ツール定義500 + センサーデータ500
-= 合計約2,570トークン。
+**v3.3**: システムプロンプト~580 + センサーデータ~300 + ツール定義~300 = 合計約**1,180トークン**
+（v3.0の2,570トークンから**54%削減**）。
+
+> 「system_prompt.txtの条件蓄積=ルールベースに降ろすべきサイン」（殿語録）。
+> [D]に追加された条件が増えたら、それはPIDパラメータかtrigger_config.yamlに移管するシグナル。
 
 ---
 
@@ -1650,13 +1744,14 @@ tail -f /var/log/agriha/control.log
 
 ---
 
-## 付録A: v2.0→v3.2 変更履歴
+## 付録A: v2.0→v3.3 変更履歴
 
 ### A.1 アーキテクチャ変更の背景
 
 2026-02-28の殿との設計議論で、温室LLM制御の根本思想が転換された（v3.0）。
 2026-03-02の設計議論で gradient_controller（勾配制御層）が追加された（v3.1）。
 2026-03-02の部屋子リサーチ結果を統合し、天気予報API統合設計が追加された（v3.2）。
+2026-03-02の殿裁定5点（PID制御・イベント駆動LLM・Visual Crossing・LLM範囲制限・system_prompt簡素化）を反映した（v3.3）。
 
 1. **三層構造の導入**: LLMは「知恵」層として最上位に位置し、下位層（ルールベース、緊急停止）が独立動作する設計に変更
 2. **LLM責務の限定**: LLMの判断はCO2制御と露点管理の2場面のみ。灌水・側窓の基本制御はルールベースに委譲
@@ -1679,6 +1774,11 @@ tail -f /var/log/agriha/control.log
 | N150ベンチマーク（§5旧） | ローカルLLM推論不要。クラウドAPI応答は数秒 |
 | Ollamaシャドーモード | 2026-02-24殿判断で停止。vx2はベンチマーク専用に転用 |
 | 緊急停止閾値 40℃/5℃ | 27℃/16℃に変更。農家の実運用に即した現実的閾値 |
+| gradient_controller（v3.1） | v3.3でPIDコントローラに昇格・改訂。勾配計算→PID常駐デーモン |
+| 1時間予報（cron毎時LLM） | v3.3でイベント駆動LLMに変更（CO2/湿度/天気急変トリガー） |
+| actions[]配列 LLM出力 | v3.3でpid_override.jsonに変更（PID目標値オーバーライド） |
+| plan_executor.py | LLMがリレーを直接叩かなくなったため廃止候補 |
+| Open-Meteo（v3.2採用） | v3.3でVisual Crossingに切替（商用利用OK。2026-03-02殿裁定） |
 
 ### A.3 新規追加された設計要素
 
@@ -1702,8 +1802,14 @@ tail -f /var/log/agriha/control.log
 | **v3.1** | **LLM予報フォーマット改訂（§3.6.3）** | **target/priority/overrides/reasonを§3.3 actionsと併存。gradient_controllerへの入力仕様** |
 | **v3.2** | **天気予報API統合設計（§3.7）** | **Open-Meteo選定（完全無料・APIキー不要・JMAモデル・日射量VPD付き）。weather_fetcher.py設計+TTL1hキャッシュ+フェイルセーフ** |
 | **v3.2** | **API選定比較表（§3.7.1）** | **7候補比較。Open-Meteo◎/Visual Crossing○/気象庁△。商用利用問題は殿判断事項として明記** |
-| **v3.2** | **天気予報フォーマット（§3.7.3）** | **1行/時間のトークン効率重視フォーマット。射量/降水/風向を簡潔に表現。gradient_controller間接連携** |
+| **v3.2** | **天気予報フォーマット（§3.7.3）** | **1行/時間のトークン効率重視フォーマット。射量/降水/風向を簡潔に表現** |
 | **v3.2** | **実装ロードマップ（§3.7.5）** | **Step1-4: weather_fetcher.py新規+forecast_engine改修+layer3_config拡張+pytest追加** |
+| **v3.3** | **PIDコントローラ設計（§3.6刷新）** | **Layer 2常駐デーモン。天気ゲインテーブル+pid_state.json永続化+pid_override.json適用** |
+| **v3.3** | **イベント駆動LLM（§3改訂）** | **cron毎時→CO2<300ppm/湿度>80%/天気急変トリガー。2-5回/日。LLM呼び出し大幅削減** |
+| **v3.3** | **pid_override.json（§3.3刷新）** | **LLMオーバーライド出力スキーマ。valid_until=1時間以内。PIDがリレーを直接操作** |
+| **v3.3** | **イベントトリガー監視設計（§3.8新設）** | **3トリガー定義+クールダウン+深夜静穏+trigger_state.json** |
+| **v3.3** | **Visual Crossing採用（§3.7改訂）** | **商用利用OK・solarradiation付き・1,000レコ/日。Open-Meteoから切替（殿裁定）** |
+| **v3.3** | **system_prompt.txtダイエット（§5改訂）** | **~1,270→~580トークン目標。気温管理ルールをPIDに移管。CO2/露点判断のみLLMに残す** |
 
 ### A.4 継続利用される設計要素
 
