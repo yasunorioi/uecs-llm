@@ -284,10 +284,16 @@ LLMの真のクリティカル判断は**2場面のみ**。
 
 ### 3.1 概要
 
+> **スクリプト名対応表（v3.3）**: 本設計書と v2_three_layer_design.md の対応:
+> - pid_controller.py → **rule_engine.py** (Layer 2: ルールベース+PID制御)
+> - agriha_control.py → **forecast_engine.py** (Layer 3: イベント駆動LLM)
+>
+> 実装名称は v2_three_layer_design.md に準拠する。
+
 ```
-PID常駐制御（cron 毎分）              イベント駆動LLM（条件トリガー）
+PID常駐制御（cron 5分毎）             イベント駆動LLM（条件トリガー）
 ┌──────────────────────┐           ┌─────────────────────────┐
-│ pid_controller.py    │           │ agriha_control.py       │
+│ rule_engine.py       │           │ forecast_engine.py      │
 │ 天気予報でゲイン更新  │ ←呼び出し│ CO2<300/湿度>80/天気急変│
 │ → リレーPID操作      │ ─override→│ → Claude Haiku API      │
 │ 呼ばれない時は自律制御│           │ → pid_override.json     │

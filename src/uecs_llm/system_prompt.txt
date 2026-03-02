@@ -35,8 +35,7 @@
 {
   "reason": "判断理由（1-2文）",
   "override": {
-    "temp_setpoint_day": null,
-    "temp_setpoint_night": null,
+    "temp_setpoint": null,
     "co2_setpoint": null,
     "vpd_target": null
   },
