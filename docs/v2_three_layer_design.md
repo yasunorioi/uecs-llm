@@ -1,6 +1,6 @@
 # v2 三層制御 詳細設計書
 
-> **Version**: 1.3 (殿裁定: PID制御導入 + イベント駆動LLM + Visual Crossing — 2026-03-02)
+> **Version**: 1.4 (殿裁定: PIDゲインスケール明記 + エラー符号統一 + 変換レイヤー追記 — 2026-03-02)
 > **Date**: 2026-03-02
 > **Status**: Approved (殿裁定完了)
 > **Parent**: llm_control_loop_design.md v3.0
@@ -284,6 +284,9 @@ solar_accumulator.json:
 # 天気予報によるゲイン切替（Visual Crossing）
 # 晴天: 日射で温度が上がりやすい → 積極的な換気
 # 曇天: 温度変化が緩やか → 保守的な制御
+# 出力スケール: 温度偏差(℃) → duration_sec (0〜60秒の開制御)
+# ※ llm_control_loop_design.md のゲイン値 (Kp=1.5等) とはスケールが異なる
+#   (llm側: 0.0-1.0デューティ比スケール。値の差はスケール差であり矛盾ではない)
 GAIN_TABLE = {
     "sunny":    {"Kp": 8.0, "Ki": 0.5, "Kd": 1.0},  # 晴天: Pゲイン高め
     "cloudy":   {"Kp": 4.0, "Ki": 0.3, "Kd": 0.5},  # 曇天: Pゲイン低め
@@ -1243,6 +1246,12 @@ state:
   last_decision_path: "/var/lib/agriha/last_decision.json"
   override_max_duration_min: 60  # LLMオーバーライドの最大有効時間（分）
 
+# v1.4追記: pid_override.json は forecast_engine.py 内の変換レイヤーを経由して生成される。
+# LLM出力(humidity_max/co2_mode等の農業ドメイン表現) →
+#   変換レイヤー(translate_llm_to_pid_schema) →
+#     pid_override.json(temp_setpoint/co2_setpoint/vpd_target等の制御ドメイン表現)
+# 変換ロジック詳細: llm_control_loop_design.md §3.3.1 参照
+
 unipi_api:
   base_url: "http://localhost:8080"
   api_key: ""
@@ -1740,3 +1749,4 @@ REST API (`POST /api/relay/{ch}`) がチャンネル番号 (1-8) を受け取り
 | 1.1 | 2026-02-xx | MAJOR-1対応（詳細未記載） |
 | 1.2 | 2026-03-01 | MAJOR-2/3 殿裁定反映（下層が上層を黙らせる原則、lockout中forecast_engineスキップ、plan_executor降雨/強風フラグ確認） |
 | **1.3** | **2026-03-02** | **殿裁定A-F反映: PID制御導入(Layer 2)、LLMイベント駆動化(Layer 3)、Visual Crossing切替、system_prompt.txtダイエット、pid_override.json新設、plan_executor廃止候補化** |
+| **1.4** | **2026-03-02** | **殿裁定反映: (A)PIDゲインスケール明記(duration_secスケール、llm側0.0-1.0スケールと区別)(B)エラー符号統一記述はllm側で対応(C)§6.3に変換レイヤー経由の旨を追記** |
