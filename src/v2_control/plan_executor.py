@@ -48,11 +48,13 @@ DURATION_SEC_MAX = 3600
 # ロックアウト判定
 # ---------------------------------------------------------------------------
 
-def is_layer1_locked(path: str | Path) -> bool:
+def is_layer1_locked(path: str | Path, now: datetime | None = None) -> bool:
     """Layer 1 ロックアウト中かどうかを判定する。
 
     ファイルなし or パースエラーの場合は False（ロックアウトなし）を返す。
+    now が None の場合は datetime.now(_JST) を使用する。
     """
+    _now = now if now is not None else datetime.now(_JST)
     try:
         with open(path) as f:
             data = json.load(f)
@@ -60,7 +62,7 @@ def is_layer1_locked(path: str | Path) -> bool:
         if not until_str:
             return False
         until = datetime.fromisoformat(until_str)
-        return datetime.now(_JST) < until
+        return _now < until
     except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError):
         return False
 
@@ -214,7 +216,7 @@ def run_executor(
     # -----------------------------------------------------------------------
     # Step 2: ロックアウト確認
     # -----------------------------------------------------------------------
-    if is_layer1_locked(lockout_path):
+    if is_layer1_locked(lockout_path, now=_now):
         logger.info("Layer 1 ロックアウト中 → 終了")
         result["skipped_lockout"].append("layer1")
         return result
