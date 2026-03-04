@@ -21,6 +21,8 @@ from zoneinfo import ZoneInfo
 import httpx
 import yaml
 
+from agriha.control.channel_config import load_channel_map, get_window_channels
+
 logger = logging.getLogger("plan_executor")
 
 _JST = ZoneInfo("Asia/Tokyo")
@@ -75,12 +77,17 @@ def load_layer2_config(path: str | Path) -> dict[str, Any]:
     """layer2_config.yaml から降雨/強風閾値と側窓チャンネルを読み込む。
 
     ファイルなし or パースエラー時はデフォルト値を返す（重複定義回避のため
-    設計書 §6.2 と同じデフォルト値を使用）。
+    channel_map.yaml を参照し、さらに設計書 §6.2 のハードコードにフォールバック）。
     """
+    try:
+        _ch_cfg = load_channel_map()
+        _window_chs = get_window_channels(_ch_cfg)
+    except Exception:
+        _window_chs = [5, 6, 7, 8]
     defaults: dict[str, Any] = {
         "rainfall_threshold": 0.5,
         "wind_threshold": 5.0,
-        "window_channels": [5, 6, 7, 8],
+        "window_channels": _window_chs,
     }
     try:
         with open(path) as f:

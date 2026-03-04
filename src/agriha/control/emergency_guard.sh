@@ -7,7 +7,7 @@
 # ── デフォルト設定 ────────────────────────────────────────────────
 HIGH_TEMP_THRESHOLD=27
 LOW_TEMP_THRESHOLD=16
-WINDOW_CHANNELS="5 6 7 8"
+WINDOW_CHANNELS="5 6 7 8"  # デフォルト値（channel_map.yamlで上書き）
 LOCKOUT_DURATION_SEC=300
 SENSOR_FALLBACK=true
 UNIPI_API_BASE_URL="http://localhost:8080"
@@ -23,6 +23,21 @@ LOCKOUT_FILE="/var/lib/agriha/lockout_state.json"
 _CFG="${AGRIHA_CONFIG:-/etc/agriha/layer1.env}"
 if [ -f "$_CFG" ]; then
     . "$_CFG"
+fi
+
+# ── channel_map.yaml から WINDOW_CHANNELS を動的取得 ──────────────
+CONF_DIR="${AGRIHA_CONF_DIR:-/etc/agriha}"
+CHANNEL_MAP="${CONF_DIR}/channel_map.yaml"
+if [ -f "$CHANNEL_MAP" ]; then
+    _WC=$(CHANNEL_MAP="$CHANNEL_MAP" python3 -c "
+import yaml, os
+with open(os.environ['CHANNEL_MAP']) as f: cfg = yaml.safe_load(f)
+chs = cfg['side_window']['south']['channels'] + cfg['side_window']['north']['channels']
+print(' '.join(str(c) for c in chs))
+" 2>/dev/null)
+    if [ -n "$_WC" ]; then
+        WINDOW_CHANNELS="$_WC"
+    fi
 fi
 
 # テスト用パス上書き

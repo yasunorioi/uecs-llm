@@ -23,6 +23,8 @@ import yaml
 from astral import LocationInfo
 from astral.sun import sun
 
+from agriha.control.channel_config import load_channel_map, get_window_channels
+
 # ──────────────────────────────────────────────
 # 定数・デフォルトパス（環境変数で上書き可能）
 # ──────────────────────────────────────────────
@@ -286,6 +288,7 @@ def evaluate_rules(
     solar_acc: dict[str, Any],
     current_plan: dict[str, Any] | None,
     now: datetime | None = None,
+    channel_map_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """
     ルール評価。各ルールの適用結果と更新後の solar_acc を返す。
@@ -304,7 +307,8 @@ def evaluate_rules(
     temp_cfg = cfg["temperature"]
     wind_cfg = cfg["wind"]
     rain_cfg = cfg["rain"]
-    window_chs: list[int] = temp_cfg["window_channels"]
+    _ch_config = load_channel_map(channel_map_path)
+    window_chs: list[int] = get_window_channels(_ch_config)
 
     misol = get_misol(sensors)
     rainfall = misol.get("rainfall", 0.0) or 0.0
@@ -462,6 +466,7 @@ def run(
     solar_acc_path: str = DEFAULT_SOLAR_ACC_PATH,
     state_path: str = DEFAULT_STATE_PATH,
     api_base: str = DEFAULT_API_BASE,
+    channel_map_path: str | None = None,
 ) -> int:
     """
     rule_engine のメイン処理。
@@ -505,7 +510,10 @@ def run(
 
             # Step 6: ルール評価
             solar_acc = load_solar_accumulator(solar_acc_path)
-            result = evaluate_rules(cfg, crop_cfg, sensors, status, solar_acc, current_plan)
+            result = evaluate_rules(
+                cfg, crop_cfg, sensors, status, solar_acc, current_plan,
+                channel_map_path=channel_map_path,
+            )
 
             # Step 7: アクション実行（変更がある場合のみ）
             relay_actions = result["relay_actions"]
