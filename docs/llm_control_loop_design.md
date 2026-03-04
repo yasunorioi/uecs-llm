@@ -1,7 +1,7 @@
 # LLM温室制御ループ設計書
 
-> **Version**: 3.4
-> **Date**: 2026-03-02
+> **Version**: 3.5
+> **Date**: 2026-03-04
 > **Status**: Draft
 > **HW**: RPi (ArSprout RPi, 10.10.0.10, Raspbian Lite, WireGuard VPN)
 
@@ -1782,6 +1782,173 @@ tail -f /var/log/agriha/control.log
 
 ---
 
+## 13. 反省会モード (Weekly Retrospective)
+
+### 13.1 概要
+
+週1回（デフォルト月曜朝）にLINE Botで先週の制御を振り返る。
+殿は選択式（A/B/C）でタップするだけ。文章入力不要。
+
+### 13.2 PDCA統合
+
+本システムの制御サイクルをPDCAフレームに整理する。
+
+| フェーズ | 実装 | 頻度 |
+|---------|------|------|
+| Plan | 前夜の天気予報→1日計画JSON生成（forecast_engine） | 日次（前夜） |
+| Do | plan_executorが計画実行 | cronに従い実行 |
+| Check | 毎時forecast_engineが計画と実績のズレ検出+微調整 | 毎時 |
+| Action | plan_executorが微調整実行 | 随時 |
+| 反省会 | 週1で計画vs実績を比較し、ルール候補を提案 | 週次 |
+
+### 13.3 反省会の流れ
+
+1. 先週の `{date}_plan.json` vs `{date}_actual.json` を比較し、差分が大きい日を抽出
+2. センサーログ（温度/湿度/日射/灌水/排水）の異常値を検出
+3. LINE Botの殿の発言を収集（愚痴・指示）
+4. LLM（Haiku）で1〜3件に絞り込み、選択式質問を生成
+5. LINE Botで殿に送信。殿はA/B/Cタップで回答
+6. 回答をルール候補として `/var/lib/agriha/retrospective/` に保存
+
+### 13.4 記録の4点構造（必須）
+
+各振り返り項目に以下を含めること：
+
+| 項目 | 内容 |
+|------|------|
+| 観察 | センサーデータ（客観事実） |
+| 思考 | なぜそうなったと推定されるか |
+| 仮定 | こうすれば改善するという仮説 |
+| 行動 | 実際に取った/取るべきだった行動 |
+
+### 13.5 怒り誘発設計
+
+- ネタが少ない週は確信度の低い提案もあえて出す（話題作り）
+- 2週無反応なら「先週の回答がないけど大丈夫？」とウザく聞く
+- 未承認ルール候補は30日で自動削除（腐敗設計）
+
+### 13.6 設定
+
+```yaml
+# /var/lib/agriha/retrospective/config.yaml
+retrospective:
+  frequency: weekly         # weekly / monthly / daily
+  day: monday
+  nudge_if_no_response: 2  # N週無反応でリマインド
+  rule_expiry_days: 30
+  max_questions: 3
+```
+
+### 13.7 データソース
+
+| データ | パス | 用途 |
+|--------|------|------|
+| 計画 | `/var/lib/agriha/plans/{date}_plan.json` | 当日計画 |
+| 実績 | `/var/lib/agriha/plans/{date}_actual.json` | 当日実績 |
+| センサーログ | MQTT経由 | 異常値検出 |
+| LINE Bot会話ログ | VPS側DB | 殿の愚痴・指示収集 |
+| 排水センサー | 設置後対応 | 灌水効率評価 |
+
+### 13.8 計画vs実績グラフ表示
+
+WebUI（port 8502）で計画と実績をタイムライン表示。反省会でも同じグラフを使って検証する。
+
+計画JSONの日次アーカイブはcron1行で実装する:
+
+```bash
+# /etc/cron.d/agriha-retrospective
+# 毎日23:55に当日計画をアーカイブ
+55 23 * * * cp /var/lib/agriha/current_plan.json \
+    /var/lib/agriha/plans/$(date +%Y%m%d)_plan.json
+```
+
+---
+
+## 14. Starlink監視 (Connectivity Monitor)
+
+### 14.1 概要
+
+cron `*/10` で疎通確認。offline時はLayer 3をスキップし、Layer 1+2のみで稼働する。
+これにより§9.4の「物理スイッチ」要件をソフトウェアで代替する。
+
+### 14.2 仕様
+
+```bash
+# /etc/cron.d/agriha-connectivity
+*/10 * * * * ping -c 3 8.8.8.8 >> /var/lib/agriha/connectivity.log 2>&1 \
+    && echo "online $(date -Iseconds)" > /var/lib/agriha/starlink_status.json \
+    || echo "offline $(date -Iseconds)" >> /var/lib/agriha/starlink_status.json
+```
+
+| 項目 | 仕様 |
+|------|------|
+| 監視先 | `8.8.8.8`（または `1.1.1.1`） |
+| 判定基準 | 3回連続失敗（30分） → offline判定 |
+| 状態ファイル | `/var/lib/agriha/starlink_status.json` |
+| offline時 | `forecast_engine` の `current_plan.json` 生成をスキップ |
+| online復帰時 | 次回cron :00で `forecast_engine` 再開 |
+
+### 14.3 offline時の挙動
+
+```
+Starlink断（インターネット断）
+  → Claude API不通
+  → LINE通知不可
+  → forecast_engine スキップ
+  → Layer 1 (emergency_guard.sh) + Layer 2 (rule_engine) のみで稼働継続
+  → ローカルログ (/var/lib/agriha/connectivity.log) に記録
+```
+
+### 14.4 online復帰通知
+
+offline中はLINE通知不可のためローカルログに記録し、online復帰後にまとめて通知する:
+
+```
+「10:00〜12:30 offline（2.5時間）。Layer 1+2で継続稼働していました。」
+```
+
+### 14.5 §9.4との関係
+
+§9.4「フォールバック設計」の「物理スイッチ」要件を本§で代替する。
+ネットが死んだら自動的にLayer 1+2に切り替わり、復帰したらLayer 3再開。人手不要。
+
+---
+
+## 15. CSIカメラ定点撮影
+
+### 15.1 実装済み内容（cmd_297）
+
+RPi（unipi@10.10.0.10）に実装済み。
+
+| 項目 | 内容 |
+|------|------|
+| カメラ | imx708_noir（CSIカメラ、赤外線対応） |
+| コマンド | `rpicam-still`（新RPi OSでは `libcamera-still` の後継） |
+| 解像度 | 640×480 JPEG（軽量重視） |
+| 保存先 | `/var/lib/agriha/photos/` |
+| ファイル名 | `{YYYYMMDD_HHMMSS}.jpg` |
+| 撮影間隔 | 5分（`*/5 * * * *`） |
+| 自動削除 | 7日以上経過したファイルを毎日03:00に削除 |
+| Web公開 | Nginx autoindex `http://10.10.0.10/picture/`（殿によるNginxインストール後） |
+
+### 15.2 cron設定
+
+```
+# /var/lib/agriha photos cron（unipi crontab）
+*/5 * * * * /usr/local/bin/agriha-capture.sh >> /var/log/agriha-capture.log 2>&1
+0 3 * * * find /var/lib/agriha/photos -name '*.jpg' -mtime +7 -delete
+```
+
+### 15.3 将来拡張
+
+| 拡張 | 概要 |
+|------|------|
+| LINE Bot「今の写真見せて」 | 最新JPEGをLINE Botから返送。殿がハウス状況をリモート確認 |
+| タイムラプスGIF | シーズン末に全写真からタイムラプス動画/GIF生成 |
+| 植物フェノロジー解析 | 写真+LLMで着果数・葉色を定期記録（将来） |
+
+---
+
 ## 12. 参照ドキュメント
 
 | ドキュメント | パス | 内容 |
@@ -1796,7 +1963,7 @@ tail -f /var/log/agriha/control.log
 
 ---
 
-## 付録A: v2.0→v3.3 変更履歴
+## 付録A: v2.0→v3.5 変更履歴
 
 ### A.1 アーキテクチャ変更の背景
 
@@ -1804,6 +1971,8 @@ tail -f /var/log/agriha/control.log
 2026-03-02の設計議論で gradient_controller（勾配制御層）が追加された（v3.1）。
 2026-03-02の部屋子リサーチ結果を統合し、天気予報API統合設計が追加された（v3.2）。
 2026-03-02の殿裁定5点（PID制御・イベント駆動LLM・Visual Crossing・LLM範囲制限・system_prompt簡素化）を反映した（v3.3）。
+2026-03-02の殿裁定（PIDゲインスケール・エラー符号・変換レイヤー）を反映した（v3.4）。
+2026-03-04に反省会モード・Starlink監視・CSIカメラの3機能設計を追加した（v3.5）。
 
 1. **三層構造の導入**: LLMは「知恵」層として最上位に位置し、下位層（ルールベース、緊急停止）が独立動作する設計に変更
 2. **LLM責務の限定**: LLMの判断はCO2制御と露点管理の2場面のみ。灌水・側窓の基本制御はルールベースに委譲
@@ -1863,6 +2032,9 @@ tail -f /var/log/agriha/control.log
 | **v3.3** | **Visual Crossing採用（§3.7改訂）** | **商用利用OK・solarradiation付き・1,000レコ/日。Open-Meteoから切替（殿裁定）** |
 | **v3.3** | **system_prompt.txtダイエット（§5改訂）** | **~1,270→~580トークン目標。気温管理ルールをPIDに移管。CO2/露点判断のみLLMに残す** |
 | **v3.4** | **殿裁定反映（§3.3.1新設, §3.6.1改訂）** | **(A)PIDゲインスケール明記（llm=0.0-1.0スケール、v2=duration_secスケール）(B)エラー符号current-targetに統一(C)変換レイヤー追記（§3.3.1）** |
+| **v3.5** | **反省会モード（§13新設）** | **週次PDCA統合。選択式回答・怒り誘発設計・4点構造（観察/思考/仮定/行動）・設定YAML・計画vs実績グラフアーカイブcron** |
+| **v3.5** | **Starlink監視（§14新設）** | **cron */10でping。3回連続失敗でoffline判定→Layer3スキップ・Layer1+2継続。復帰時まとめてLINE通知。§9.4物理スイッチ要件をソフトウェア代替** |
+| **v3.5** | **CSIカメラ定点撮影（§15新設）** | **cmd_297実装済み内容を設計書化。imx708_noir・5分間隔・640×480・7日自動削除・Nginx autoindex。将来: LINE Bot写真返送・タイムラプス** |
 
 ### A.4 継続利用される設計要素
 
