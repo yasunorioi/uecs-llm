@@ -101,11 +101,13 @@ def save_system_prompt(path: str, text: str) -> None:
 
 
 def fetch_sensors(api_url: str = UNIPI_API_URL) -> dict[str, Any]:
-    """GET /api/sensors を取得する。失敗時は空 dict を返す。"""
+    """GET /api/sensors を取得する。失敗時は空 dict を返す。
+    unipi-daemon は {"sensors": {...}} を返すので中身を取り出す。"""
     try:
         r = httpx.get(f"{api_url}/api/sensors", timeout=5.0)
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        return data.get("sensors", data) if isinstance(data, dict) else {}
     except Exception:
         return {}
 

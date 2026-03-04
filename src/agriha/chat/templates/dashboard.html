@@ -27,78 +27,108 @@
   {% endif %}
 
   {# ─── 主要センサーカード ─────────────────────────── #}
+  {# センサーキーマッピング: CCM=agriha/1/ccm/sensor/*, DS18B20, Misol #}
   <section class="section">
     <h2 class="section__title">センサー値</h2>
     <div class="card-grid">
 
+      {# 気温: CCM InAirTemp → DS18B20 → Misol の優先順 #}
       <div class="card card--sensor">
         <div class="card__label">🌡 気温（室内）</div>
         <div class="card__value">
-          {% if sensors and sensors.get('agriha/h01/ccm/InAirTemp') %}
-            {{ "%.1f"|format(sensors['agriha/h01/ccm/InAirTemp'].value) }} ℃
-          {% elif sensors and sensors.get('InAirTemp') %}
-            {{ "%.1f"|format(sensors['InAirTemp'].value) }} ℃
+          {% if sensors.get('agriha/1/ccm/sensor/InAirTemp') %}
+            {{ "%.1f"|format(sensors['agriha/1/ccm/sensor/InAirTemp']['value']) }} ℃
+          {% elif sensors.get('agriha/1/sensor/DS18B20') %}
+            {{ "%.1f"|format(sensors['agriha/1/sensor/DS18B20']['temperature_c']) }} ℃
           {% else %}
             ---
           {% endif %}
         </div>
       </div>
 
+      {# 湿度: CCM InAirHumid → Misol #}
       <div class="card card--sensor">
         <div class="card__label">💧 湿度（室内）</div>
         <div class="card__value">
-          {% if sensors and sensors.get('agriha/h01/ccm/InAirHumi') %}
-            {{ "%.1f"|format(sensors['agriha/h01/ccm/InAirHumi'].value) }} %
-          {% elif sensors and sensors.get('InAirHumi') %}
-            {{ "%.1f"|format(sensors['InAirHumi'].value) }} %
+          {% if sensors.get('agriha/1/ccm/sensor/InAirHumid') %}
+            {{ "%.1f"|format(sensors['agriha/1/ccm/sensor/InAirHumid']['value']) }} %
+          {% elif sensors.get('agriha/farm/weather/misol') %}
+            {{ "%.1f"|format(sensors['agriha/farm/weather/misol']['humidity_pct']) }} %（外気）
           {% else %}
             ---
           {% endif %}
         </div>
       </div>
 
+      {# CO2: CCM InAirCO2 #}
       <div class="card card--sensor">
         <div class="card__label">🌫 CO2濃度</div>
         <div class="card__value">
-          {% if sensors and sensors.get('agriha/h01/ccm/InCO2') %}
-            {{ sensors['agriha/h01/ccm/InCO2'].value|int }} ppm
-          {% elif sensors and sensors.get('InCO2') %}
-            {{ sensors['InCO2'].value|int }} ppm
+          {% if sensors.get('agriha/1/ccm/sensor/InAirCO2') %}
+            {{ sensors['agriha/1/ccm/sensor/InAirCO2']['value']|int }} ppm
           {% else %}
             ---
           {% endif %}
         </div>
       </div>
 
+      {# 日射: CCM InRadiation #}
       <div class="card card--sensor">
         <div class="card__label">☀ 日射量</div>
         <div class="card__value">
-          {% if sensors and sensors.get('agriha/h01/ccm/InSolar') %}
-            {{ sensors['agriha/h01/ccm/InSolar'].value|int }} W/m²
-          {% elif sensors and sensors.get('InSolar') %}
-            {{ sensors['InSolar'].value|int }} W/m²
+          {% if sensors.get('agriha/1/ccm/sensor/InRadiation') %}
+            {{ sensors['agriha/1/ccm/sensor/InRadiation']['value']|int }} W/m²
+          {% elif sensors.get('agriha/farm/weather/misol') %}
+            {{ sensors['agriha/farm/weather/misol'].get('uv_wm2', 0)|int }} W/m²（外気）
           {% else %}
             ---
           {% endif %}
         </div>
       </div>
 
+      {# 外気温: Misol #}
       <div class="card card--sensor">
-        <div class="card__label">🌱 土壌水分</div>
+        <div class="card__label">🌤 外気温</div>
         <div class="card__value">
-          {% if sensors and sensors.get('SoilMoisture') %}
-            {{ "%.1f"|format(sensors['SoilMoisture'].value) }} %
+          {% if sensors.get('agriha/farm/weather/misol') %}
+            {{ "%.1f"|format(sensors['agriha/farm/weather/misol']['temperature_c']) }} ℃
           {% else %}
             ---
           {% endif %}
         </div>
       </div>
 
+      {# 風速: Misol #}
       <div class="card card--sensor">
-        <div class="card__label">💦 排水量</div>
+        <div class="card__label">💨 風速</div>
         <div class="card__value">
-          {% if sensors and sensors.get('DrainFlow') %}
-            {{ "%.1f"|format(sensors['DrainFlow'].value) }} L
+          {% if sensors.get('agriha/farm/weather/misol') %}
+            {{ "%.1f"|format(sensors['agriha/farm/weather/misol']['wind_speed_ms']) }} m/s
+            （瞬間 {{ "%.1f"|format(sensors['agriha/farm/weather/misol']['gust_speed_ms']) }}）
+          {% else %}
+            ---
+          {% endif %}
+        </div>
+      </div>
+
+      {# 露点: CCM InAirDP #}
+      <div class="card card--sensor">
+        <div class="card__label">💧 露点温度</div>
+        <div class="card__value">
+          {% if sensors.get('agriha/1/ccm/sensor/InAirDP') %}
+            {{ "%.1f"|format(sensors['agriha/1/ccm/sensor/InAirDP']['value']) }} ℃
+          {% else %}
+            ---
+          {% endif %}
+        </div>
+      </div>
+
+      {# 積算日射: CCM IntgRadiation #}
+      <div class="card card--sensor">
+        <div class="card__label">📊 積算日射</div>
+        <div class="card__value">
+          {% if sensors.get('agriha/1/ccm/sensor/IntgRadiation') %}
+            {{ "%.2f"|format(sensors['agriha/1/ccm/sensor/IntgRadiation']['value']) }} MJ/m²
           {% else %}
             ---
           {% endif %}
@@ -109,10 +139,11 @@
 
     {# その他のセンサー #}
     {% set known_keys = [
-      'agriha/h01/ccm/InAirTemp', 'agriha/h01/ccm/InAirHumi',
-      'agriha/h01/ccm/InCO2', 'agriha/h01/ccm/InSolar',
-      'InAirTemp', 'InAirHumi', 'InCO2', 'InSolar',
-      'SoilMoisture', 'DrainFlow'
+      'agriha/1/ccm/sensor/InAirTemp', 'agriha/1/ccm/sensor/InAirHumid',
+      'agriha/1/ccm/sensor/InAirCO2', 'agriha/1/ccm/sensor/InRadiation',
+      'agriha/1/ccm/sensor/InAirDP', 'agriha/1/ccm/sensor/IntgRadiation',
+      'agriha/1/sensor/DS18B20', 'agriha/farm/weather/misol',
+      'agriha/1/relay/state'
     ] %}
     {% if sensors %}
       {% set other_sensors = [] %}
@@ -132,7 +163,7 @@
             {% for key, data in other_sensors %}
             <tr>
               <td>{{ key }}</td>
-              <td>{{ data.value if data.value is not none else '---' }}</td>
+              <td>{% if data is mapping %}{{ data.get('value', data) }}{% else %}{{ data }}{% endif %}</td>
             </tr>
             {% endfor %}
           </tbody>
