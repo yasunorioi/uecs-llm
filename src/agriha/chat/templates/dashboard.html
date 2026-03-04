@@ -219,5 +219,20 @@
     </div>
   </section>
 
+  {# ─── ハウス定点カメラ ────────────────────────────── #}
+  <section class="section">
+    <h2 class="section__title">ハウス定点カメラ</h2>
+    <div id="camera">
+      <img src="/picture/latest.jpg" id="camera-img" style="max-width:100%"
+           onerror="this.style.display='none';document.getElementById('camera-unavail').style.display='block'">
+      <p id="camera-unavail" style="display:none;color:#888;">カメラ画像未取得</p>
+      <script>
+        setInterval(() => {
+          document.getElementById('camera-img').src = '/picture/latest.jpg?' + Date.now();
+        }, 30000);
+      </script>
+    </div>
+  </section>
+
 </div>{# /dashboard-main #}
 {% endblock %}

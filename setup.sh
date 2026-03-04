@@ -95,6 +95,18 @@ else
     echo "[6/6] .env 既存 → スキップ"
 fi
 
+# Step 7: Nginx設定デプロイ
+echo "[7/7] Nginx設定..."
+if [ -f "${SCRIPT_DIR}/config/nginx.conf" ]; then
+    sudo cp "${SCRIPT_DIR}/config/nginx.conf" /etc/nginx/sites-available/agriha
+    sudo ln -sf /etc/nginx/sites-available/agriha /etc/nginx/sites-enabled/agriha
+    sudo rm -f /etc/nginx/sites-enabled/default
+    sudo nginx -t && sudo systemctl reload nginx
+    echo "  → Nginx設定完了（agriha サイト有効化）"
+else
+    echo "  → config/nginx.conf なし → スキップ"
+fi
+
 echo ""
 echo "=== AgriHA v4 セットアップ完了 ==="
 echo "次のステップ:"
@@ -102,3 +114,4 @@ echo "  1. nano .env  ← ANTHROPIC_API_KEY を記入"
 echo "  2. sudo nano /etc/agriha/unipi_daemon.yaml  ← ハードウェア設定確認"
 echo "  3. sudo systemctl start unipi-daemon  ← デーモン起動"
 echo "  4. sudo systemctl start agriha-ui  ← WebUI起動"
+echo "  5. http://<RPiのIP>/ でダッシュボード確認"
