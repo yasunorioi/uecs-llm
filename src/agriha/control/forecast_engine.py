@@ -152,6 +152,18 @@ def init_db(db_path: str | Path) -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_decisions_ts "
         "ON decisions(timestamp DESC)"
     )
+    db.execute("""CREATE TABLE IF NOT EXISTS reflection_memo (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TEXT NOT NULL,
+        source_candidate_id TEXT NOT NULL,
+        question TEXT NOT NULL,
+        options TEXT NOT NULL,
+        context TEXT NOT NULL,
+        answer TEXT,
+        answered_at TEXT,
+        promoted_to_rule INTEGER DEFAULT 0,
+        expired INTEGER DEFAULT 0
+    )""")
     db.commit()
     return db
 

@@ -1,0 +1,8 @@
+reflection:
+  frequency: weekly         # weekly / monthly / daily
+  day_of_week: 1            # 0=Sun ... 6=Sat（1=Monday）
+  time: "07:00"             # JST
+  max_items: 3              # 1回あたり最大質問数
+  nag_after_weeks: 2        # ナッジまでの無反応週数
+  downgrade_after_weeks: 4  # 月次切替までの無反応週数
+  expiry_days: 30           # 未承認候補の腐敗日数
