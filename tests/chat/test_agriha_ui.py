@@ -263,3 +263,52 @@ async def test_auth_required() -> None:
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         r = await ac.get("/")
     assert r.status_code == 401
+
+
+# 13. GET /api/flags → rain/wind キー名（_flag なし）§3.5準拠
+async def test_flags_key_names(client: AsyncClient, tmp_config: dict[str, str]) -> None:
+    """フラグキー名が rain/wind（_flag サフィックスなし）であること。"""
+    with patch.object(app_module, "AGRIHA_FLAG_DIR", tmp_config["dir"]):
+        r = await client.get("/api/flags")
+    assert r.status_code == 200
+    data = r.json()
+    assert "rain" in data
+    assert "wind" in data
+    assert "lockout" in data
+    assert "rain_flag" not in data
+    assert "wind_flag" not in data
+
+
+# 14. GET /api/flags → rain=True when rain_flag ファイル存在
+async def test_flags_rain_active(client: AsyncClient, tmp_config: dict[str, str]) -> None:
+    """rain_flag ファイルが存在するとき rain=True を返す。"""
+    flag_dir = tmp_config["dir"]
+    Path(flag_dir, "rain_flag").touch()
+    with patch.object(app_module, "AGRIHA_FLAG_DIR", flag_dir):
+        r = await client.get("/api/flags")
+    data = r.json()
+    assert data["rain"] is True
+    assert data["wind"] is False
+
+
+# 15. GET /api/dashboard → relay と logs フィールドを含む（§3.5準拠）
+async def test_dashboard_api_has_relay_and_logs(
+    client: AsyncClient, tmp_config: dict[str, str]
+) -> None:
+    """GET /api/dashboard のレスポンスに relay と logs フィールドがある。"""
+    with (
+        patch("agriha.chat.app.fetch_sensors", return_value={"InAirTemp": 25.0}),
+        patch("agriha.chat.app.fetch_relay", return_value={"ch1": 0, "ch2": 1}),
+        patch.object(app_module, "AGRIHA_FLAG_DIR", tmp_config["dir"]),
+        patch.object(app_module, "AGRIHA_LOG_DIR", tmp_config["dir"]),
+    ):
+        r = await client.get("/api/dashboard")
+    assert r.status_code == 200
+    data = r.json()
+    assert "sensors" in data
+    assert "plan" in data
+    assert "relay" in data
+    assert "flags" in data
+    assert "logs" in data
+    assert "timestamp" in data
+    assert data["relay"] == {"ch1": 0, "ch2": 1}

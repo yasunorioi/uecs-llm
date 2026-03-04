@@ -120,6 +120,16 @@ def fetch_status(api_url: str = UNIPI_API_URL) -> dict[str, Any]:
         return {}
 
 
+def fetch_relay(api_url: str = UNIPI_API_URL) -> dict[str, Any]:
+    """GET /api/relay を取得する。失敗時は空 dict を返す。"""
+    try:
+        r = httpx.get(f"{api_url}/api/relay", timeout=5.0)
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return {}
+
+
 def load_json_file(path: str) -> dict[str, Any]:
     """JSON ファイルを読み込む。失敗時は空 dict を返す。"""
     try:
@@ -209,12 +219,15 @@ def _build_dashboard_context() -> dict[str, Any]:
 # ── API ヘルパー ────────────────────────────────────────────────────────────
 
 def _get_flags_data() -> dict[str, bool]:
-    """フラグファイルの存在チェック結果を返す（実行時にモジュール変数を参照）。"""
+    """フラグファイルの存在チェック結果を返す（実行時にモジュール変数を参照）。
+
+    §3.5定義: rain, wind, lockout（_flag サフィックスなし）
+    """
     flag_dir = AGRIHA_FLAG_DIR
     return {
         "lockout": os.path.exists(os.path.join(flag_dir, "lockout")),
-        "rain_flag": os.path.exists(os.path.join(flag_dir, "rain_flag")),
-        "wind_flag": os.path.exists(os.path.join(flag_dir, "wind_flag")),
+        "rain": os.path.exists(os.path.join(flag_dir, "rain_flag")),
+        "wind": os.path.exists(os.path.join(flag_dir, "wind_flag")),
     }
 
 
@@ -358,11 +371,19 @@ async def get_plan(_: None = Depends(verify_auth)) -> dict[str, Any]:
 
 @app.get("/api/dashboard")
 async def get_dashboard_data(_: None = Depends(verify_auth)) -> dict[str, Any]:
-    """センサー・計画・フラグを集約して返す（§3.5 集約エンドポイント）。"""
+    """センサー・計画・relay・フラグ・logsを集約して返す（§3.5 集約エンドポイント）。"""
+    log_dir = AGRIHA_LOG_DIR
     return {
         "sensors": fetch_sensors(),
         "plan": _get_plan_data(),
+        "relay": fetch_relay(),
         "flags": _get_flags_data(),
+        "logs": {
+            "control_log": _tail_log(os.path.join(log_dir, "control.log"), 10),
+            "search_log": _tail_log(os.path.join(log_dir, "search_log.jsonl"), 10),
+            "forecast_log": _tail_log(os.path.join(log_dir, "forecast.log"), 10),
+            "emergency_log": _tail_log(os.path.join(log_dir, "emergency.log"), 10),
+        },
         "timestamp": datetime.now().isoformat(),
     }
 

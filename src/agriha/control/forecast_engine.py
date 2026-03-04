@@ -544,10 +544,14 @@ def convert_llm_to_pid_override(plan: dict[str, Any]) -> None:
     dewpoint_risk = plan.get("dewpoint_risk", "unknown")
     humidity_max = 80 if dewpoint_risk == "high" else 90
 
+    co2_map = {"ventilate": 400, "accumulate": 700, "neutral": 550}
+    co2_setpoint = co2_map.get(plan.get("co2_mode", "neutral"), 550)
+
     override = {
         "generated_at": datetime.now(_JST).isoformat(),
         "humidity_max": humidity_max,
         "dewpoint_risk": dewpoint_risk,
+        "co2_setpoint": co2_setpoint,
     }
     try:
         pid_path = Path(PID_OVERRIDE_PATH)

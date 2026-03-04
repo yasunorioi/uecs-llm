@@ -946,6 +946,29 @@ def test_convert_llm_to_pid_override_low_risk(tmp_path: Path) -> None:
     assert data["humidity_max"] == 90
 
 
+@pytest.mark.parametrize("co2_mode,expected_setpoint", [
+    ("ventilate", 400),
+    ("accumulate", 700),
+    ("neutral", 550),
+    ("unknown_mode", 550),  # デフォルト
+    (None, 550),            # co2_modeキーなし
+])
+def test_convert_llm_to_pid_override_co2_mode(
+    tmp_path: Path, co2_mode: str | None, expected_setpoint: int
+) -> None:
+    """co2_mode → co2_setpoint 変換が正しいことを確認する（§7準拠）。"""
+    pid_path = tmp_path / "pid_override.json"
+    plan: dict = {"dewpoint_risk": "low"}
+    if co2_mode is not None:
+        plan["co2_mode"] = co2_mode
+
+    with patch("agriha.control.forecast_engine.PID_OVERRIDE_PATH", str(pid_path)):
+        convert_llm_to_pid_override(plan)
+
+    data = json.loads(pid_path.read_text())
+    assert data["co2_setpoint"] == expected_setpoint
+
+
 # ---------------------------------------------------------------------------
 # Test 47: log_search — jsonl追記
 # ---------------------------------------------------------------------------
