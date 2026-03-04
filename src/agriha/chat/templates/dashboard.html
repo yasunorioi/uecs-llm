@@ -115,7 +115,12 @@
       'SoilMoisture', 'DrainFlow'
     ] %}
     {% if sensors %}
-      {% set other_sensors = sensors.items() | selectattr('0', 'not in', known_keys) | list %}
+      {% set other_sensors = [] %}
+      {% for key, data in sensors.items() %}
+        {% if key not in known_keys %}
+          {% set _ = other_sensors.append((key, data)) %}
+        {% endif %}
+      {% endfor %}
       {% if other_sensors %}
       <details class="other-sensors">
         <summary>その他のセンサー（{{ other_sensors | length }} 件）</summary>
