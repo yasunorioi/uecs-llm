@@ -69,6 +69,11 @@ cd /opt/agriha && sudo bash setup.sh
 sudo nano /opt/agriha/.env   # ANTHROPIC_API_KEY を記入
 ```
 
+```bash
+# カメラ定点撮影（オプション）
+sudo bash scripts/setup-camera.sh
+```
+
 `sudo bash setup.sh` で以下が完了する:
 - Python venv作成 + パッケージインストール
 - /etc/agriha/ に設定ファイル配置
