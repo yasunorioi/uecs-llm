@@ -19,6 +19,7 @@ from agriha.control.distiller import (
     EXPIRY_DAYS,
     MIN_CONFIDENCE,
     MIN_FREQUENCY,
+    _next_candidate_id,
     analyze_frequency,
     extract_typical_actions,
     generate_candidates,
@@ -339,3 +340,86 @@ def test_run_distill_end_to_end(tmp_path: Path) -> None:
     data = yaml.safe_load(candidates_file.read_text(encoding="utf-8"))
     assert len(data["candidates"]) == 1
     assert data["candidates"][0]["query"] == "winter_night_cold_clear"
+
+
+# ---------------------------------------------------------------------------
+# Test 16: _next_candidate_id — 空リスト → rc_001
+# ---------------------------------------------------------------------------
+
+def test_next_candidate_id_empty() -> None:
+    """既存候補なし → rc_001 を返す。"""
+    result = _next_candidate_id([])
+    assert result == "rc_001"
+
+
+# ---------------------------------------------------------------------------
+# Test 17: _next_candidate_id — 既存あり → 連番インクリメント
+# ---------------------------------------------------------------------------
+
+def test_next_candidate_id_increments() -> None:
+    """既存候補のmax id + 1 が返される。"""
+    existing = [
+        {"id": "rc_001", "query": "q1"},
+        {"id": "rc_003", "query": "q3"},
+    ]
+    result = _next_candidate_id(existing)
+    assert result == "rc_004"
+
+
+# ---------------------------------------------------------------------------
+# Test 18: generate_candidates — 新規候補に id フィールドが付与される
+# ---------------------------------------------------------------------------
+
+def test_generate_candidates_new_has_id() -> None:
+    """新規候補にidフィールドが付与される。"""
+    analysis = {"q_new": {"count": 8, "kousatsu_rate": 0.875, "entries": []}}
+    candidates = generate_candidates(analysis)
+    assert len(candidates) == 1
+    assert "id" in candidates[0]
+    assert candidates[0]["id"].startswith("rc_")
+
+
+# ---------------------------------------------------------------------------
+# Test 19: generate_candidates — 複数新規候補のid連番確認
+# ---------------------------------------------------------------------------
+
+def test_generate_candidates_multiple_ids_are_unique() -> None:
+    """複数の新規候補が生成された場合、idが一意になる。"""
+    analysis = {
+        "q_a": {"count": 8, "kousatsu_rate": 0.875, "entries": []},
+        "q_b": {"count": 9, "kousatsu_rate": 0.90, "entries": []},
+    }
+    candidates = generate_candidates(analysis)
+    assert len(candidates) == 2
+    ids = [c["id"] for c in candidates]
+    assert len(set(ids)) == 2, "idが重複してはならない"
+    for cid in ids:
+        assert cid.startswith("rc_")
+
+
+# ---------------------------------------------------------------------------
+# Test 20: generate_candidates — 既存候補ありのid連番確認
+# ---------------------------------------------------------------------------
+
+def test_generate_candidates_id_increments_from_existing() -> None:
+    """既存候補がある場合、新規idは既存max+1から始まる。"""
+    existing = [
+        {
+            "id": "rc_005",
+            "query": "q_existing",
+            "frequency": 5,
+            "confidence": 0.80,
+            "status": "pending",
+            "first_seen": datetime.now(_UTC).isoformat(),
+            "last_updated": datetime.now(_UTC).isoformat(),
+            "expires_at": (datetime.now(_UTC) + timedelta(days=30)).isoformat(),
+            "actions": [],
+        }
+    ]
+    analysis = {
+        "q_new": {"count": 8, "kousatsu_rate": 0.875, "entries": []},
+        "q_existing": {"count": 10, "kousatsu_rate": 0.90, "entries": []},
+    }
+    candidates = generate_candidates(analysis, existing)
+    new_cand = next(c for c in candidates if c["query"] == "q_new")
+    assert new_cand["id"] == "rc_006"

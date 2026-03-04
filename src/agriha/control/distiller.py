@@ -169,6 +169,22 @@ def load_existing_candidates(path: str | None = None) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# 候補ID採番
+# ---------------------------------------------------------------------------
+
+def _next_candidate_id(existing_candidates: list[dict[str, Any]]) -> str:
+    """既存候補のmax id + 1 を返す。既存なしなら "rc_001" から開始。"""
+    if not existing_candidates:
+        return "rc_001"
+    ids = [
+        int(c["id"].replace("rc_", ""))
+        for c in existing_candidates
+        if c.get("id", "").startswith("rc_")
+    ]
+    return f"rc_{max(ids) + 1:03d}" if ids else "rc_001"
+
+
+# ---------------------------------------------------------------------------
 # 候補生成
 # ---------------------------------------------------------------------------
 
@@ -208,6 +224,7 @@ def generate_candidates(
             cand["last_updated"] = now.isoformat()
         else:
             cand = {
+                "id": _next_candidate_id(list(updated.values()) + list(existing.values())),
                 "query": query,
                 "frequency": frequency,
                 "confidence": confidence,
