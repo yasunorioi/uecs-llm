@@ -1,19 +1,21 @@
 # AgriHA v4 三層制御 cron設定
-# ※ /home/agriha/uecs-llm は setup.sh インストール時に実際のリポジトリパス（/opt/agriha 等）に置換される
-# Layer 1: 緊急制御（毎分）
-* * * * * agriha /home/agriha/uecs-llm/src/agriha/control/emergency_guard.sh 2>&1 | logger -t agriha-guard
+# ※ __REPO_DIR__ は setup.sh インストール時に実際のリポジトリパスに置換される
+# .env から環境変数を読み込んでから実行する（ANTHROPIC_API_KEY, VC_API_KEY 等）
 
-# Layer 2: ルールベース制御（10分毎）
-*/10 * * * * agriha /home/agriha/uecs-llm/.venv/bin/python3 -m agriha.control.rule_engine 2>&1 | logger -t agriha-rule
+# Layer 1: 緊急制御（毎分）— .env不要（bash+curl、API鍵不使用）
+* * * * * agriha __REPO_DIR__/src/agriha/control/emergency_guard.sh 2>&1 | logger -t agriha-guard
 
-# Layer 3: LLM予報制御（毎時）
-0 * * * * agriha /home/agriha/uecs-llm/.venv/bin/python3 -m agriha.control.forecast_engine 2>&1 | logger -t agriha-forecast
+# Layer 2: ルールベース制御（10分毎）— .env不要（ローカル演算のみ）
+*/10 * * * * agriha cd __REPO_DIR__ && . .env && __REPO_DIR__/.venv/bin/python3 -m agriha.control.rule_engine 2>&1 | logger -t agriha-rule
 
-# Plan executor: 計画実行（10分毎）
-*/10 * * * * agriha /home/agriha/uecs-llm/.venv/bin/python3 -m agriha.control.plan_executor 2>&1 | logger -t agriha-plan
+# Layer 3: LLM予報制御（毎時）— ANTHROPIC_API_KEY, VC_API_KEY 必要
+0 * * * * agriha cd __REPO_DIR__ && . .env && __REPO_DIR__/.venv/bin/python3 -m agriha.control.forecast_engine 2>&1 | logger -t agriha-forecast
+
+# Plan executor: 計画実行（10分毎）— .env不要（ローカル実行のみ）
+*/10 * * * * agriha cd __REPO_DIR__ && . .env && __REPO_DIR__/.venv/bin/python3 -m agriha.control.plan_executor 2>&1 | logger -t agriha-plan
 
 # 蒸留バッチ: search_log頻度分析→ルール候補生成（週次: 月曜03:00）
-0 3 * * 1 agriha cd /home/agriha/uecs-llm && /home/agriha/uecs-llm/.venv/bin/python3 -m agriha.control.distiller >> /var/log/agriha/distiller.log 2>&1
+0 3 * * 1 agriha cd __REPO_DIR__ && . .env && __REPO_DIR__/.venv/bin/python3 -m agriha.control.distiller >> /var/log/agriha/distiller.log 2>&1
 
 # 反省会: ルール候補→農家へLINE質問（週次: 月曜07:00、蒸留の4時間後）
-0 7 * * 1 agriha cd /home/agriha/uecs-llm && /home/agriha/uecs-llm/.venv/bin/python3 -m agriha.control.reflection >> /var/log/agriha/reflection.log 2>&1
+0 7 * * 1 agriha cd __REPO_DIR__ && . .env && __REPO_DIR__/.venv/bin/python3 -m agriha.control.reflection >> /var/log/agriha/reflection.log 2>&1
