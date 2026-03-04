@@ -34,6 +34,8 @@ UI_AUTH_PASS = os.getenv("UI_AUTH_PASS", "agriha")
 # ── ランタイムデータファイルパス ───────────────────────────────────────────
 RULE_ENGINE_STATE_PATH = os.getenv("RULE_ENGINE_STATE_PATH", "/var/lib/agriha/rule_engine_state.json")
 CURRENT_PLAN_PATH = os.getenv("CURRENT_PLAN_PATH", "/var/lib/agriha/current_plan.json")
+AGRIHA_FLAG_DIR = os.getenv("AGRIHA_FLAG_DIR", "/var/lib/agriha")
+AGRIHA_LOG_DIR = os.getenv("AGRIHA_LOG_DIR", "/var/log/agriha")
 
 # ── FastAPI / テンプレート設定 ─────────────────────────────────────────────
 _HERE = Path(__file__).parent
@@ -204,6 +206,40 @@ def _build_dashboard_context() -> dict[str, Any]:
     }
 
 
+# ── API ヘルパー ────────────────────────────────────────────────────────────
+
+def _get_flags_data() -> dict[str, bool]:
+    """フラグファイルの存在チェック結果を返す（実行時にモジュール変数を参照）。"""
+    flag_dir = AGRIHA_FLAG_DIR
+    return {
+        "lockout": os.path.exists(os.path.join(flag_dir, "lockout")),
+        "rain_flag": os.path.exists(os.path.join(flag_dir, "rain_flag")),
+        "wind_flag": os.path.exists(os.path.join(flag_dir, "wind_flag")),
+    }
+
+
+def _get_plan_data() -> dict[str, Any]:
+    """current_plan.json を読み込む（実行時にモジュール変数を参照）。ファイルなし時は {"plan": None} を返す。"""
+    plan_path = CURRENT_PLAN_PATH
+    if os.path.exists(plan_path):
+        try:
+            with open(plan_path, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"plan": None, "message": "No active plan"}
+
+
+def _tail_log(path: str, lines: int) -> list[str]:
+    """ログファイルの末尾 N 行を返す。ファイルなし時は空リスト。"""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+        return [line.rstrip() for line in all_lines[-lines:]]
+    except FileNotFoundError:
+        return []
+
+
 # ── ルート定義 ─────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -306,3 +342,42 @@ async def history(
         "layer_counts": layer_counts,
     }
     return templates.TemplateResponse("history.html", ctx)
+
+
+@app.get("/api/flags")
+async def get_flags(_: None = Depends(verify_auth)) -> dict[str, bool]:
+    """フラグファイル (lockout, rain_flag, wind_flag) の存在状態を返す。"""
+    return _get_flags_data()
+
+
+@app.get("/api/plan")
+async def get_plan(_: None = Depends(verify_auth)) -> dict[str, Any]:
+    """current_plan.json の内容を返す。ファイルなし時は {"plan": null} を返す。"""
+    return _get_plan_data()
+
+
+@app.get("/api/dashboard")
+async def get_dashboard_data(_: None = Depends(verify_auth)) -> dict[str, Any]:
+    """センサー・計画・フラグを集約して返す（§3.5 集約エンドポイント）。"""
+    return {
+        "sensors": fetch_sensors(),
+        "plan": _get_plan_data(),
+        "flags": _get_flags_data(),
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+@app.get("/api/logs")
+async def get_logs(
+    lines: int = 50,
+    _: None = Depends(verify_auth),
+) -> dict[str, list[str]]:
+    """4ログファイルの末尾 N 行を返す (max 200行)。"""
+    n = min(max(1, lines), 200)
+    log_dir = AGRIHA_LOG_DIR
+    return {
+        "control_log": _tail_log(os.path.join(log_dir, "control.log"), n),
+        "search_log": _tail_log(os.path.join(log_dir, "search_log.jsonl"), n),
+        "forecast_log": _tail_log(os.path.join(log_dir, "forecast.log"), n),
+        "emergency_log": _tail_log(os.path.join(log_dir, "emergency.log"), n),
+    }
