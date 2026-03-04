@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ from agriha.control.reflection import (
     generate_question,
     load_config,
     process_answer,
+    run_reflection,
     select_candidates,
 )
 
@@ -426,3 +428,115 @@ def test_check_nag_status_no_memos(tmp_path: Path) -> None:
     result = check_nag_status(config, db=db, now=now)
     db.close()
     assert result == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Test 10-14: run_reflection() E2E 統合テスト（LINE送信モック）
+# ---------------------------------------------------------------------------
+
+
+def _setup_candidates_yaml(tmp_path: Path, cids: list[str]) -> Path:
+    """candidates.yaml を tmp_path に作成してパスを返す。"""
+    candidates = [_make_candidate(cid) for cid in cids]
+    p = tmp_path / "rule_candidates.yaml"
+    p.write_text(yaml.dump({"candidates": candidates}), encoding="utf-8")
+    return p
+
+
+def test_run_reflection_send_reflection_called(tmp_path: Path) -> None:
+    """run_reflection() が memos で send_reflection を呼び出す。"""
+    candidates_yaml = _setup_candidates_yaml(tmp_path, ["rc_001"])
+    db_path = tmp_path / "control_log.db"
+    _make_db_with_table(db_path).close()
+
+    with patch("agriha.control.reflection.send_reflection") as mock_send, \
+         patch("agriha.control.reflection.send_nag_message") as mock_nag, \
+         patch("agriha.control.reflection.send_downgrade_notice") as mock_dg, \
+         patch.dict(os.environ, {"LINE_FARMER_USER_ID": "U123"}):
+        memos = run_reflection(
+            candidates_path=str(candidates_yaml),
+            db_path=str(db_path),
+        )
+
+    assert len(memos) == 1
+    mock_send.assert_called_once_with(memos)
+    mock_nag.assert_not_called()
+    mock_dg.assert_not_called()
+
+
+def test_run_reflection_skip_if_no_user_id(tmp_path: Path) -> None:
+    """LINE_FARMER_USER_ID 未設定時は send_reflection を呼び出さない。"""
+    candidates_yaml = _setup_candidates_yaml(tmp_path, ["rc_001"])
+    db_path = tmp_path / "control_log.db"
+    _make_db_with_table(db_path).close()
+
+    env = {k: v for k, v in os.environ.items() if k != "LINE_FARMER_USER_ID"}
+    with patch("agriha.control.reflection.send_reflection") as mock_send, \
+         patch.dict(os.environ, env, clear=True):
+        memos = run_reflection(
+            candidates_path=str(candidates_yaml),
+            db_path=str(db_path),
+        )
+
+    assert len(memos) == 1
+    mock_send.assert_not_called()
+
+
+def test_run_reflection_nag_sends_nag_message(tmp_path: Path) -> None:
+    """check_nag_status が 'nag' を返した場合、send_nag_message が呼ばれる。"""
+    candidates_yaml = _setup_candidates_yaml(tmp_path, ["rc_001"])
+    db_path = tmp_path / "control_log.db"
+    _make_db_with_table(db_path).close()
+
+    with patch("agriha.control.reflection.check_nag_status", return_value="nag"), \
+         patch("agriha.control.reflection.send_reflection"), \
+         patch("agriha.control.reflection.send_nag_message") as mock_nag, \
+         patch("agriha.control.reflection.send_downgrade_notice") as mock_dg, \
+         patch.dict(os.environ, {"LINE_FARMER_USER_ID": "U123"}):
+        run_reflection(
+            candidates_path=str(candidates_yaml),
+            db_path=str(db_path),
+        )
+
+    mock_nag.assert_called_once()
+    mock_dg.assert_not_called()
+
+
+def test_run_reflection_downgrade_sends_downgrade_notice(tmp_path: Path) -> None:
+    """check_nag_status が 'downgrade' を返した場合、send_downgrade_notice が呼ばれる。"""
+    candidates_yaml = _setup_candidates_yaml(tmp_path, ["rc_001"])
+    db_path = tmp_path / "control_log.db"
+    _make_db_with_table(db_path).close()
+
+    with patch("agriha.control.reflection.check_nag_status", return_value="downgrade"), \
+         patch("agriha.control.reflection.send_reflection"), \
+         patch("agriha.control.reflection.send_nag_message") as mock_nag, \
+         patch("agriha.control.reflection.send_downgrade_notice") as mock_dg, \
+         patch.dict(os.environ, {"LINE_FARMER_USER_ID": "U123"}):
+        run_reflection(
+            candidates_path=str(candidates_yaml),
+            db_path=str(db_path),
+        )
+
+    mock_dg.assert_called_once()
+    mock_nag.assert_not_called()
+
+
+def test_run_reflection_no_candidates_skips_send_reflection(tmp_path: Path) -> None:
+    """候補なしの場合、send_reflection を呼び出さない。"""
+    # 全候補が非pendingなら select_candidates は空を返す
+    candidates = [_make_candidate("rc_001", status="approved")]
+    p = tmp_path / "rule_candidates.yaml"
+    p.write_text(yaml.dump({"candidates": candidates}), encoding="utf-8")
+    db_path = tmp_path / "control_log.db"
+    _make_db_with_table(db_path).close()
+
+    with patch("agriha.control.reflection.send_reflection") as mock_send, \
+         patch.dict(os.environ, {"LINE_FARMER_USER_ID": "U123"}):
+        memos = run_reflection(
+            candidates_path=str(p),
+            db_path=str(db_path),
+        )
+
+    assert memos == []
+    mock_send.assert_not_called()

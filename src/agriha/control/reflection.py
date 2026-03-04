@@ -22,6 +22,11 @@ from typing import Any
 import yaml
 
 from agriha.control import rule_manager
+from agriha.linebot.reflection_sender import (
+    send_downgrade_notice,
+    send_nag_message,
+    send_reflection,
+)
 
 logger = logging.getLogger("reflection")
 
@@ -447,8 +452,10 @@ def run_reflection(
             "frequency を monthly に変更することを推奨します。",
             refl_cfg.get("downgrade_after_weeks", 4),
         )
+        send_downgrade_notice()
     elif nag == "nag":
         logger.info("反省会ナッジ: 未回答週数が閾値超過")
+        send_nag_message()
 
     candidates = select_candidates(
         max_items=max_items,
@@ -461,6 +468,13 @@ def run_reflection(
 
     memos = create_reflection_memos(candidates, db_path=db_path)
     logger.info("反省会メモ作成: %d件", len(memos))
+
+    user_id = os.environ.get("LINE_FARMER_USER_ID")
+    if user_id:
+        send_reflection(memos)
+    else:
+        logger.warning("LINE_FARMER_USER_ID未設定: LINE送信スキップ")
+
     return memos
 
 
