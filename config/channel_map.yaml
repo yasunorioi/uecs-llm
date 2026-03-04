@@ -1,0 +1,52 @@
+# config/channel_map.yaml
+# チャンネル割当設定 — 農家ごとにカスタマイズ可能
+# v4 spec準拠: ch5,6=南側窓, ch7,8=北側窓
+#
+# ■ 用途:
+#   UniPiリレーch番号と制御機器のマッピングを定義する。
+#   agriha_chat.py・rule_engine・forecast_engine・plan_executor等が
+#   このファイルを参照してラベル表示・制御判断を行う。
+#   ソースコードにch番号をハードコードしないための外部設定ファイル。
+#
+# ■ カスタマイズ手順:
+#   1. 本ファイルを編集（リポジトリ: config/channel_map.yaml）
+#   2. デプロイ: sudo cp config/channel_map.yaml /etc/agriha/channel_map.yaml
+#   3. agriha-chatサービス再起動: sudo systemctl restart agriha-chat
+#   ※ 制御スクリプト(emergency_guard/rule_engine/forecast_engine/plan_executor)は
+#      cronジョブのため再起動不要。次回cron実行時に自動反映。
+#   ※ 実機のリレー配線を変更した場合、このファイルも合わせて更新すること
+#
+# ■ フィールド説明:
+#   irrigation: 灌水ポンプのch番号とラベル
+#   side_window: 側窓のch番号（南北別）とラベル
+#   relay_labels: ch1-8の表示ラベル一覧（WebUI・ログ表示用）
+#   valid_channels: 有効ch番号の範囲（バリデーション用）
+#
+# デプロイ先: /etc/agriha/channel_map.yaml
+# リポジトリ: config/channel_map.yaml（fallback）
+
+irrigation:
+  channel: 4
+  label: "灌水ポンプ"
+
+side_window:
+  south:
+    channels: [5, 6]
+    label: "南側窓"
+  north:
+    channels: [7, 8]
+    label: "北側窓"
+
+relay_labels:
+  1: "暖房"
+  2: "循環扇"
+  3: "CO2発生器"
+  4: "灌水ポンプ"
+  5: "南側窓"
+  6: "南側窓"
+  7: "北側窓"
+  8: "北側窓"
+
+valid_channels:
+  min: 1
+  max: 8
