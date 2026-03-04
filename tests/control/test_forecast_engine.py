@@ -10,7 +10,9 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+import os
+import urllib.error
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -21,8 +23,13 @@ import pytest
 
 from agriha.control.forecast_engine import (
     TOOLS,
+    VC_CACHE_TTL,
+    build_search_query,
     call_tool,
+    check_connectivity,
     extract_plan_json,
+    fetch_weather_forecast,
+    get_weather_with_cache,
     init_db,
     is_commandgate_locked,
     is_layer1_locked,
@@ -552,3 +559,258 @@ def test_last_decision_updated(mock_sun, tmp_path):
     assert "timestamp" in data
     assert "summary" in data
     assert "actions_count" in data
+
+
+# ---------------------------------------------------------------------------
+# Test 19: fetch_weather_forecast — VC_API_KEY 未設定 → None
+# ---------------------------------------------------------------------------
+
+def test_fetch_weather_forecast_no_key():
+    """VC_API_KEY未設定時はNoneを返す。"""
+    with patch.dict(os.environ, {"VC_API_KEY": ""}):
+        result = fetch_weather_forecast()
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Test 20: fetch_weather_forecast — 正常取得
+# ---------------------------------------------------------------------------
+
+def test_fetch_weather_forecast_success():
+    """正常取得時にAPIレスポンスdictを返す。"""
+    fake_response = {"days": [{"hours": [{"temp": 10.0}]}]}
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(fake_response).encode("utf-8")
+    mock_resp.__enter__ = lambda s: s
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    with (
+        patch.dict(os.environ, {"VC_API_KEY": "dummy-key"}),
+        patch("urllib.request.urlopen", return_value=mock_resp),
+    ):
+        result = fetch_weather_forecast()
+    assert result is not None
+    assert "days" in result
+
+
+# ---------------------------------------------------------------------------
+# Test 21: fetch_weather_forecast — HTTP 401 エラー → None
+# ---------------------------------------------------------------------------
+
+def test_fetch_weather_forecast_http_error():
+    """HTTP エラー時はNoneを返す。"""
+    http_err = urllib.error.HTTPError(
+        url="", code=401, msg="Unauthorized", hdrs=None, fp=None
+    )
+    with (
+        patch.dict(os.environ, {"VC_API_KEY": "bad-key"}),
+        patch("urllib.request.urlopen", side_effect=http_err),
+    ):
+        result = fetch_weather_forecast()
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Test 22: get_weather_with_cache — TTL内キャッシュ命中
+# ---------------------------------------------------------------------------
+
+def test_get_weather_with_cache_hit(tmp_path: Path) -> None:
+    """TTL内のキャッシュがある場合、API呼び出しなしでキャッシュを返す。"""
+    cached_data = {
+        "days": [{"temp": 15.0}],
+        "_cached_at": datetime.now(timezone.utc).isoformat(),
+    }
+    cache_file = tmp_path / "vc_cache.json"
+    cache_file.write_text(json.dumps(cached_data), encoding="utf-8")
+    with (
+        patch("agriha.control.forecast_engine.VC_CACHE_PATH", str(cache_file)),
+        patch(
+            "agriha.control.forecast_engine.fetch_weather_forecast"
+        ) as mock_fetch,
+    ):
+        result = get_weather_with_cache()
+    mock_fetch.assert_not_called()
+    assert result is not None
+    assert "days" in result
+
+
+# ---------------------------------------------------------------------------
+# Test 23: get_weather_with_cache — TTL切れ → API再取得
+# ---------------------------------------------------------------------------
+
+def test_get_weather_with_cache_expired(tmp_path: Path) -> None:
+    """TTL切れキャッシュがある場合はAPIを再呼び出しする。"""
+    old_time = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    cached_data = {"days": [{"temp": 5.0}], "_cached_at": old_time}
+    cache_file = tmp_path / "vc_cache.json"
+    cache_file.write_text(json.dumps(cached_data), encoding="utf-8")
+    new_data = {"days": [{"temp": 20.0}]}
+    with (
+        patch("agriha.control.forecast_engine.VC_CACHE_PATH", str(cache_file)),
+        patch(
+            "agriha.control.forecast_engine.fetch_weather_forecast",
+            return_value=new_data,
+        ) as mock_fetch,
+    ):
+        result = get_weather_with_cache()
+    mock_fetch.assert_called_once()
+    assert result is not None
+    assert result["days"][0]["temp"] == 20.0
+
+
+# ---------------------------------------------------------------------------
+# Test 24: get_weather_with_cache — API失敗 + 古いキャッシュ → フォールバック
+# ---------------------------------------------------------------------------
+
+def test_get_weather_with_cache_api_fail_stale(tmp_path: Path) -> None:
+    """API失敗時は古いキャッシュにフォールバックする。"""
+    old_time = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+    stale_data = {"days": [{"temp": 3.0}], "_cached_at": old_time}
+    cache_file = tmp_path / "vc_cache.json"
+    cache_file.write_text(json.dumps(stale_data), encoding="utf-8")
+    with (
+        patch("agriha.control.forecast_engine.VC_CACHE_PATH", str(cache_file)),
+        patch(
+            "agriha.control.forecast_engine.fetch_weather_forecast",
+            return_value=None,
+        ),
+    ):
+        result = get_weather_with_cache()
+    assert result is not None
+    assert result["days"][0]["temp"] == 3.0
+
+
+# ---------------------------------------------------------------------------
+# Test 25: get_weather_with_cache — キャッシュなし + API失敗 → None
+# ---------------------------------------------------------------------------
+
+def test_get_weather_with_cache_no_cache_no_api(tmp_path: Path) -> None:
+    """キャッシュなし・API失敗の場合はNoneを返す。"""
+    cache_file = tmp_path / "vc_cache.json"  # 存在しない
+    with (
+        patch("agriha.control.forecast_engine.VC_CACHE_PATH", str(cache_file)),
+        patch(
+            "agriha.control.forecast_engine.fetch_weather_forecast",
+            return_value=None,
+        ),
+    ):
+        result = get_weather_with_cache()
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Test 26: build_search_query — 冬/夜/寒い/不明
+# ---------------------------------------------------------------------------
+
+@patch("agriha.control.forecast_engine.datetime")
+def test_build_search_query_winter_night_cold(mock_dt: MagicMock) -> None:
+    """冬・夜・氷点下のクエリを正しく生成する。"""
+    mock_dt.now.return_value = datetime(2026, 1, 15, 2, 0, tzinfo=_JST)
+    result = build_search_query({"misol": {"temperature_c": -2.0}}, None)
+    assert result == "winter_night_cold_unknown"
+
+
+# ---------------------------------------------------------------------------
+# Test 27: build_search_query — 夏/午後/暑い/晴れ
+# ---------------------------------------------------------------------------
+
+@patch("agriha.control.forecast_engine.datetime")
+def test_build_search_query_summer_afternoon_hot_clear(mock_dt: MagicMock) -> None:
+    """夏・午後・猛暑・晴れのクエリを正しく生成する。"""
+    mock_dt.now.return_value = datetime(2026, 7, 20, 14, 0, tzinfo=_JST)
+    weather = {"currentConditions": {"temp": 32.0, "conditions": "Clear"}}
+    result = build_search_query({"misol": {"temperature_c": 32.0}}, weather)
+    assert result == "summer_afternoon_hot_clear"
+
+
+# ---------------------------------------------------------------------------
+# Test 28: build_search_query — 温度バンド全パターン
+# ---------------------------------------------------------------------------
+
+@patch("agriha.control.forecast_engine.datetime")
+def test_build_search_query_temp_bands(mock_dt: MagicMock) -> None:
+    """各温度バンドが正しくマッピングされる。"""
+    mock_dt.now.return_value = datetime(2026, 4, 1, 10, 0, tzinfo=_JST)
+    cases = [
+        (-1.0, "cold"),
+        (4.9, "cold"),
+        (5.0, "cool"),
+        (14.9, "cool"),
+        (15.0, "warm"),
+        (24.9, "warm"),
+        (25.0, "hot"),
+    ]
+    for temp, expected_band in cases:
+        result = build_search_query({"misol": {"temperature_c": temp}}, None)
+        assert expected_band in result, (
+            f"temp={temp} → expected {expected_band!r} in {result!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 29: build_search_query — 天気条件マッピング
+# ---------------------------------------------------------------------------
+
+@patch("agriha.control.forecast_engine.datetime")
+def test_build_search_query_weather_conditions(mock_dt: MagicMock) -> None:
+    """天気条件キーワードが正しくマッピングされる。"""
+    mock_dt.now.return_value = datetime(2026, 6, 1, 9, 0, tzinfo=_JST)
+    cases = [
+        ("Rain, Overcast", "rain"),
+        ("Snow", "snow"),
+        ("Cloudy", "cloudy"),
+        ("Clear", "clear"),
+        ("Sunny", "clear"),
+        ("Fog", "unknown"),
+    ]
+    for conditions, expected_weather in cases:
+        weather = {"currentConditions": {"temp": 15.0, "conditions": conditions}}
+        result = build_search_query({"misol": {"temperature_c": 15.0}}, weather)
+        assert result.endswith(expected_weather), (
+            f"conditions={conditions!r} → expected {expected_weather!r} suffix in {result!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 30: build_search_query — weather_data なし → unknown
+# ---------------------------------------------------------------------------
+
+@patch("agriha.control.forecast_engine.datetime")
+def test_build_search_query_no_weather_data(mock_dt: MagicMock) -> None:
+    """weather_data=None の場合、天気は unknown になる。"""
+    mock_dt.now.return_value = datetime(2026, 3, 1, 8, 0, tzinfo=_JST)
+    result = build_search_query({"misol": {"temperature_c": 10.0}}, None)
+    assert result.endswith("_unknown")
+
+
+# ---------------------------------------------------------------------------
+# Test 31: check_connectivity — ping 成功
+# ---------------------------------------------------------------------------
+
+def test_check_connectivity_success() -> None:
+    """ping が成功する場合 True を返す。"""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    with patch("subprocess.run", return_value=mock_result):
+        assert check_connectivity() is True
+
+
+# ---------------------------------------------------------------------------
+# Test 32: check_connectivity — ping 失敗
+# ---------------------------------------------------------------------------
+
+def test_check_connectivity_failure() -> None:
+    """ping が失敗する場合 False を返す。"""
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    with patch("subprocess.run", return_value=mock_result):
+        assert check_connectivity() is False
+
+
+# ---------------------------------------------------------------------------
+# Test 33: check_connectivity — 例外発生 → False
+# ---------------------------------------------------------------------------
+
+def test_check_connectivity_exception() -> None:
+    """subprocess.run が例外を投げた場合 False を返す。"""
+    with patch("subprocess.run", side_effect=OSError("command not found")):
+        assert check_connectivity() is False

@@ -21,9 +21,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import sqlite3
+import subprocess
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -35,6 +39,9 @@ import yaml
 logger = logging.getLogger("forecast_engine")
 
 _JST = ZoneInfo("Asia/Tokyo")
+
+VC_CACHE_PATH = os.environ.get("VC_CACHE_PATH", "/tmp/vc_cache.json")
+VC_CACHE_TTL = 3600  # TTL: 1時間（秒）
 
 # ---------------------------------------------------------------------------
 # デフォルト設定（forecast.yaml で上書き）
@@ -249,6 +256,191 @@ def get_time_period(
         return "daytime"
     else:
         return "evening"
+
+
+# ---------------------------------------------------------------------------
+# Visual Crossing API 連携 / キャッシュ / 接続確認 / 検索クエリ (§3.3)
+# ---------------------------------------------------------------------------
+
+def fetch_weather_forecast(
+    lat: float = 42.888, lon: float = 141.603
+) -> dict[str, Any] | None:
+    """Visual Crossing Timeline API から24時間天気予報を取得する。
+
+    Returns:
+        APIレスポンスのdict、またはNone（キー未設定・エラー時）。
+    """
+    api_key = os.environ.get("VC_API_KEY", "")
+    if not api_key:
+        logger.warning("VC_API_KEY未設定、天気予報スキップ")
+        return None
+    url = (
+        f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/"
+        f"timeline/{lat},{lon}?unitGroup=metric&include=hours&key={api_key}"
+    )
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return data
+    except urllib.error.HTTPError as exc:
+        logger.warning("VC API HTTP error: %s %s", exc.code, exc.reason)
+        return None
+    except Exception as exc:
+        logger.warning("VC API fetch failed: %s", exc)
+        return None
+
+
+def get_weather_with_cache(
+    lat: float = 42.888, lon: float = 141.603
+) -> dict[str, Any] | None:
+    """キャッシュ付き天気予報取得。TTL 1時間。
+
+    1. キャッシュ確認（TTL内なら返却）
+    2. API呼び出し
+    3. 成功 → キャッシュ更新して返却
+    4. 失敗 → 古いキャッシュにフォールバック返却
+    5. キャッシュもなし → None返却
+    """
+    cache_path = Path(VC_CACHE_PATH)
+
+    # 1. キャッシュ確認
+    try:
+        if cache_path.exists():
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            cached_at_str = cached.get("_cached_at", "")
+            if cached_at_str:
+                cached_at = datetime.fromisoformat(cached_at_str)
+                age = datetime.now(timezone.utc) - cached_at.astimezone(timezone.utc)
+                if age.total_seconds() < VC_CACHE_TTL:
+                    logger.debug("VC cache hit (age=%.0fs)", age.total_seconds())
+                    return cached
+    except Exception:
+        pass  # キャッシュ読み込み失敗は無視してAPI呼び出しへ
+
+    # 2. API呼び出し
+    data = fetch_weather_forecast(lat, lon)
+
+    if data is not None:
+        # 3. キャッシュ更新
+        data["_cached_at"] = datetime.now(timezone.utc).isoformat()
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        except Exception as exc:
+            logger.warning("VC cache write failed: %s", exc)
+        return data
+
+    # 4. API失敗 → 古いキャッシュにフォールバック
+    try:
+        if cache_path.exists():
+            logger.warning("VC API failed, using stale cache")
+            return json.loads(cache_path.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+
+    # 5. キャッシュもなし
+    return None
+
+
+def build_search_query(
+    sensor_data: dict[str, Any],
+    weather_data: dict[str, Any] | None,
+) -> str:
+    """高札API検索用クエリを生成する。
+
+    形式: ``{季節}_{時間帯}_{温度バンド}_{天気}``
+
+    - 季節: spring(3-5月) / summer(6-8月) / autumn(9-11月) / winter(12-2月)
+    - 時間帯: dawn(4-8h) / morning(8-12h) / afternoon(12-17h) / evening(17-21h) / night
+    - 温度バンド: cold(<5℃) / cool(5-15℃) / warm(15-25℃) / hot(≥25℃)
+    - 天気: clear / cloudy / rain / snow / unknown
+    """
+    now = datetime.now(_JST)
+
+    # 季節（月で判定）
+    month = now.month
+    if month in (3, 4, 5):
+        season = "spring"
+    elif month in (6, 7, 8):
+        season = "summer"
+    elif month in (9, 10, 11):
+        season = "autumn"
+    else:
+        season = "winter"
+
+    # 時間帯（時で判定）
+    hour = now.hour
+    if 4 <= hour < 8:
+        time_of_day = "dawn"
+    elif 8 <= hour < 12:
+        time_of_day = "morning"
+    elif 12 <= hour < 17:
+        time_of_day = "afternoon"
+    elif 17 <= hour < 21:
+        time_of_day = "evening"
+    else:
+        time_of_day = "night"
+
+    # 外気温バンド（sensorデータ優先、なければweather_data）
+    outside_temp: float | None = None
+    try:
+        raw = sensor_data.get("misol", {}).get("temperature_c")
+        if raw is None and weather_data:
+            raw = (weather_data.get("currentConditions") or {}).get("temp")
+        if raw is not None:
+            outside_temp = float(raw)
+    except (TypeError, ValueError):
+        pass
+
+    if outside_temp is None:
+        temp_band = "unknown"
+    elif outside_temp < 5.0:
+        temp_band = "cold"
+    elif outside_temp < 15.0:
+        temp_band = "cool"
+    elif outside_temp < 25.0:
+        temp_band = "warm"
+    else:
+        temp_band = "hot"
+
+    # 天気（weather_dataのconditions文字列から判定）
+    weather = "unknown"
+    if weather_data:
+        conditions = (
+            (weather_data.get("currentConditions") or {}).get("conditions") or ""
+        ).lower()
+        if any(w in conditions for w in ("rain", "drizzle", "shower")):
+            weather = "rain"
+        elif any(w in conditions for w in ("snow", "sleet")):
+            weather = "snow"
+        elif any(w in conditions for w in ("cloud", "overcast")):
+            weather = "cloudy"
+        elif any(w in conditions for w in ("clear", "sunny", "sun")):
+            weather = "clear"
+
+    return f"{season}_{time_of_day}_{temp_band}_{weather}"
+
+
+def check_connectivity(host: str = "8.8.8.8", timeout: int = 3) -> bool:
+    """インターネット接続確認（Starlink断時のフォールバック用）。
+
+    Args:
+        host: pingの宛先ホスト。
+        timeout: タイムアウト秒数。
+
+    Returns:
+        True: 疎通OK / False: 疎通NG / 例外時もFalse。
+    """
+    try:
+        result = subprocess.run(
+            ["ping", "-c", "1", "-W", str(timeout), host],
+            capture_output=True,
+            timeout=timeout + 1,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
