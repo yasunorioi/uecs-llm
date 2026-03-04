@@ -1,9 +1,9 @@
 # v2 三層制御 詳細設計書
 
-> **Version**: 1.5 (v3.5連動: 反省会モード+Starlink監視+CSIカメラ設計追記 — 2026-03-04)
+> **Version**: 1.6 (v3.6連動: 蒸留パイプライン §7.5-§7.11 forecast_engine I/O拡張 — 2026-03-04)
 > **Date**: 2026-03-04
 > **Status**: Approved
-> **Parent**: llm_control_loop_design.md v3.5
+> **Parent**: llm_control_loop_design.md v3.6
 > **Branch**: v2-three-layer
 
 ---
@@ -377,6 +377,8 @@ def get_effective_target(pid_override_path):
 │         → Layer 1 ロックアウト状態                           │
 │   [CALC] astral: 日の出/日没計算                             │
 │   [ARG]  trigger_reason: 起動トリガー種別（ログ用）          │
+│   [API]  GET /search?q=... (高札FTS5検索, v1.6新規)          │
+│         → 類似過去判断（スキップ判定 or プロンプト注入用）  │
 │                                                              │
 │ 出力:                                                        │
 │   [FILE] /var/lib/agriha/pid_override.json                   │
@@ -385,6 +387,8 @@ def get_effective_target(pid_override_path):
 │         → 判断ログ（trigger, summary, pid_override_applied） │
 │   [FILE] /var/lib/agriha/last_decision.json                  │
 │         → 最終判断状態                                      │
+│   [FILE] /var/lib/agriha/search_log.jsonl (v1.6新規)         │
+│         → 検索クエリ・結果・LLMスキップ有無の記録           │
 │   [LOG] >> /var/log/agriha/control.log                       │
 │                                                              │
 │ 依存パッケージ:                                              │
@@ -411,6 +415,14 @@ rule_engine.py がトリガー条件を検知
   │
   ├─ Step 3: 直近判断履歴読み込み
   │   └─ control_log.db → 直近3件のsummary+pid_override
+  │
+  ├─ Step 3.5: 【v1.6新規】高札FTS5検索（蒸留パイプライン, §7.6）
+  │   ├─ GET /search?q="内温XX CO2_YYY 湿度ZZ" limit=5
+  │   ├─ スコア ≥ 0.85 かつ類似判断あり → **LLM呼び出しスキップ**
+  │   │   └─ 過去判断をpid_override.jsonに適用して終了
+  │   ├─ スコア < 0.85 かつ類似判断あり → プロンプトに注入してStep 4へ
+  │   └─ 類似判断なし → Step 4へ（従来フロー）
+  │   （検索結果はsearch_log.jsonlに記録）
   │
   ├─ Step 4: 日の出/日没計算 + 時間帯注入
   │   └─ astral → 時間帯4区分
@@ -1345,7 +1357,33 @@ retrospective:
   max_questions: 3           # 1回の反省会で送る質問数の上限
 ```
 
-### 6.7 /etc/agriha/starlink_monitor.env（v3.5新設）
+### 6.7 /etc/agriha/kousatsu_search.yaml（v1.6新設）
+
+高札FTS5検索（§7.6: 蒸留パイプライン）の設定ファイル。
+
+```yaml
+# /etc/agriha/kousatsu_search.yaml
+# 高札FTS5検索設定（§7.6: llm_control_loop_design.md v3.6）
+
+kousatsu:
+  api_url: "http://localhost:8080"  # 既存高札API
+  search_endpoint: "/search"        # FTS5検索エンドポイント（新規追加）
+  default_limit: 5                  # 検索結果件数
+  skip_threshold: 0.85              # このスコア以上でLLMスキップ
+  inject_threshold: 0.70            # このスコア以上でプロンプト注入
+  timeout_sec: 3                    # 検索タイムアウト（失敗時はLLM呼び出しに続行）
+
+search_log:
+  path: "/var/lib/agriha/search_log.jsonl"
+  max_size_mb: 50                   # ローテーション閾値
+
+rule_promotion:
+  min_search_count: 10              # 週N回以上でルール候補に昇格
+  min_avg_score: 0.85               # 平均スコア閾値
+  expiry_days: 30                   # 未承認ルール候補の自動削除（腐敗設計）
+```
+
+### 6.8 /etc/agriha/starlink_monitor.env（v1.5新設）
 
 Starlink監視（§14）の設定ファイル。
 
@@ -1368,7 +1406,8 @@ CONNECTIVITY_LOG="/var/lib/agriha/connectivity.log"
   ├─ layer3_config.yaml               # 新規: Layer 3 設定
   ├─ crop_irrigation.yaml             # 既存: 灌水パラメータ
   ├─ system_prompt.txt                # 既存: LLM プロンプト
-  └─ starlink_monitor.env             # 新規(v1.5): Starlink監視設定（§6.7）
+  ├─ starlink_monitor.env             # 新規(v1.5): Starlink監視設定（§6.8）
+  └─ kousatsu_search.yaml            # 新規(v1.6): 高札FTS5検索設定（§6.7）
 
 /opt/agriha-control/                  # 実行スクリプト
   ├─ emergency_guard.sh               # 新規: Layer 1
@@ -1387,6 +1426,7 @@ CONNECTIVITY_LOG="/var/lib/agriha/connectivity.log"
   ├─ rule_engine_state.json           # 新規: Layer 2 最終実行状態
   ├─ starlink_status.json             # 新規(v1.5): Starlink接続状態（online/offline）
   ├─ connectivity.log                 # 新規(v1.5): Starlink断履歴ログ
+  ├─ search_log.jsonl                 # 新規(v1.6): 高札FTS5検索ログ（クエリ・スコア・LLMスキップ有無）
   ├─ photos/                          # 新規(v1.5): CSIカメラ定点写真（7日自動削除）
   └─ plans/                           # 新規(v1.5): 計画/実績アーカイブ（反省会用）
        ├─ {YYYYMMDD}_plan.json        # 日次計画（cron 23:55アーカイブ）
