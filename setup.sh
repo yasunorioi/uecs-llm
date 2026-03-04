@@ -2,7 +2,7 @@
 # ═══════════════════════════════════════════════════
 # AgriHA v4 セットアップスクリプト
 # git clone 後にこれ1発で環境構築が完了する
-# Usage: cd ~/uecs-llm && ./setup.sh
+# Usage: sudo git clone https://github.com/yasunorioi/uecs-llm.git /opt/agriha && cd /opt/agriha && sudo bash setup.sh
 # ═══════════════════════════════════════════════════
 set -euo pipefail
 
@@ -68,6 +68,9 @@ fi
 sudo mkdir -p "$DATA_DIR"
 sudo chown "${AGRIHA_USER}:${AGRIHA_USER}" "$DATA_DIR"
 echo "  → ${DATA_DIR} 作成完了"
+sudo mkdir -p /var/log/agriha
+sudo chown "${AGRIHA_USER}:${AGRIHA_USER}" /var/log/agriha
+echo "  → /var/log/agriha 作成完了"
 
 # Step 4: systemd サービスファイルインストール + enable
 # __REPO_DIR__ を実際のリポジトリパスに置換してからインストール

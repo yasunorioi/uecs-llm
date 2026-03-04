@@ -1,4 +1,5 @@
 # AgriHA v4 三層制御 cron設定
+# ※ /home/agriha/uecs-llm は setup.sh インストール時に実際のリポジトリパス（/opt/agriha 等）に置換される
 # Layer 1: 緊急制御（毎分）
 * * * * * agriha /home/agriha/uecs-llm/src/agriha/control/emergency_guard.sh 2>&1 | logger -t agriha-guard
 
