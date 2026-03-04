@@ -17,3 +17,6 @@
 
 # 反省会: ルール候補→農家へLINE質問（週次: 月曜07:00、蒸留の4時間後）
 0 7 * * 1 agriha cd /home/agriha/uecs-llm && /home/agriha/uecs-llm/.venv/bin/python3 -m agriha.control.reflection >> /var/log/agriha/reflection.log 2>&1
+
+# カメラ定点撮影（5分毎）
+*/5 * * * * agriha /usr/local/bin/agriha-capture.sh >> /var/log/agriha/capture.log 2>&1
