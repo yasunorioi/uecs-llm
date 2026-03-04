@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +29,16 @@ logger = logging.getLogger("plan_executor")
 _JST = ZoneInfo("Asia/Tokyo")
 
 # ---------------------------------------------------------------------------
+# バリデーション定数
+# ---------------------------------------------------------------------------
+
+RELAY_CH_MIN = 1
+RELAY_CH_MAX = 8
+DURATION_SEC_MAX = 3600
+FLAG_DIR = os.environ.get("AGRIHA_FLAG_DIR", "/var/lib/agriha")
+FLAG_MAX_AGE_SEC = 20 * 60  # 20分以上古いflagは無視
+
+# ---------------------------------------------------------------------------
 # デフォルト設定
 # ---------------------------------------------------------------------------
 
@@ -38,12 +49,21 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "unipi_api": "http://localhost:8080",
     "api_key": "",
     "timeout_sec": 10,
+    "flag_dir": FLAG_DIR,
 }
 
-# バリデーション定数
-RELAY_CH_MIN = 1
-RELAY_CH_MAX = 8
-DURATION_SEC_MAX = 3600
+
+# ---------------------------------------------------------------------------
+# flag ファイル確認
+# ---------------------------------------------------------------------------
+
+def is_flag_active(flag_path: Path, max_age_sec: int = FLAG_MAX_AGE_SEC) -> bool:
+    """flagファイルが存在し、mtimeがmax_age_sec以内なら True を返す。"""
+    try:
+        age = datetime.now().timestamp() - flag_path.stat().st_mtime
+        return age < max_age_sec
+    except FileNotFoundError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +200,7 @@ def run_executor(
     base_url = str(cfg["unipi_api"])
     api_key = str(cfg.get("api_key", ""))
     timeout = float(cfg["timeout_sec"])
+    flag_dir_path = Path(cfg.get("flag_dir", FLAG_DIR))
 
     _now = now if now is not None else datetime.now(_JST)
 
@@ -248,30 +269,17 @@ def run_executor(
             logger.warning("GET /api/status 失敗: %s — ロックアウトなしと見なす", exc)
 
         # -----------------------------------------------------------------------
-        # Step 3: 降雨/強風チェック
+        # Step 3: flagファイルチェック（rule_engineが書き出す）
         # -----------------------------------------------------------------------
         weather_cfg = load_rules_config(rules_config_path)
-        rainfall_threshold = float(weather_cfg["rainfall_threshold"])
-        wind_threshold = float(weather_cfg["wind_threshold"])
         window_channels = set(weather_cfg["window_channels"])
 
-        rainfall = 0.0
-        wind_speed = 0.0
-        try:
-            sensors_r = http_client.get(f"{base_url}/api/sensors")
-            sensors_r.raise_for_status()
-            sensors = sensors_r.json().get("sensors", {})
-            rainfall, wind_speed = _extract_weather(sensors)
-        except Exception as exc:
-            logger.warning("GET /api/sensors 失敗: %s — 天候チェックスキップ", exc)
-
-        bad_weather = (rainfall > rainfall_threshold) or (wind_speed > wind_threshold)
-        if bad_weather:
-            logger.info(
-                "降雨/強風検知 (rainfall=%.2f, wind=%.1f) → 側窓操作スキップ",
-                rainfall,
-                wind_speed,
-            )
+        rain_active = is_flag_active(flag_dir_path / "rain_flag")
+        wind_active = is_flag_active(flag_dir_path / "wind_flag")
+        if rain_active:
+            logger.info("rain_flag 検知 → 側窓操作スキップ")
+        if wind_active:
+            logger.info("wind_flag 検知 → 側窓操作スキップ")
 
         # -----------------------------------------------------------------------
         # Step 4 → 6: アクション抽出・実行・更新
@@ -289,7 +297,7 @@ def run_executor(
 
             # ---- executed 済みチェック ----
             executed_val = action.get("executed")
-            if executed_val is True or executed_val == "skipped_weather":
+            if executed_val is True or executed_val in ("skipped_weather", "skipped_rain", "skipped_wind"):
                 result["skipped_already_done"].append(relay_ch)
                 continue
 
@@ -306,19 +314,19 @@ def run_executor(
                 continue
 
             # ---- Step 3: 天候スキップ（側窓のみ）----
-            if bad_weather and relay_ch in window_channels:
-                logger.info(
-                    "ch%s 側窓操作スキップ (rainfall=%.2f > %.2f or wind=%.1f > %.1f)",
-                    relay_ch,
-                    rainfall,
-                    rainfall_threshold,
-                    wind_speed,
-                    wind_threshold,
-                )
-                action["executed"] = "skipped_weather"
-                result["skipped_weather"].append(relay_ch)
-                modified = True
-                continue
+            if relay_ch in window_channels:
+                if rain_active:
+                    logger.info("ch%s 側窓操作スキップ (rain_flag)", relay_ch)
+                    action["executed"] = "skipped_rain"
+                    result["skipped_weather"].append(relay_ch)
+                    modified = True
+                    continue
+                if wind_active:
+                    logger.info("ch%s 側窓操作スキップ (wind_flag)", relay_ch)
+                    action["executed"] = "skipped_wind"
+                    result["skipped_weather"].append(relay_ch)
+                    modified = True
+                    continue
 
             # ---- duration_sec クランプ ----
             duration_sec = action.get("duration_sec", 0)

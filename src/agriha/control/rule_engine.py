@@ -50,6 +50,7 @@ DEFAULT_STATE_PATH = os.environ.get(
 )
 DEFAULT_API_BASE = os.environ.get("UNIPI_API_BASE", "http://localhost:8080")
 LOG_PATH = os.environ.get("RULE_ENGINE_LOG", "/var/log/agriha/rule_engine.log")
+FLAG_DIR = os.environ.get("AGRIHA_FLAG_DIR", "/var/lib/agriha")
 
 # ──────────────────────────────────────────────
 # ロガー設定
@@ -455,6 +456,50 @@ def save_state(state_path: str, result: dict[str, Any]) -> None:
 
 
 # ──────────────────────────────────────────────
+# weather flag 更新
+# ──────────────────────────────────────────────
+
+def update_weather_flags(
+    cfg: dict[str, Any],
+    sensors: dict[str, Any],
+    flag_dir: str = FLAG_DIR,
+) -> None:
+    """rain_flag / wind_flag ファイルを書き出し／削除する。
+
+    rule_engine 実行毎に呼ばれ、plan_executor が参照するフラグを更新する。
+    - 条件成立: タイムスタンプをファイルに書き出す
+    - 条件解除: ファイルを削除する
+    """
+    flag_path = Path(flag_dir)
+    flag_path.mkdir(parents=True, exist_ok=True)
+    rain_cfg = cfg["rain"]
+    wind_cfg = cfg["wind"]
+
+    misol = get_misol(sensors)
+    rainfall = misol.get("rainfall", 0.0) or 0.0
+    wind_speed = misol.get("wind_speed_ms", 0.0) or 0.0
+    now_str = datetime.now(tz=_JST).isoformat()
+
+    # rain_flag
+    rain_flag = flag_path / "rain_flag"
+    if rainfall > rain_cfg["threshold_mm_h"]:
+        rain_flag.write_text(now_str)
+        logger.info("rain_flag 書き出し: rainfall=%.2f > %.2f", rainfall, rain_cfg["threshold_mm_h"])
+    elif rain_flag.exists():
+        rain_flag.unlink()
+        logger.info("rain_flag 削除: rainfall=%.2f", rainfall)
+
+    # wind_flag
+    wind_flag = flag_path / "wind_flag"
+    if wind_speed > wind_cfg["strong_wind_threshold_ms"]:
+        wind_flag.write_text(json.dumps({"timestamp": now_str, "wind_speed_ms": wind_speed}))
+        logger.info("wind_flag 書き出し: wind_speed=%.1fm/s > %.1f", wind_speed, wind_cfg["strong_wind_threshold_ms"])
+    elif wind_flag.exists():
+        wind_flag.unlink()
+        logger.info("wind_flag 削除: wind_speed=%.1fm/s", wind_speed)
+
+
+# ──────────────────────────────────────────────
 # メインエントリポイント
 # ──────────────────────────────────────────────
 
@@ -467,6 +512,7 @@ def run(
     state_path: str = DEFAULT_STATE_PATH,
     api_base: str = DEFAULT_API_BASE,
     channel_map_path: str | None = None,
+    flag_dir: str = FLAG_DIR,
 ) -> int:
     """
     rule_engine のメイン処理。
@@ -497,6 +543,9 @@ def run(
         with httpx.Client(timeout=timeout) as client:
             sensors = fetch_sensors(client, api_base)
             status = fetch_status(client, api_base)
+
+            # Step 3.5: weather flag 更新（ロックアウト状態によらず実行）
+            update_weather_flags(cfg, sensors, flag_dir=flag_dir)
 
             # CommandGate ロックアウト確認
             if status.get("locked_out", False):

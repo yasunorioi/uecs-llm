@@ -548,9 +548,81 @@ def test_run_normal_flow(tmp_path, base_cfg, base_crop_cfg):
             plan_path=str(tmp_path / "current_plan.json"),
             solar_acc_path=str(solar_acc_path),
             state_path=str(state_path),
+            flag_dir=str(tmp_path / "flags"),
         )
 
     assert result == 0
     assert state_path.exists()
     state = json.loads(state_path.read_text())
     assert "last_run_at" in state
+
+
+# ──────────────────────────────────────────────
+# weather flag 書き出しテスト
+# ──────────────────────────────────────────────
+
+class TestWeatherFlags:
+    """update_weather_flags: flagファイル書き出し／削除テスト"""
+
+    def test_rain_flag_written_on_rain(self, tmp_path: Path, base_cfg: dict) -> None:
+        """雨センサー > 閾値 → rain_flag が書き出される"""
+        from agriha.control.rule_engine import update_weather_flags
+
+        sensors = {
+            "sensors": {
+                "agriha/farm/weather/misol": {"rainfall": 1.0, "wind_speed_ms": 1.0}
+            }
+        }
+        update_weather_flags(base_cfg, sensors, flag_dir=str(tmp_path))
+        assert (tmp_path / "rain_flag").exists()
+
+    def test_rain_flag_deleted_on_clear(self, tmp_path: Path, base_cfg: dict) -> None:
+        """降雨なし → 既存 rain_flag が削除される"""
+        from agriha.control.rule_engine import update_weather_flags
+
+        (tmp_path / "rain_flag").write_text("old")
+        sensors = {
+            "sensors": {
+                "agriha/farm/weather/misol": {"rainfall": 0.0, "wind_speed_ms": 1.0}
+            }
+        }
+        update_weather_flags(base_cfg, sensors, flag_dir=str(tmp_path))
+        assert not (tmp_path / "rain_flag").exists()
+
+    def test_wind_flag_written_on_strong_wind(self, tmp_path: Path, base_cfg: dict) -> None:
+        """強風 > 閾値 → wind_flag が書き出される"""
+        from agriha.control.rule_engine import update_weather_flags
+
+        sensors = {
+            "sensors": {
+                "agriha/farm/weather/misol": {"rainfall": 0.0, "wind_speed_ms": 8.0}
+            }
+        }
+        update_weather_flags(base_cfg, sensors, flag_dir=str(tmp_path))
+        assert (tmp_path / "wind_flag").exists()
+
+    def test_wind_flag_deleted_on_calm(self, tmp_path: Path, base_cfg: dict) -> None:
+        """弱風 → 既存 wind_flag が削除される"""
+        from agriha.control.rule_engine import update_weather_flags
+
+        (tmp_path / "wind_flag").write_text("old")
+        sensors = {
+            "sensors": {
+                "agriha/farm/weather/misol": {"rainfall": 0.0, "wind_speed_ms": 2.0}
+            }
+        }
+        update_weather_flags(base_cfg, sensors, flag_dir=str(tmp_path))
+        assert not (tmp_path / "wind_flag").exists()
+
+    def test_no_flag_on_normal_weather(self, tmp_path: Path, base_cfg: dict) -> None:
+        """通常天候（降雨なし・弱風）→ flagファイルが作成されない"""
+        from agriha.control.rule_engine import update_weather_flags
+
+        sensors = {
+            "sensors": {
+                "agriha/farm/weather/misol": {"rainfall": 0.0, "wind_speed_ms": 1.0}
+            }
+        }
+        update_weather_flags(base_cfg, sensors, flag_dir=str(tmp_path))
+        assert not (tmp_path / "rain_flag").exists()
+        assert not (tmp_path / "wind_flag").exists()

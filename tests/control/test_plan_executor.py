@@ -171,6 +171,7 @@ def _make_config(tmp_path: Path) -> dict[str, Any]:
         "unipi_api": "http://localhost:8080",
         "api_key": "",
         "timeout_sec": 5,
+        "flag_dir": str(tmp_path / "flags"),
     }
 
 
@@ -233,11 +234,15 @@ class TestWeatherSkip:
     """テスト 4, 5, 6: 天候スキップ"""
 
     def test_04_rain_skips_window_channel(self, tmp_path: Path) -> None:
-        """4. 降雨中に側窓操作（ch5）→ skipped_weather で記録"""
+        """4. rain_flag 存在+側窓操作（ch5）→ skipped_rain で記録"""
         cfg = _make_config(tmp_path)
         plan = _make_plan([_make_action(relay_ch=5, execute_at=_PAST)])
         Path(cfg["plan_path"]).write_text(json.dumps(plan), encoding="utf-8")
-        client = _make_http_client(sensors=_rain_sensors(1.0))  # rainfall=1.0 > 0.5
+        # rain_flag を作成
+        flag_dir = Path(cfg["flag_dir"])
+        flag_dir.mkdir(parents=True, exist_ok=True)
+        (flag_dir / "rain_flag").write_text("2026-03-05T00:00:00+09:00")
+        client = _make_http_client()
 
         result = run_executor(cfg, http_client=client, now=_NOW)
 
@@ -245,17 +250,21 @@ class TestWeatherSkip:
         assert result["executed"] == []
         client.post.assert_not_called()
 
-        # current_plan.json に skipped_weather が記録されていること
+        # current_plan.json に skipped_rain が記録されていること
         saved = json.loads(Path(cfg["plan_path"]).read_text())
-        assert saved["actions"][0]["executed"] == "skipped_weather"
+        assert saved["actions"][0]["executed"] == "skipped_rain"
 
     def test_05_rain_does_not_skip_irrigation(self, tmp_path: Path) -> None:
-        """5. 降雨中に灌水操作（ch4）→ 正常実行（側窓のみスキップ）"""
+        """5. rain_flag 存在+灌水操作（ch4）→ 正常実行（側窓のみスキップ）"""
         cfg = _make_config(tmp_path)
         # ch4=灌水（window_channels=[5,6,7,8] に含まれない）
         plan = _make_plan([_make_action(relay_ch=4, execute_at=_PAST)])
         Path(cfg["plan_path"]).write_text(json.dumps(plan), encoding="utf-8")
-        client = _make_http_client(sensors=_rain_sensors(1.0))
+        # rain_flag を作成（ch4は窓チャンネルでないのでスキップされない）
+        flag_dir = Path(cfg["flag_dir"])
+        flag_dir.mkdir(parents=True, exist_ok=True)
+        (flag_dir / "rain_flag").write_text("2026-03-05T00:00:00+09:00")
+        client = _make_http_client()
 
         result = run_executor(cfg, http_client=client, now=_NOW)
 
@@ -264,17 +273,41 @@ class TestWeatherSkip:
         client.post.assert_called_once()
 
     def test_06_strong_wind_skips_window_channel(self, tmp_path: Path) -> None:
-        """6. 強風中に側窓操作（ch6）→ skipped_weather"""
+        """6. wind_flag 存在+側窓操作（ch6）→ skipped_wind"""
         cfg = _make_config(tmp_path)
         plan = _make_plan([_make_action(relay_ch=6, execute_at=_PAST)])
         Path(cfg["plan_path"]).write_text(json.dumps(plan), encoding="utf-8")
-        client = _make_http_client(sensors=_wind_sensors(8.0))  # wind=8.0 > 5.0
+        # wind_flag を作成
+        flag_dir = Path(cfg["flag_dir"])
+        flag_dir.mkdir(parents=True, exist_ok=True)
+        (flag_dir / "wind_flag").write_text('{"timestamp": "2026-03-05T00:00:00+09:00", "wind_speed_ms": 8.0}')
+        client = _make_http_client()
 
         result = run_executor(cfg, http_client=client, now=_NOW)
 
         assert 6 in result["skipped_weather"]
         assert result["executed"] == []
         client.post.assert_not_called()
+
+    def test_stale_rain_flag_does_not_skip(self, tmp_path: Path) -> None:
+        """7b. 古いrain_flag（21分前）→ 無視されて正常実行"""
+        import os
+        import time
+        cfg = _make_config(tmp_path)
+        plan = _make_plan([_make_action(relay_ch=5, execute_at=_PAST)])
+        Path(cfg["plan_path"]).write_text(json.dumps(plan), encoding="utf-8")
+        flag_dir = Path(cfg["flag_dir"])
+        flag_dir.mkdir(parents=True, exist_ok=True)
+        rain_flag = flag_dir / "rain_flag"
+        rain_flag.write_text("old")
+        stale_mtime = time.time() - (21 * 60)  # 21分前
+        os.utime(rain_flag, (stale_mtime, stale_mtime))
+        client = _make_http_client()
+
+        result = run_executor(cfg, http_client=client, now=_NOW)
+
+        assert 5 in result["executed"]
+        assert result["skipped_weather"] == []
 
 
 class TestExecutionTiming:
