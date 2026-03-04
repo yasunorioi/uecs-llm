@@ -51,7 +51,7 @@ async def test_get_flags_all_false(client: AsyncClient, tmp_path: Path) -> None:
     r = await client.get("/api/flags")
     assert r.status_code == 200
     data = r.json()
-    assert data == {"lockout": False, "rain_flag": False, "wind_flag": False}
+    assert data == {"lockout": False, "rain": False, "wind": False}
 
 
 async def test_get_flags_lockout_true(client: AsyncClient, tmp_path: Path) -> None:
@@ -61,8 +61,8 @@ async def test_get_flags_lockout_true(client: AsyncClient, tmp_path: Path) -> No
     assert r.status_code == 200
     data = r.json()
     assert data["lockout"] is True
-    assert data["rain_flag"] is False
-    assert data["wind_flag"] is False
+    assert data["rain"] is False
+    assert data["wind"] is False
 
 
 async def test_get_flags_all_true(client: AsyncClient, tmp_path: Path) -> None:
@@ -73,7 +73,7 @@ async def test_get_flags_all_true(client: AsyncClient, tmp_path: Path) -> None:
     r = await client.get("/api/flags")
     assert r.status_code == 200
     data = r.json()
-    assert data == {"lockout": True, "rain_flag": True, "wind_flag": True}
+    assert data == {"lockout": True, "rain": True, "wind": True}
 
 
 # ── GET /api/plan ───────────────────────────────────────────────────────────
@@ -122,7 +122,7 @@ async def test_get_dashboard_flags_embedded(client: AsyncClient, tmp_path: Path)
     with patch("agriha.chat.app.fetch_sensors", return_value={}):
         r = await client.get("/api/dashboard")
     assert r.status_code == 200
-    assert r.json()["flags"]["rain_flag"] is True
+    assert r.json()["flags"]["rain"] is True
 
 
 # ── GET /api/logs ───────────────────────────────────────────────────────────
