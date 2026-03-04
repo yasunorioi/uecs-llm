@@ -10,7 +10,7 @@ Tests:
 
 import pytest
 
-from unipi_daemon.ccm_receiver import (
+from agriha.daemon.ccm_receiver import (
     parse_ccm_xml,
     classify_ccm_type,
     strip_ccm_suffix,

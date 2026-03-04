@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from unipi_daemon.ds18b20 import DS18B20, DS18B20Error, DEFAULT_DEVICE_ID
+from agriha.daemon.ds18b20 import DS18B20, DS18B20Error, DEFAULT_DEVICE_ID
 
 
 # ------------------------------------------------------------------ #

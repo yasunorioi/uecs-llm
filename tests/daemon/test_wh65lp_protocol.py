@@ -12,7 +12,7 @@ MISOL WH65LP プロトコルパーサー ユニットテスト
 
 import pytest
 
-from unipi_daemon.wh65lp_reader import (
+from agriha.daemon.wh65lp_reader import (
     verify_checksum,
     parse_frame,
     SENTINEL_WIND_DIR,

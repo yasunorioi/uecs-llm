@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from v2_control.forecast_engine import (
+from agriha.control.forecast_engine import (
     TOOLS,
     call_tool,
     extract_plan_json,
@@ -226,7 +226,7 @@ def test_commandgate_lockout_skips_forecast(tmp_path):
 # Test 3: 正常実行 → current_plan.json 生成
 # ---------------------------------------------------------------------------
 
-@patch("v2_control.forecast_engine.get_sun_times")
+@patch("agriha.control.forecast_engine.get_sun_times")
 def test_normal_flow_generates_plan(mock_sun, tmp_path):
     """正常フローで current_plan.json が生成される。"""
     now = datetime.now(_JST)
@@ -257,7 +257,7 @@ def test_normal_flow_generates_plan(mock_sun, tmp_path):
 # Test 4: API タイムアウト → フェイルセーフ（plan未生成）
 # ---------------------------------------------------------------------------
 
-@patch("v2_control.forecast_engine.get_sun_times")
+@patch("agriha.control.forecast_engine.get_sun_times")
 def test_api_timeout_no_plan(mock_sun, tmp_path):
     """API タイムアウト時は error を返し plan 未生成。"""
     now = datetime.now(_JST)
@@ -287,7 +287,7 @@ def test_api_timeout_no_plan(mock_sun, tmp_path):
 # Test 5: API エラー → フェイルセーフ
 # ---------------------------------------------------------------------------
 
-@patch("v2_control.forecast_engine.get_sun_times")
+@patch("agriha.control.forecast_engine.get_sun_times")
 def test_api_error_failsafe(mock_sun, tmp_path):
     """API エラー時は error を返す。"""
     now = datetime.now(_JST)
@@ -316,7 +316,7 @@ def test_api_error_failsafe(mock_sun, tmp_path):
 # Test 6: tool calling ループ正常 (get_sensors → get_status → 判断)
 # ---------------------------------------------------------------------------
 
-@patch("v2_control.forecast_engine.get_sun_times")
+@patch("agriha.control.forecast_engine.get_sun_times")
 def test_tool_calling_loop(mock_sun, tmp_path):
     """tool calling が3ラウンドで正常完了する。"""
     now = datetime.now(_JST)
@@ -372,7 +372,7 @@ def test_validate_actions_duration_clamped():
 # Test 9: 判断ログ DB 書き込み確認
 # ---------------------------------------------------------------------------
 
-@patch("v2_control.forecast_engine.get_sun_times")
+@patch("agriha.control.forecast_engine.get_sun_times")
 def test_decision_log_saved(mock_sun, tmp_path):
     """正常フローで control_log.db に判断ログが保存される。"""
     now = datetime.now(_JST)
@@ -405,7 +405,7 @@ def test_decision_log_saved(mock_sun, tmp_path):
 # Test 10: system_prompt.txt + 履歴注入確認
 # ---------------------------------------------------------------------------
 
-@patch("v2_control.forecast_engine.get_sun_times")
+@patch("agriha.control.forecast_engine.get_sun_times")
 def test_system_prompt_and_history_injected(mock_sun, tmp_path):
     """system_prompt.txt と判断履歴がAPIリクエストに含まれる。"""
     now = datetime.now(_JST)
@@ -529,7 +529,7 @@ def test_call_tool_unknown():
 # Test 18: last_decision.json が更新される
 # ---------------------------------------------------------------------------
 
-@patch("v2_control.forecast_engine.get_sun_times")
+@patch("agriha.control.forecast_engine.get_sun_times")
 def test_last_decision_updated(mock_sun, tmp_path):
     """正常フローで last_decision.json が更新される。"""
     now = datetime.now(_JST)

@@ -1,12 +1,12 @@
-# AgriHA v2 三層制御 cron設定
+# AgriHA v4 三層制御 cron設定
 # Layer 1: 緊急制御（毎分）
-* * * * * agriha /home/agriha/uecs-llm/src/v2_control/emergency_guard.sh 2>&1 | logger -t agriha-guard
+* * * * * agriha /home/agriha/uecs-llm/src/agriha/control/emergency_guard.sh 2>&1 | logger -t agriha-guard
 
 # Layer 2: ルールベース制御（5分毎）
-*/5 * * * * agriha /home/agriha/uecs-llm/venv/bin/python3 -m v2_control.rule_engine 2>&1 | logger -t agriha-rule
+*/5 * * * * agriha /home/agriha/uecs-llm/venv/bin/python3 -m agriha.control.rule_engine 2>&1 | logger -t agriha-rule
 
 # Layer 3: LLM予報制御（毎時）
-0 * * * * agriha /home/agriha/uecs-llm/venv/bin/python3 -m v2_control.forecast_engine 2>&1 | logger -t agriha-forecast
+0 * * * * agriha /home/agriha/uecs-llm/venv/bin/python3 -m agriha.control.forecast_engine 2>&1 | logger -t agriha-forecast
 
 # Plan executor: 計画実行（毎分）
-* * * * * agriha /home/agriha/uecs-llm/venv/bin/python3 -m v2_control.plan_executor 2>&1 | logger -t agriha-plan
+* * * * * agriha /home/agriha/uecs-llm/venv/bin/python3 -m agriha.control.plan_executor 2>&1 | logger -t agriha-plan

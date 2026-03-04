@@ -28,8 +28,8 @@ import pytest
 import yaml
 from httpx import ASGITransport, AsyncClient
 
-import agriha_ui.app as app_module
-from agriha_ui.app import app
+import agriha.chat.app as app_module
+from agriha.chat.app import app
 
 # ── ヘルパー ──────────────────────────────────────────────────────────────────
 
@@ -114,8 +114,8 @@ async def client(tmp_config: dict[str, str]) -> AsyncClient:
 async def test_dashboard_ok(client: AsyncClient, tmp_config: dict[str, str]) -> None:
     # テンプレートは sensors[key].value を参照するため、空dictで「---」表示にする
     with (
-        patch("agriha_ui.app.fetch_sensors", return_value={}),
-        patch("agriha_ui.app.fetch_status", return_value={"locked_out": False, "relay_state": {}}),
+        patch("agriha.chat.app.fetch_sensors", return_value={}),
+        patch("agriha.chat.app.fetch_status", return_value={"locked_out": False, "relay_state": {}}),
     ):
         r = await client.get("/")
     assert r.status_code == 200
@@ -128,8 +128,8 @@ async def test_dashboard_api_down(client: AsyncClient, tmp_config: dict[str, str
         patch.object(app_module, "AGRIHA_THRESHOLDS_PATH", tmp_config["thresholds"]),
         patch.object(app_module, "SYSTEM_PROMPT_PATH", tmp_config["prompt"]),
         patch.object(app_module, "CONTROL_LOG_DB", tmp_config["db"]),
-        patch("agriha_ui.app.fetch_sensors", return_value={}),
-        patch("agriha_ui.app.fetch_status", return_value={}),
+        patch("agriha.chat.app.fetch_sensors", return_value={}),
+        patch("agriha.chat.app.fetch_status", return_value={}),
     ):
         r = await client.get("/")
     assert r.status_code == 200
@@ -139,8 +139,8 @@ async def test_dashboard_api_down(client: AsyncClient, tmp_config: dict[str, str
 async def test_dashboard_partial_ok(client: AsyncClient, tmp_config: dict[str, str]) -> None:
     # テンプレートは sensors[key].value を参照するため、空dictで「---」表示にする
     with (
-        patch("agriha_ui.app.fetch_sensors", return_value={}),
-        patch("agriha_ui.app.fetch_status", return_value={}),
+        patch("agriha.chat.app.fetch_sensors", return_value={}),
+        patch("agriha.chat.app.fetch_status", return_value={}),
     ):
         r = await client.get("/api/dashboard-partial")
     assert r.status_code == 200
@@ -152,8 +152,8 @@ async def test_settings_ok(client: AsyncClient, tmp_config: dict[str, str]) -> N
     # load_system_prompt/load_thresholds はデフォルト引数がモジュール定義時に評価されるため
     # 関数自体をパッチして期待値を返す
     with (
-        patch("agriha_ui.app.load_system_prompt", return_value="テスト用プロンプト"),
-        patch("agriha_ui.app.load_thresholds", return_value={
+        patch("agriha.chat.app.load_system_prompt", return_value="テスト用プロンプト"),
+        patch("agriha.chat.app.load_thresholds", return_value={
             "emergency": {"high_temp": 27.0, "low_temp": 16.0},
             "co2": {"target_ppm": 700},
         }),
@@ -167,7 +167,7 @@ async def test_settings_ok(client: AsyncClient, tmp_config: dict[str, str]) -> N
 # 5. GET /settings (system_prompt.txt不在) → 200, 空テキストで表示
 async def test_settings_no_prompt_file(client: AsyncClient, tmp_config: dict[str, str]) -> None:
     # load_system_prompt のデフォルト引数はimport時評価済み → 関数自体をパッチ
-    with patch("agriha_ui.app.load_system_prompt", return_value=""):
+    with patch("agriha.chat.app.load_system_prompt", return_value=""):
         r = await client.get("/settings")
     assert r.status_code == 200
 
@@ -241,7 +241,7 @@ async def test_history_ok(client: AsyncClient, tmp_config: dict[str, str]) -> No
         {"timestamp": "2026-01-01 13:55", "layer": "Layer 2", "action": "灌水ON", "detail": "日射累積200"},
         {"timestamp": "2026-01-01 13:50", "layer": "Layer 3", "action": "予報アクション", "detail": "降雨予報"},
     ]
-    with patch("agriha_ui.app.query_decisions", return_value=mock_decisions):
+    with patch("agriha.chat.app.query_decisions", return_value=mock_decisions):
         r = await client.get("/history")
     assert r.status_code == 200
     assert "緊急開窓" in r.text
@@ -251,7 +251,7 @@ async def test_history_ok(client: AsyncClient, tmp_config: dict[str, str]) -> No
 # 11. GET /history (DB不在) → 200, 空リストで表示される
 async def test_history_no_db(client: AsyncClient) -> None:
     # query_decisions のデフォルト引数はimport時評価済み → 関数自体をパッチ
-    with patch("agriha_ui.app.query_decisions", return_value=[]):
+    with patch("agriha.chat.app.query_decisions", return_value=[]):
         r = await client.get("/history")
     assert r.status_code == 200
     assert "制御履歴はありません" in r.text

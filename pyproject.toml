@@ -44,11 +44,11 @@ dev = [
 ]
 
 [project.scripts]
-unipi-daemon = "unipi_daemon.main:main"
-agriha-control = "uecs_llm.agriha_control:main"
+unipi-daemon = "agriha.daemon.main:main"
+agriha-control = "agriha.control.rule_engine:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/uecs_llm", "src/unipi_daemon", "src/v2_control"]
+packages = ["src/agriha"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

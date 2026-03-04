@@ -27,7 +27,7 @@ from typing import Any
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
-from v2_control.plan_executor import run_executor
+from agriha.control.plan_executor import run_executor
 
 # ---------------------------------------------------------------------------
 # テスト用定数

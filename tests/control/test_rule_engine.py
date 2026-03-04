@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 import pytest
 import yaml
 
-from v2_control.rule_engine import (
+from agriha.control.rule_engine import (
     evaluate_rules,
     fetch_sensors,
     fetch_status,
@@ -354,7 +354,7 @@ def test_commandgate_lockout_skips(tmp_path, base_cfg, base_crop_cfg):
     lockout_path = tmp_path / "lockout_state.json"
     lockout_path.write_text(json.dumps({}))
 
-    with patch("v2_control.rule_engine.httpx.Client") as mock_client_cls:
+    with patch("agriha.control.rule_engine.httpx.Client") as mock_client_cls:
         mock_client = MagicMock()
         mock_client_cls.return_value.__enter__.return_value = mock_client
 
@@ -443,7 +443,7 @@ def test_api_failure_returns_error(tmp_path, base_cfg, base_crop_cfg):
     lockout_path = tmp_path / "lockout_state.json"
     lockout_path.write_text(json.dumps({}))
 
-    with patch("v2_control.rule_engine.httpx.Client") as mock_client_cls:
+    with patch("agriha.control.rule_engine.httpx.Client") as mock_client_cls:
         mock_client = MagicMock()
         mock_client_cls.return_value.__enter__.return_value = mock_client
         mock_client.get.side_effect = httpx_mod.ConnectError("Connection refused")
@@ -523,7 +523,7 @@ def test_run_normal_flow(tmp_path, base_cfg, base_crop_cfg):
     state_path = tmp_path / "rule_engine_state.json"
     solar_acc_path = tmp_path / "solar_accumulator.json"
 
-    with patch("v2_control.rule_engine.httpx.Client") as mock_client_cls:
+    with patch("agriha.control.rule_engine.httpx.Client") as mock_client_cls:
         mock_client = MagicMock()
         mock_client_cls.return_value.__enter__.return_value = mock_client
 
