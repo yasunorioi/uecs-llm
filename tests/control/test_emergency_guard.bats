@@ -2,13 +2,13 @@
 # tests/v2_control/test_emergency_guard.bats
 # Layer 1 emergency_guard.sh bats テスト（設計書 §7.1）
 
-GUARD_SCRIPT="${BATS_TEST_DIRNAME}/../../src/v2_control/emergency_guard.sh"
+GUARD_SCRIPT="${BATS_TEST_DIRNAME}/../../src/agriha/control/emergency_guard.sh"
 
 setup() {
     TEST_DIR="$(mktemp -d)"
 
     # テスト用環境変数（emergency_guard.sh が参照）
-    export AGRIHA_CONFIG="${TEST_DIR}/layer1.env"
+    export AGRIHA_CONFIG="${TEST_DIR}/emergency.conf"
     export AGRIHA_LOCKOUT="${TEST_DIR}/lockout_state.json"
     export AGRIHA_LOG="${TEST_DIR}/emergency.log"
 
@@ -20,8 +20,8 @@ setup() {
     export MOCK_SENSOR_MISSING_CCM="false"
     export MOCK_LINE_FAIL="false"
 
-    # テスト用 layer1.env（LINE有効、テスト用URLを使用）
-    cat > "${TEST_DIR}/layer1.env" << 'EOF'
+    # テスト用 emergency.conf（LINE有効、テスト用URLを使用）
+    cat > "${TEST_DIR}/emergency.conf" << 'EOF'
 HIGH_TEMP_THRESHOLD=27
 LOW_TEMP_THRESHOLD=16
 WINDOW_CHANNELS="5 6 7 8"

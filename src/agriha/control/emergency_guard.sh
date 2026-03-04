@@ -20,7 +20,7 @@ LOCKOUT_FILE="/var/lib/agriha/lockout_state.json"
 
 # ── 設定ファイル読み込み ───────────────────────────────────────────
 # テスト時は AGRIHA_CONFIG 環境変数でパスを上書き可能
-_CFG="${AGRIHA_CONFIG:-/etc/agriha/layer1.env}"
+_CFG="${AGRIHA_CONFIG:-/etc/agriha/emergency.conf}"
 if [ -f "$_CFG" ]; then
     . "$_CFG"
 fi

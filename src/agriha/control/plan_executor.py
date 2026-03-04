@@ -34,7 +34,7 @@ _JST = ZoneInfo("Asia/Tokyo")
 DEFAULT_CONFIG: dict[str, Any] = {
     "plan_path": "/var/lib/agriha/current_plan.json",
     "lockout_path": "/var/lib/agriha/lockout_state.json",
-    "layer2_config_path": "/etc/agriha/layer2_config.yaml",
+    "rules_config_path": "/etc/agriha/rules.yaml",
     "unipi_api": "http://localhost:8080",
     "api_key": "",
     "timeout_sec": 10,
@@ -73,8 +73,8 @@ def is_layer1_locked(path: str | Path, now: datetime | None = None) -> bool:
 # Layer 2 設定読み込み（降雨/強風閾値・側窓チャンネル）
 # ---------------------------------------------------------------------------
 
-def load_layer2_config(path: str | Path) -> dict[str, Any]:
-    """layer2_config.yaml から降雨/強風閾値と側窓チャンネルを読み込む。
+def load_rules_config(path: str | Path) -> dict[str, Any]:
+    """rules.yaml から降雨/強風閾値と側窓チャンネルを読み込む。
 
     ファイルなし or パースエラー時はデフォルト値を返す（重複定義回避のため
     channel_map.yaml を参照し、さらに設計書 §6.2 のハードコードにフォールバック）。
@@ -104,7 +104,7 @@ def load_layer2_config(path: str | Path) -> dict[str, Any]:
             ),
         }
     except Exception:
-        logger.warning("layer2_config.yaml 読み込み失敗 — デフォルト値を使用")
+        logger.warning("rules.yaml 読み込み失敗 — デフォルト値を使用")
         return defaults
 
 
@@ -176,7 +176,7 @@ def run_executor(
 
     plan_path = Path(cfg["plan_path"])
     lockout_path = Path(cfg["lockout_path"])
-    layer2_config_path = Path(cfg["layer2_config_path"])
+    rules_config_path = Path(cfg["rules_config_path"])
     base_url = str(cfg["unipi_api"])
     api_key = str(cfg.get("api_key", ""))
     timeout = float(cfg["timeout_sec"])
@@ -250,7 +250,7 @@ def run_executor(
         # -----------------------------------------------------------------------
         # Step 3: 降雨/強風チェック
         # -----------------------------------------------------------------------
-        weather_cfg = load_layer2_config(layer2_config_path)
+        weather_cfg = load_rules_config(rules_config_path)
         rainfall_threshold = float(weather_cfg["rainfall_threshold"])
         wind_threshold = float(weather_cfg["wind_threshold"])
         window_channels = set(weather_cfg["window_channels"])

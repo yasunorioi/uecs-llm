@@ -31,7 +31,7 @@ from agriha.control.channel_config import load_channel_map, get_window_channels
 _JST = ZoneInfo("Asia/Tokyo")
 
 DEFAULT_CONFIG_PATH = os.environ.get(
-    "LAYER2_CONFIG_PATH", "/etc/agriha/layer2_config.yaml"
+    "RULES_CONFIG_PATH", "/etc/agriha/rules.yaml"
 )
 DEFAULT_CROP_CONFIG_PATH = os.environ.get(
     "CROP_IRRIGATION_PATH", "/etc/agriha/crop_irrigation.yaml"

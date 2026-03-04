@@ -40,7 +40,7 @@ _JST = ZoneInfo("Asia/Tokyo")
 
 @pytest.fixture
 def base_cfg() -> dict[str, Any]:
-    """テスト用 layer2_config.yaml 相当の設定辞書。"""
+    """テスト用 rules.yaml 相当の設定辞書。"""
     return {
         "temperature": {
             "target_day": 26.0,
@@ -345,7 +345,7 @@ def test_layer1_lockout_expired_not_locked(tmp_path):
 
 def test_commandgate_lockout_skips(tmp_path, base_cfg, base_crop_cfg):
     """GET /api/status → locked_out=True → run() が 1 を返す。"""
-    config_path = tmp_path / "layer2_config.yaml"
+    config_path = tmp_path / "rules.yaml"
     config_path.write_text(yaml.dump(base_cfg))
     crop_path = tmp_path / "crop_irrigation.yaml"
     crop_path.write_text(yaml.dump(base_crop_cfg))
@@ -436,7 +436,7 @@ def test_api_failure_returns_error(tmp_path, base_cfg, base_crop_cfg):
     """httpx.ConnectError → run() が 1 を返す（安全側）。"""
     import httpx as httpx_mod
 
-    config_path = tmp_path / "layer2_config.yaml"
+    config_path = tmp_path / "rules.yaml"
     config_path.write_text(yaml.dump(base_cfg))
     crop_path = tmp_path / "crop_irrigation.yaml"
     crop_path.write_text(yaml.dump(base_crop_cfg))
@@ -514,7 +514,7 @@ def test_midday_is_not_nighttime(base_cfg):
 
 def test_run_normal_flow(tmp_path, base_cfg, base_crop_cfg):
     """正常なAPI応答 → run() が 0 を返し state ファイルが生成される。"""
-    config_path = tmp_path / "layer2_config.yaml"
+    config_path = tmp_path / "rules.yaml"
     config_path.write_text(yaml.dump(base_cfg))
     crop_path = tmp_path / "crop_irrigation.yaml"
     crop_path.write_text(yaml.dump(base_crop_cfg))

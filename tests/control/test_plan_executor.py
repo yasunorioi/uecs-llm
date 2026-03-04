@@ -163,11 +163,11 @@ def _wind_sensors(wind_speed_ms: float = 8.0) -> dict[str, Any]:
 
 
 def _make_config(tmp_path: Path) -> dict[str, Any]:
-    """テスト用 config 辞書を返す（layer2_config.yaml はデフォルト閾値）。"""
+    """テスト用 config 辞書を返す（rules.yaml はデフォルト閾値）。"""
     return {
         "plan_path": str(tmp_path / "current_plan.json"),
         "lockout_path": str(tmp_path / "lockout_state.json"),
-        "layer2_config_path": str(tmp_path / "layer2_config.yaml"),
+        "rules_config_path": str(tmp_path / "rules.yaml"),
         "unipi_api": "http://localhost:8080",
         "api_key": "",
         "timeout_sec": 5,
