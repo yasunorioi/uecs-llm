@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════
-# AgriHA v2 セットアップスクリプト
+# AgriHA v4 セットアップスクリプト
 # git clone 後にこれ1発で環境構築が完了する
 # Usage: cd ~/uecs-llm && ./setup.sh
 # ═══════════════════════════════════════════════════
@@ -13,7 +13,7 @@ CONFIG_DIR="/etc/agriha"
 DATA_DIR="/var/lib/agriha"
 AGRIHA_USER="agriha"
 
-echo "=== AgriHA v2 セットアップ開始 ==="
+echo "=== AgriHA v4 セットアップ開始 ==="
 echo "リポジトリパス: ${SCRIPT_DIR}"
 
 # Step 1: Python venv作成 + pip install
@@ -32,7 +32,7 @@ echo "  → pip install 完了"
 echo "[2/6] 設定ディレクトリ作成..."
 sudo mkdir -p "$CONFIG_DIR"
 # 既存ファイルは上書きしない（農家が手動編集した設定を守る）
-for f in config/thresholds.yaml config/layer2_config.yaml config/layer3_config.yaml config/crop_irrigation.yaml; do
+for f in config/emergency.conf config/rules.yaml config/forecast.yaml config/channel_map.yaml config/crop_irrigation.yaml; do
     fname=$(basename "$f")
     if [ ! -f "${CONFIG_DIR}/${fname}" ]; then
         sudo cp "${SCRIPT_DIR}/${f}" "${CONFIG_DIR}/${fname}"
@@ -50,7 +50,7 @@ else
 fi
 # system_prompt.txt（農家の怒りが蓄積された制御ロジックの本体）
 if [ ! -f "${CONFIG_DIR}/system_prompt.txt" ]; then
-    sudo cp "${SCRIPT_DIR}/src/uecs_llm/system_prompt.txt" "${CONFIG_DIR}/system_prompt.txt"
+    sudo cp "${SCRIPT_DIR}/config/system_prompt.txt" "${CONFIG_DIR}/system_prompt.txt"
     echo "  → system_prompt.txt コピー"
 else
     echo "  → system_prompt.txt 既存 → スキップ"
@@ -96,7 +96,7 @@ else
 fi
 
 echo ""
-echo "=== セットアップ完了 ==="
+echo "=== AgriHA v4 セットアップ完了 ==="
 echo "次のステップ:"
 echo "  1. nano .env  ← ANTHROPIC_API_KEY を記入"
 echo "  2. sudo nano /etc/agriha/unipi_daemon.yaml  ← ハードウェア設定確認"
