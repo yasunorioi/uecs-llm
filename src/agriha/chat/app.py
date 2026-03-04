@@ -18,6 +18,8 @@ from typing import Any
 import httpx
 import yaml
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
+
+from agriha.control.channel_config import get_relay_labels
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
@@ -175,6 +177,97 @@ def query_decisions(db_path: str = CONTROL_LOG_DB, hours: int = 24) -> list[dict
         return []
 
 
+def _build_plan_timeline(
+    plan: dict[str, Any],
+) -> tuple[list[dict[str, Any]], float | None, str, str, dict[int, str]]:
+    """current_plan.json からタイムライン表示用データを構築する。
+
+    Returns:
+        (plan_actions, plan_now_pct, generated_at_short, valid_until_short, relay_labels)
+    """
+    # リレーラベル取得（channel_map.yaml が見つからない場合はフォールバック）
+    try:
+        relay_labels = get_relay_labels()
+    except Exception:
+        relay_labels = {}
+
+    generated_at_str = plan.get("generated_at", "")
+    valid_until_str = plan.get("valid_until", "")
+    actions_raw = plan.get("actions", [])
+
+    if not generated_at_str or not valid_until_str or not actions_raw:
+        return [], None, "", "", relay_labels
+
+    # ISO8601 パース（タイムゾーン付き・なし両対応）
+    try:
+        gen_dt = datetime.fromisoformat(generated_at_str)
+        valid_dt = datetime.fromisoformat(valid_until_str)
+    except (ValueError, TypeError):
+        return [], None, "", "", relay_labels
+
+    total_sec = (valid_dt - gen_dt).total_seconds()
+    if total_sec <= 0:
+        return [], None, "", "", relay_labels
+
+    now = datetime.now(tz=gen_dt.tzinfo)
+    now_elapsed = (now - gen_dt).total_seconds()
+    plan_now_pct = max(0.0, min(100.0, now_elapsed / total_sec * 100))
+
+    gen_short = gen_dt.strftime("%H:%M")
+    valid_short = valid_dt.strftime("%H:%M")
+
+    plan_actions: list[dict[str, Any]] = []
+    for act in actions_raw:
+        if not isinstance(act, dict):
+            continue
+        exec_at_str = act.get("execute_at", "")
+        try:
+            exec_dt = datetime.fromisoformat(exec_at_str)
+        except (ValueError, TypeError):
+            continue
+
+        relay_ch = act.get("relay_ch", 0)
+        duration_sec = act.get("duration_sec", 0)
+        reason = act.get("reason", "")
+
+        # 位置計算
+        elapsed = (exec_dt - gen_dt).total_seconds()
+        left_pct = max(0.0, min(100.0, elapsed / total_sec * 100))
+        width_pct = max(2.0, min(100.0 - left_pct, duration_sec / total_sec * 100))
+
+        # ステータス判定
+        executed = act.get("executed", False)
+        if executed is True:
+            act_status = "executed"
+        elif executed == "skipped_rain":
+            act_status = "skipped_rain"
+        elif executed == "skipped_wind":
+            act_status = "skipped_wind"
+        elif isinstance(executed, str) and executed.startswith("skipped"):
+            act_status = "skipped_rain"  # generic skip → orange
+        else:
+            # 未実行: 期限切れか予定か
+            if exec_dt < now:
+                act_status = "overdue"
+            else:
+                act_status = "pending"
+
+        label = relay_labels.get(relay_ch, f"ch{relay_ch}")
+        time_str = exec_dt.strftime("%H:%M")
+
+        plan_actions.append({
+            "relay_ch": relay_ch,
+            "label": label,
+            "time_str": time_str,
+            "left_pct": round(left_pct, 1),
+            "width_pct": round(width_pct, 1),
+            "status": act_status,
+            "reason": reason,
+        })
+
+    return plan_actions, round(plan_now_pct, 1), gen_short, valid_short, relay_labels
+
+
 def _build_dashboard_context() -> dict[str, Any]:
     """ダッシュボード用テンプレート変数を構築する。"""
     sensors = fetch_sensors()
@@ -208,6 +301,10 @@ def _build_dashboard_context() -> dict[str, Any]:
         "action_count": len(plan.get("actions", [])),
     }
 
+    # 計画タイムライン（plan_actions, plan_now_pct 等）
+    plan_actions, plan_now_pct, plan_gen_short, plan_valid_short, relay_labels = \
+        _build_plan_timeline(plan)
+
     return {
         "sensors": sensors,
         "lockout": lockout,
@@ -215,6 +312,11 @@ def _build_dashboard_context() -> dict[str, Any]:
         "forecast": forecast,
         "relays": status_data.get("relay_state") or {},
         "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "plan_actions": plan_actions,
+        "plan_now_pct": plan_now_pct,
+        "plan_generated_at_short": plan_gen_short,
+        "plan_valid_until_short": plan_valid_short,
+        "relay_labels": relay_labels,
     }
 
 

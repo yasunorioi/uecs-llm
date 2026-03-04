@@ -1,6 +1,7 @@
 {# dashboard_partial.html — htmx partial更新用（base.htmlを継承しない）
    テンプレート変数は dashboard.html と同一:
-     sensors, lockout, rule_engine, forecast, relays, last_update
+     sensors, lockout, rule_engine, forecast, relays, last_update,
+     plan_actions, plan_now_pct, plan_generated_at_short, plan_valid_until_short, relay_labels
 #}
 
 {# ─── ヘッダー行 ─────────────────────────────────── #}
@@ -22,78 +23,108 @@
 {% endif %}
 
 {# ─── 主要センサーカード ─────────────────────────── #}
+{# センサーキーマッピング: CCM=agriha/1/ccm/sensor/*, DS18B20, Misol #}
 <section class="section">
   <h2 class="section__title">センサー値</h2>
   <div class="card-grid">
 
+    {# 気温: CCM InAirTemp → DS18B20 → Misol の優先順 #}
     <div class="card card--sensor">
       <div class="card__label">🌡 気温（室内）</div>
       <div class="card__value">
-        {% if sensors and sensors.get('agriha/h01/ccm/InAirTemp') %}
-          {{ "%.1f"|format(sensors['agriha/h01/ccm/InAirTemp'].value) }} ℃
-        {% elif sensors and sensors.get('InAirTemp') %}
-          {{ "%.1f"|format(sensors['InAirTemp'].value) }} ℃
+        {% if sensors.get('agriha/1/ccm/sensor/InAirTemp') %}
+          {{ "%.1f"|format(sensors['agriha/1/ccm/sensor/InAirTemp']['value']) }} ℃
+        {% elif sensors.get('agriha/1/sensor/DS18B20') %}
+          {{ "%.1f"|format(sensors['agriha/1/sensor/DS18B20']['temperature_c']) }} ℃
         {% else %}
           ---
         {% endif %}
       </div>
     </div>
 
+    {# 湿度: CCM InAirHumid → Misol #}
     <div class="card card--sensor">
       <div class="card__label">💧 湿度（室内）</div>
       <div class="card__value">
-        {% if sensors and sensors.get('agriha/h01/ccm/InAirHumi') %}
-          {{ "%.1f"|format(sensors['agriha/h01/ccm/InAirHumi'].value) }} %
-        {% elif sensors and sensors.get('InAirHumi') %}
-          {{ "%.1f"|format(sensors['InAirHumi'].value) }} %
+        {% if sensors.get('agriha/1/ccm/sensor/InAirHumid') %}
+          {{ "%.1f"|format(sensors['agriha/1/ccm/sensor/InAirHumid']['value']) }} %
+        {% elif sensors.get('agriha/farm/weather/misol') %}
+          {{ "%.1f"|format(sensors['agriha/farm/weather/misol']['humidity_pct']) }} %（外気）
         {% else %}
           ---
         {% endif %}
       </div>
     </div>
 
+    {# CO2: CCM InAirCO2 #}
     <div class="card card--sensor">
       <div class="card__label">🌫 CO2濃度</div>
       <div class="card__value">
-        {% if sensors and sensors.get('agriha/h01/ccm/InCO2') %}
-          {{ sensors['agriha/h01/ccm/InCO2'].value|int }} ppm
-        {% elif sensors and sensors.get('InCO2') %}
-          {{ sensors['InCO2'].value|int }} ppm
+        {% if sensors.get('agriha/1/ccm/sensor/InAirCO2') %}
+          {{ sensors['agriha/1/ccm/sensor/InAirCO2']['value']|int }} ppm
         {% else %}
           ---
         {% endif %}
       </div>
     </div>
 
+    {# 日射: CCM InRadiation #}
     <div class="card card--sensor">
       <div class="card__label">☀ 日射量</div>
       <div class="card__value">
-        {% if sensors and sensors.get('agriha/h01/ccm/InSolar') %}
-          {{ sensors['agriha/h01/ccm/InSolar'].value|int }} W/m²
-        {% elif sensors and sensors.get('InSolar') %}
-          {{ sensors['InSolar'].value|int }} W/m²
+        {% if sensors.get('agriha/1/ccm/sensor/InRadiation') %}
+          {{ sensors['agriha/1/ccm/sensor/InRadiation']['value']|int }} W/m²
+        {% elif sensors.get('agriha/farm/weather/misol') %}
+          {{ sensors['agriha/farm/weather/misol'].get('uv_wm2', 0)|int }} W/m²（外気）
         {% else %}
           ---
         {% endif %}
       </div>
     </div>
 
+    {# 外気温: Misol #}
     <div class="card card--sensor">
-      <div class="card__label">🌱 土壌水分</div>
+      <div class="card__label">🌤 外気温</div>
       <div class="card__value">
-        {% if sensors and sensors.get('SoilMoisture') %}
-          {{ "%.1f"|format(sensors['SoilMoisture'].value) }} %
+        {% if sensors.get('agriha/farm/weather/misol') %}
+          {{ "%.1f"|format(sensors['agriha/farm/weather/misol']['temperature_c']) }} ℃
         {% else %}
           ---
         {% endif %}
       </div>
     </div>
 
+    {# 風速: Misol #}
     <div class="card card--sensor">
-      <div class="card__label">💦 排水量</div>
+      <div class="card__label">💨 風速</div>
       <div class="card__value">
-        {% if sensors and sensors.get('DrainFlow') %}
-          {{ "%.1f"|format(sensors['DrainFlow'].value) }} L
+        {% if sensors.get('agriha/farm/weather/misol') %}
+          {{ "%.1f"|format(sensors['agriha/farm/weather/misol']['wind_speed_ms']) }} m/s
+          （瞬間 {{ "%.1f"|format(sensors['agriha/farm/weather/misol']['gust_speed_ms']) }}）
+        {% else %}
+          ---
+        {% endif %}
+      </div>
+    </div>
+
+    {# 露点: CCM InAirDP #}
+    <div class="card card--sensor">
+      <div class="card__label">💧 露点温度</div>
+      <div class="card__value">
+        {% if sensors.get('agriha/1/ccm/sensor/InAirDP') %}
+          {{ "%.1f"|format(sensors['agriha/1/ccm/sensor/InAirDP']['value']) }} ℃
+        {% else %}
+          ---
+        {% endif %}
+      </div>
+    </div>
+
+    {# 積算日射: CCM IntgRadiation #}
+    <div class="card card--sensor">
+      <div class="card__label">📊 積算日射</div>
+      <div class="card__value">
+        {% if sensors.get('agriha/1/ccm/sensor/IntgRadiation') %}
+          {{ "%.2f"|format(sensors['agriha/1/ccm/sensor/IntgRadiation']['value']) }} MJ/m²
         {% else %}
           ---
         {% endif %}
@@ -104,13 +135,19 @@
 
   {# その他のセンサー #}
   {% set known_keys = [
-    'agriha/h01/ccm/InAirTemp', 'agriha/h01/ccm/InAirHumi',
-    'agriha/h01/ccm/InCO2', 'agriha/h01/ccm/InSolar',
-    'InAirTemp', 'InAirHumi', 'InCO2', 'InSolar',
-    'SoilMoisture', 'DrainFlow'
+    'agriha/1/ccm/sensor/InAirTemp', 'agriha/1/ccm/sensor/InAirHumid',
+    'agriha/1/ccm/sensor/InAirCO2', 'agriha/1/ccm/sensor/InRadiation',
+    'agriha/1/ccm/sensor/InAirDP', 'agriha/1/ccm/sensor/IntgRadiation',
+    'agriha/1/sensor/DS18B20', 'agriha/farm/weather/misol',
+    'agriha/1/relay/state'
   ] %}
   {% if sensors %}
-    {% set other_sensors = sensors.items() | selectattr('0', 'not in', known_keys) | list %}
+    {% set other_sensors = [] %}
+    {% for key, data in sensors.items() %}
+      {% if key not in known_keys %}
+        {% set _ = other_sensors.append((key, data)) %}
+      {% endif %}
+    {% endfor %}
     {% if other_sensors %}
     <details class="other-sensors">
       <summary>その他のセンサー（{{ other_sensors | length }} 件）</summary>
@@ -122,7 +159,7 @@
           {% for key, data in other_sensors %}
           <tr>
             <td>{{ key }}</td>
-            <td>{{ data.value if data.value is not none else '---' }}</td>
+            <td>{% if data is mapping %}{{ data.get('value', data) }}{% else %}{{ data }}{% endif %}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -195,6 +232,48 @@
   </div>{# /layer-status #}
 </section>
 
+{# ─── 計画タイムライン ───────────────────────────── #}
+<section class="section">
+  <h2 class="section__title">計画タイムライン</h2>
+  {% if plan_actions %}
+  <div class="plan-timeline">
+    <div class="plan-timeline__period">
+      {{ plan_generated_at_short }} ~ {{ plan_valid_until_short }}
+    </div>
+    <div class="plan-timeline__axis">
+      <span>0</span><span>15</span><span>30</span><span>45</span><span>60分</span>
+    </div>
+    <div class="plan-timeline__body">
+      {# 現在時刻マーカー #}
+      {% if plan_now_pct is not none and plan_now_pct >= 0 and plan_now_pct <= 100 %}
+      <div class="plan-track-now" style="left: {{ plan_now_pct }}%;" title="現在"></div>
+      {% endif %}
+      {% for act in plan_actions %}
+      <div class="plan-row">
+        <span class="plan-row__label" title="ch{{ act.relay_ch }}">{{ act.label }}</span>
+        <div class="plan-row__track">
+          <div class="plan-bar plan-bar--{{ act.status }}"
+               style="left: {{ act.left_pct }}%; width: {{ act.width_pct }}%;"
+               title="{{ act.time_str }} {{ act.label }} ({{ act.reason }})">
+            {{ act.time_str }}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="plan-legend">
+      <span class="plan-legend__item"><span class="plan-dot plan-dot--pending"></span>予定</span>
+      <span class="plan-legend__item"><span class="plan-dot plan-dot--executed"></span>実行済</span>
+      <span class="plan-legend__item"><span class="plan-dot plan-dot--skipped_rain"></span>雨スキップ</span>
+      <span class="plan-legend__item"><span class="plan-dot plan-dot--skipped_wind"></span>風スキップ</span>
+      <span class="plan-legend__item"><span class="plan-dot plan-dot--overdue"></span>期限切れ</span>
+    </div>
+  </div>
+  {% else %}
+  <p class="text-muted">現在の予定アクションはありません</p>
+  {% endif %}
+</section>
+
 {# ─── リレー状態 ─────────────────────────────────── #}
 <section class="section">
   <h2 class="section__title">リレー状態</h2>
@@ -204,7 +283,13 @@
         {% set ch_key = 'ch' ~ ch %}
         {% set state = relays.get(ch_key) %}
         <div class="relay-chip {% if state %}relay-chip--on{% else %}relay-chip--off{% endif %}">
-          <span class="relay-chip__label">ch{{ ch }}</span>
+          <span class="relay-chip__label">
+            {% if relay_labels and relay_labels.get(ch) %}
+              {{ relay_labels[ch] }}
+            {% else %}
+              ch{{ ch }}
+            {% endif %}
+          </span>
           <span class="relay-chip__state">{{ 'ON' if state else 'OFF' }}</span>
         </div>
       {% endfor %}

@@ -1,16 +1,20 @@
-"""tests/chat/test_app.py — dashboard API追加エンドポイントのテスト (cmd_312)
+"""tests/chat/test_app.py — dashboard API + 計画タイムライン のテスト
 
 テスト対象:
 - GET /api/flags    フラグファイル存在チェック
 - GET /api/plan     current_plan.json 返却
 - GET /api/dashboard 集約エンドポイント
 - GET /api/logs     ログtail
+- _build_plan_timeline  計画タイムライン算出
+- GET /             dashboard HTML レンダリング
+- GET /api/dashboard-partial  partial HTML レンダリング
 """
 
 from __future__ import annotations
 
 import base64
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,7 +22,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 import agriha.chat.app as app_module
-from agriha.chat.app import app
+from agriha.chat.app import _build_plan_timeline, app
 
 
 def _basic_auth(user: str = "testadmin", pw: str = "testpass") -> dict[str, str]:
@@ -155,3 +159,210 @@ async def test_get_logs_lines_clamped(client: AsyncClient, tmp_path: Path) -> No
     r = await client.get("/api/logs?lines=9999")
     assert r.status_code == 200
     assert len(r.json()["control_log"]) == 200
+
+
+# ── _build_plan_timeline ─────────────────────────────────────────────────────
+
+def _make_plan(
+    gen_offset_min: int = 0,
+    valid_offset_min: int = 60,
+    actions: list[dict] | None = None,
+) -> dict:
+    """テスト用 plan dict を生成（naive datetime）。"""
+    now = datetime.now()
+    gen = now + timedelta(minutes=gen_offset_min)
+    valid = now + timedelta(minutes=valid_offset_min)
+    if actions is None:
+        actions = [
+            {
+                "execute_at": (now + timedelta(minutes=15)).isoformat(),
+                "relay_ch": 5,
+                "value": 1,
+                "duration_sec": 300,
+                "reason": "換気",
+            },
+        ]
+    return {
+        "generated_at": gen.isoformat(),
+        "valid_until": valid.isoformat(),
+        "actions": actions,
+        "summary": "テスト計画",
+    }
+
+
+def test_plan_timeline_empty_plan() -> None:
+    """空の plan では plan_actions が空リストになる。"""
+    with patch("agriha.chat.app.get_relay_labels", return_value={}):
+        actions, now_pct, gen_s, valid_s, labels = _build_plan_timeline({})
+    assert actions == []
+    assert now_pct is None
+    assert gen_s == ""
+    assert valid_s == ""
+
+
+def test_plan_timeline_no_actions() -> None:
+    """actions が空リストの plan では plan_actions が空になる。"""
+    plan = _make_plan(actions=[])
+    with patch("agriha.chat.app.get_relay_labels", return_value={}):
+        actions, now_pct, gen_s, valid_s, labels = _build_plan_timeline(plan)
+    assert actions == []
+
+
+def test_plan_timeline_single_action() -> None:
+    """アクション1件の plan が正しく変換される。"""
+    plan = _make_plan(gen_offset_min=-30, valid_offset_min=30)
+    relay_labels = {5: "南側窓"}
+    with patch("agriha.chat.app.get_relay_labels", return_value=relay_labels):
+        actions, now_pct, gen_s, valid_s, labels = _build_plan_timeline(plan)
+    assert len(actions) == 1
+    act = actions[0]
+    assert act["relay_ch"] == 5
+    assert act["label"] == "南側窓"
+    assert act["status"] in ("pending", "overdue", "executed")
+    assert 0 <= act["left_pct"] <= 100
+    assert act["width_pct"] > 0
+    assert now_pct is not None
+    assert 0 <= now_pct <= 100
+    assert gen_s  # HH:MM format
+    assert valid_s
+
+
+def test_plan_timeline_status_executed() -> None:
+    """executed=true のアクションが 'executed' ステータスになる。"""
+    now = datetime.now()
+    plan = _make_plan(actions=[{
+        "execute_at": (now + timedelta(minutes=10)).isoformat(),
+        "relay_ch": 4,
+        "value": 1,
+        "duration_sec": 60,
+        "reason": "灌水",
+        "executed": True,
+    }])
+    with patch("agriha.chat.app.get_relay_labels", return_value={4: "灌水ポンプ"}):
+        actions, *_ = _build_plan_timeline(plan)
+    assert actions[0]["status"] == "executed"
+    assert actions[0]["label"] == "灌水ポンプ"
+
+
+def test_plan_timeline_status_skipped_rain() -> None:
+    """executed='skipped_rain' のアクションが正しくマッピングされる。"""
+    now = datetime.now()
+    plan = _make_plan(actions=[{
+        "execute_at": (now + timedelta(minutes=10)).isoformat(),
+        "relay_ch": 5,
+        "value": 1,
+        "duration_sec": 30,
+        "reason": "test",
+        "executed": "skipped_rain",
+    }])
+    with patch("agriha.chat.app.get_relay_labels", return_value={}):
+        actions, *_ = _build_plan_timeline(plan)
+    assert actions[0]["status"] == "skipped_rain"
+
+
+def test_plan_timeline_status_skipped_wind() -> None:
+    """executed='skipped_wind' のアクションが正しくマッピングされる。"""
+    now = datetime.now()
+    plan = _make_plan(actions=[{
+        "execute_at": (now + timedelta(minutes=10)).isoformat(),
+        "relay_ch": 7,
+        "value": 1,
+        "duration_sec": 30,
+        "reason": "test",
+        "executed": "skipped_wind",
+    }])
+    with patch("agriha.chat.app.get_relay_labels", return_value={}):
+        actions, *_ = _build_plan_timeline(plan)
+    assert actions[0]["status"] == "skipped_wind"
+
+
+def test_plan_timeline_status_overdue() -> None:
+    """過去の未実行アクションが 'overdue' になる。"""
+    now = datetime.now()
+    plan = _make_plan(gen_offset_min=-60, valid_offset_min=0, actions=[{
+        "execute_at": (now - timedelta(minutes=30)).isoformat(),
+        "relay_ch": 1,
+        "value": 1,
+        "duration_sec": 60,
+        "reason": "test",
+    }])
+    with patch("agriha.chat.app.get_relay_labels", return_value={}):
+        actions, *_ = _build_plan_timeline(plan)
+    assert actions[0]["status"] == "overdue"
+
+
+def test_plan_timeline_relay_label_fallback() -> None:
+    """relay_labels に無いチャンネルは 'chN' にフォールバックする。"""
+    plan = _make_plan(actions=[{
+        "execute_at": (datetime.now() + timedelta(minutes=10)).isoformat(),
+        "relay_ch": 3,
+        "value": 1,
+        "duration_sec": 60,
+        "reason": "test",
+    }])
+    with patch("agriha.chat.app.get_relay_labels", return_value={}):
+        actions, *_ = _build_plan_timeline(plan)
+    assert actions[0]["label"] == "ch3"
+
+
+def test_plan_timeline_multiple_actions() -> None:
+    """複数アクションが全て変換される。"""
+    now = datetime.now()
+    plan = _make_plan(actions=[
+        {"execute_at": (now + timedelta(minutes=10)).isoformat(),
+         "relay_ch": 5, "value": 1, "duration_sec": 30, "reason": "a"},
+        {"execute_at": (now + timedelta(minutes=20)).isoformat(),
+         "relay_ch": 4, "value": 1, "duration_sec": 300, "reason": "b"},
+        {"execute_at": (now + timedelta(minutes=40)).isoformat(),
+         "relay_ch": 1, "value": 0, "duration_sec": 0, "reason": "c"},
+    ])
+    with patch("agriha.chat.app.get_relay_labels", return_value={}):
+        actions, *_ = _build_plan_timeline(plan)
+    assert len(actions) == 3
+
+
+# ── Dashboard HTML レンダリング ────────────────────────────────────────────────
+
+async def test_dashboard_renders_plan_timeline(
+    client: AsyncClient, tmp_path: Path,
+) -> None:
+    """ダッシュボードHTMLに計画タイムラインセクションが描画される。"""
+    now = datetime.now()
+    plan = {
+        "generated_at": (now - timedelta(minutes=10)).isoformat(),
+        "valid_until": (now + timedelta(minutes=50)).isoformat(),
+        "actions": [{
+            "execute_at": (now + timedelta(minutes=15)).isoformat(),
+            "relay_ch": 5,
+            "value": 1,
+            "duration_sec": 300,
+            "reason": "換気",
+        }],
+        "summary": "テスト",
+    }
+    (tmp_path / "current_plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    with (
+        patch("agriha.chat.app.fetch_sensors", return_value={}),
+        patch("agriha.chat.app.fetch_status", return_value={}),
+        patch("agriha.chat.app.get_relay_labels", return_value={5: "南側窓"}),
+    ):
+        r = await client.get("/api/dashboard-partial")
+    assert r.status_code == 200
+    html = r.text
+    assert "計画タイムライン" in html
+    assert "plan-bar" in html
+    assert "南側窓" in html
+
+
+async def test_dashboard_renders_empty_plan(
+    client: AsyncClient, tmp_path: Path,
+) -> None:
+    """アクション0件では『現在の予定アクションはありません』が表示される。"""
+    with (
+        patch("agriha.chat.app.fetch_sensors", return_value={}),
+        patch("agriha.chat.app.fetch_status", return_value={}),
+        patch("agriha.chat.app.get_relay_labels", return_value={}),
+    ):
+        r = await client.get("/api/dashboard-partial")
+    assert r.status_code == 200
+    assert "現在の予定アクションはありません" in r.text
