@@ -24,9 +24,11 @@ import pytest
 from agriha.control.forecast_engine import (
     TOOLS,
     VC_CACHE_TTL,
+    build_plan_from_search_results,
     build_search_query,
     call_tool,
     check_connectivity,
+    convert_llm_to_pid_override,
     extract_plan_json,
     fetch_weather_forecast,
     get_weather_with_cache,
@@ -34,8 +36,11 @@ from agriha.control.forecast_engine import (
     is_commandgate_locked,
     is_layer1_locked,
     load_recent_history,
+    log_search,
     run_forecast,
     save_decision,
+    search_kousatsu,
+    should_skip_llm,
     validate_actions,
 )
 
@@ -814,3 +819,221 @@ def test_check_connectivity_exception() -> None:
     """subprocess.run が例外を投げた場合 False を返す。"""
     with patch("subprocess.run", side_effect=OSError("command not found")):
         assert check_connectivity() is False
+
+
+# ---------------------------------------------------------------------------
+# Test 34-38: search_kousatsu
+# ---------------------------------------------------------------------------
+
+def test_search_kousatsu_normal() -> None:
+    """正常レスポンスを辞書として返す。"""
+    resp_data = {"total_hits": 3, "results": [{"snippet": "test", "rank": 1}]}
+    resp_bytes = json.dumps(resp_data).encode("utf-8")
+
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = resp_bytes
+    mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+    mock_resp.__exit__ = MagicMock(return_value=False)
+
+    with patch("urllib.request.urlopen", return_value=mock_resp):
+        result = search_kousatsu("側窓 温度 27℃")
+
+    assert result["total_hits"] == 3
+    assert len(result["results"]) == 1
+
+
+def test_search_kousatsu_timeout() -> None:
+    """タイムアウト時は total_hits=0 を返す。"""
+    import urllib.error
+    with patch("urllib.request.urlopen", side_effect=TimeoutError("timed out")):
+        result = search_kousatsu("query")
+    assert result == {"total_hits": 0, "results": []}
+
+
+def test_search_kousatsu_connection_error() -> None:
+    """接続エラー時は total_hits=0 を返す。"""
+    with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("connection refused")):
+        result = search_kousatsu("query")
+    assert result == {"total_hits": 0, "results": []}
+
+
+# ---------------------------------------------------------------------------
+# Test 39-42: should_skip_llm
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("hits,threshold,expected", [
+    (0, 3, False),
+    (2, 3, False),
+    (3, 3, True),
+    (5, 3, True),
+])
+def test_should_skip_llm(hits: int, threshold: int, expected: bool) -> None:
+    """閾値以上のヒット数でLLMをスキップする。"""
+    result = should_skip_llm({"total_hits": hits, "results": []}, threshold=threshold)
+    assert result is expected
+
+
+# ---------------------------------------------------------------------------
+# Test 43-44: build_plan_from_search_results
+# ---------------------------------------------------------------------------
+
+def test_build_plan_from_search_results_with_json() -> None:
+    """snippetにJSONが含まれている場合、アクションを抽出する。"""
+    now = datetime(2026, 3, 1, 10, 0, tzinfo=_JST)
+    snippet_plan = json.dumps({
+        "summary": "側窓開放が必要",
+        "actions": [
+            {
+                "execute_at": "2026-03-01T10:30:00+09:00",
+                "relay_ch": 5,
+                "value": 1,
+                "duration_sec": 60,
+                "reason": "換気",
+            }
+        ],
+    })
+    search_results = {
+        "total_hits": 3,
+        "results": [{"snippet": snippet_plan, "rank": 1}],
+    }
+    plan = build_plan_from_search_results(search_results, now=now)
+    assert plan["summary"] == "側窓開放が必要"
+    assert len(plan["actions"]) == 1
+    assert plan["actions"][0]["relay_ch"] == 5
+    assert plan["next_check_note"] == "高札検索によりLLMスキップ"
+
+
+def test_build_plan_from_search_results_no_json() -> None:
+    """snippetにJSONがない場合、空のアクションを返す。"""
+    now = datetime(2026, 3, 1, 10, 0, tzinfo=_JST)
+    search_results = {
+        "total_hits": 3,
+        "results": [{"snippet": "過去に側窓を開けた", "rank": 1}],
+    }
+    plan = build_plan_from_search_results(search_results, now=now)
+    assert plan["actions"] == []
+    assert "generated_at" in plan
+    assert "valid_until" in plan
+
+
+# ---------------------------------------------------------------------------
+# Test 45-46: convert_llm_to_pid_override
+# ---------------------------------------------------------------------------
+
+def test_convert_llm_to_pid_override_high_risk(tmp_path: Path) -> None:
+    """dewpoint_risk=high → humidity_max=80 の pid_override.json を生成する。"""
+    pid_path = tmp_path / "pid_override.json"
+    plan = {"dewpoint_risk": "high", "summary": "test"}
+
+    with patch("agriha.control.forecast_engine.PID_OVERRIDE_PATH", str(pid_path)):
+        convert_llm_to_pid_override(plan)
+
+    assert pid_path.exists()
+    data = json.loads(pid_path.read_text())
+    assert data["humidity_max"] == 80
+    assert data["dewpoint_risk"] == "high"
+
+
+def test_convert_llm_to_pid_override_low_risk(tmp_path: Path) -> None:
+    """dewpoint_risk=low → humidity_max=90 の pid_override.json を生成する。"""
+    pid_path = tmp_path / "pid_override.json"
+    plan = {"dewpoint_risk": "low", "summary": "test"}
+
+    with patch("agriha.control.forecast_engine.PID_OVERRIDE_PATH", str(pid_path)):
+        convert_llm_to_pid_override(plan)
+
+    data = json.loads(pid_path.read_text())
+    assert data["humidity_max"] == 90
+
+
+# ---------------------------------------------------------------------------
+# Test 47: log_search — jsonl追記
+# ---------------------------------------------------------------------------
+
+def test_log_search_appends_jsonl(tmp_path: Path) -> None:
+    """log_search が search_log.jsonl に1行追記する。"""
+    log_path = tmp_path / "search_log.jsonl"
+
+    with patch("agriha.control.forecast_engine.SEARCH_LOG_PATH", str(log_path)):
+        log_search("側窓 温度", hits=3, skipped_llm=True, plan_source="kousatsu")
+        log_search("灌水", hits=0, skipped_llm=False, plan_source="llm")
+
+    lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2
+    entry1 = json.loads(lines[0])
+    assert entry1["query"] == "側窓 温度"
+    assert entry1["hits"] == 3
+    assert entry1["skipped_llm"] is True
+    assert entry1["source"] == "kousatsu"
+    entry2 = json.loads(lines[1])
+    assert entry2["skipped_llm"] is False
+
+
+# ---------------------------------------------------------------------------
+# Test 48: run_forecast — 高札スキップパス (skip_llm=True)
+# ---------------------------------------------------------------------------
+
+@patch("agriha.control.forecast_engine.get_sun_times")
+@patch("agriha.control.forecast_engine.search_kousatsu")
+def test_run_forecast_kousatsu_skip_path(
+    mock_search: MagicMock,
+    mock_sun: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """高札検索で3件以上ヒット → LLMをスキップしてplanを生成する。"""
+    now = datetime.now(_JST)
+    mock_sun.return_value = {
+        "sunrise": now.replace(hour=5, minute=30),
+        "sunset": now.replace(hour=17, minute=30),
+        "elevation": 21,
+    }
+
+    snippet_plan = json.dumps({
+        "summary": "高札由来の計画",
+        "actions": [
+            {
+                "execute_at": now.replace(minute=30).isoformat(),
+                "relay_ch": 5,
+                "value": 1,
+                "duration_sec": 60,
+                "reason": "高札ヒット",
+            }
+        ],
+    })
+    mock_search.return_value = {
+        "total_hits": 5,
+        "results": [{"snippet": snippet_plan, "rank": 1}],
+    }
+
+    mock_anthropic = MagicMock()
+    cfg = _base_config(tmp_path)
+    cfg["state"]["plan_path"] = str(tmp_path / "current_plan.json")
+
+    with patch(
+        "agriha.control.forecast_engine.SEARCH_LOG_PATH",
+        str(tmp_path / "search_log.jsonl"),
+    ), patch(
+        "agriha.control.forecast_engine.PID_OVERRIDE_PATH",
+        str(tmp_path / "pid_override.json"),
+    ):
+        result = run_forecast(
+            cfg,
+            anthropic_client=mock_anthropic,
+            http_client=_mock_http_client(),
+        )
+
+    assert result["status"] == "ok"
+    # LLMは呼ばれていないこと
+    mock_anthropic.messages.create.assert_not_called()
+    # plan が書き込まれていること
+    plan_path = Path(cfg["state"]["plan_path"])
+    assert plan_path.exists()
+    plan = json.loads(plan_path.read_text())
+    assert plan["summary"] == "高札由来の計画"
+    assert plan["next_check_note"] == "高札検索によりLLMスキップ"
+    # search_log が書き込まれていること
+    log_path = tmp_path / "search_log.jsonl"
+    assert log_path.exists()
+    log_entry = json.loads(log_path.read_text().strip().splitlines()[0])
+    assert log_entry["skipped_llm"] is True
+    assert log_entry["source"] == "kousatsu"

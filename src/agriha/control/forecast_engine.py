@@ -27,6 +27,7 @@ import sqlite3
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -444,6 +445,153 @@ def check_connectivity(host: str = "8.8.8.8", timeout: int = 3) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# 高札API検索 + LLMスキップ判定 (§3.3 + §7)
+# ---------------------------------------------------------------------------
+
+KOUSATSU_URL = os.environ.get("KOUSATSU_URL", "http://localhost:8080")
+SEARCH_LOG_PATH = os.environ.get("SEARCH_LOG_PATH", "/var/lib/agriha/search_log.jsonl")
+PID_OVERRIDE_PATH = os.environ.get("PID_OVERRIDE_PATH", "/var/lib/agriha/pid_override.json")
+
+
+def search_kousatsu(query: str, timeout: int = 5) -> dict[str, Any]:
+    """高札APIで過去の類似判断を検索する。
+
+    Args:
+        query: 検索クエリ文字列。
+        timeout: タイムアウト秒数。
+
+    Returns:
+        {"total_hits": N, "results": [...]} 形式の辞書。
+        エラー時は {"total_hits": 0, "results": []}。
+    """
+    empty: dict[str, Any] = {"total_hits": 0, "results": []}
+    try:
+        url = f"{KOUSATSU_URL}/search?q={urllib.parse.quote(query)}"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return data
+    except Exception as exc:
+        logger.warning("高札API検索失敗 (query=%r): %s", query, exc)
+        return empty
+
+
+def should_skip_llm(search_results: dict[str, Any], threshold: int = 3) -> bool:
+    """類似判断が閾値以上あればLLMをスキップする。
+
+    Args:
+        search_results: search_kousatsu() の戻り値。
+        threshold: スキップする最小ヒット数（デフォルト3件）。
+
+    Returns:
+        True: LLMスキップ / False: LLM呼び出し継続。
+    """
+    return int(search_results.get("total_hits", 0)) >= threshold
+
+
+def build_plan_from_search_results(
+    search_results: dict[str, Any],
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """高札検索結果からcurrent_plan.json形式のplanを生成する。
+
+    最スコア順（rank=1）のsnippetからJSONブロックを抽出し、
+    validate_actionsでアクションを検証して返す。
+    抽出失敗時は空アクションのplanを返す。
+
+    Args:
+        search_results: search_kousatsu() の戻り値。
+        now: 現在時刻（テスト用DI）。
+
+    Returns:
+        current_plan.json形式の辞書。
+    """
+    _now = now if now is not None else datetime.now(_JST)
+    results = search_results.get("results", [])
+    # rankでソート（rank=1が最高）
+    sorted_results = sorted(results, key=lambda r: r.get("rank", 999))
+
+    actions: list[dict[str, Any]] = []
+    summary = "高札検索結果から生成"
+    for item in sorted_results:
+        snippet = item.get("snippet", "")
+        plan_data = extract_plan_json(snippet)
+        if plan_data and "actions" in plan_data:
+            actions = validate_actions(plan_data["actions"])
+            summary = plan_data.get("summary", summary)
+            break
+
+    return {
+        "generated_at": _now.isoformat(),
+        "valid_until": (_now + timedelta(hours=1)).isoformat(),
+        "summary": summary,
+        "actions": actions,
+        "co2_advisory": "",
+        "dewpoint_risk": "unknown",
+        "next_check_note": "高札検索によりLLMスキップ",
+    }
+
+
+def convert_llm_to_pid_override(plan: dict[str, Any]) -> None:
+    """plan内のdewpoint_riskをPIDオーバーライドパラメータに変換してファイルに書き込む。
+
+    dewpoint_riskが"high"の場合、湿度上限を下げるPIDオーバーライドを生成する。
+    ファイル書き込みエラーは警告ログのみで継続（サイレント失敗）。
+
+    Args:
+        plan: current_plan.json形式の辞書。
+    """
+    dewpoint_risk = plan.get("dewpoint_risk", "unknown")
+    humidity_max = 80 if dewpoint_risk == "high" else 90
+
+    override = {
+        "generated_at": datetime.now(_JST).isoformat(),
+        "humidity_max": humidity_max,
+        "dewpoint_risk": dewpoint_risk,
+    }
+    try:
+        pid_path = Path(PID_OVERRIDE_PATH)
+        pid_path.parent.mkdir(parents=True, exist_ok=True)
+        pid_path.write_text(
+            json.dumps(override, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        logger.info("pid_override.json 更新: humidity_max=%s", humidity_max)
+    except Exception as exc:
+        logger.warning("pid_override.json 書き込み失敗: %s", exc)
+
+
+def log_search(
+    query: str,
+    hits: int,
+    skipped_llm: bool,
+    plan_source: str,
+) -> None:
+    """検索ログをsearch_log.jsonlに追記する。
+
+    Args:
+        query: 検索クエリ文字列。
+        hits: ヒット件数。
+        skipped_llm: LLMをスキップしたか。
+        plan_source: "kousatsu" または "llm"。
+    """
+    entry = {
+        "timestamp": datetime.now(_JST).isoformat(),
+        "query": query,
+        "hits": hits,
+        "skipped_llm": skipped_llm,
+        "source": plan_source,
+    }
+    try:
+        log_path = Path(SEARCH_LOG_PATH)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        logger.warning("search_log.jsonl 書き込み失敗: %s", exc)
+
+
+# ---------------------------------------------------------------------------
 # アクション計画のスキーマ検証 (MEDIUM-3 対応)
 # ---------------------------------------------------------------------------
 
@@ -599,139 +747,180 @@ def run_forecast(
             sunrise_str = "N/A"
             sunset_str = "N/A"
 
-        # Step 5: Claude Haiku API 呼び出し
-        if anthropic_client is None:
-            import anthropic
-            anthropic_client = anthropic.Anthropic(
-                timeout=claude_cfg.get("api_timeout_sec", 30.0),
+        # Step 4.5: 高札API検索 + LLMスキップ判定 (§3.3)
+        try:
+            sensor_resp = http_client.get(
+                f"{base_url}/api/sensors",
+                timeout=unipi_cfg.get("timeout_sec", 10),
             )
-
-        user_message = (
-            f"## 直近の判断履歴\n{history}\n\n"
-            f"## 現在の状況\n"
-            f"現在時刻: {now.strftime('%Y-%m-%d %H:%M %Z')}\n"
-            f"時間帯: {time_period}\n"
-            f"日の出: {sunrise_str} / 日没: {sunset_str}\n\n"
-            f"## 指示\n"
-            f"ツールを使ってセンサーデータとリレー状態を確認し、"
-            f"向こう1時間のアクション計画をJSON形式で生成してください。\n"
-            f"リレー操作は行わないでください。計画のみ生成してください。"
+            _sensor_data: dict[str, Any] = sensor_resp.json().get("sensors", {})
+        except Exception as exc:
+            logger.warning("センサー先行取得失敗 (検索クエリ生成用): %s", exc)
+            _sensor_data = {}
+        _weather_data = get_weather_with_cache(
+            lat=loc_cfg.get("latitude", 42.888),
+            lon=loc_cfg.get("longitude", 141.603),
+        )
+        search_query = build_search_query(_sensor_data, _weather_data)
+        search_results = search_kousatsu(search_query)
+        skip_llm = should_skip_llm(search_results)
+        plan_source = "kousatsu" if skip_llm else "llm"
+        logger.info(
+            "高札検索: query=%r hits=%d skip_llm=%s",
+            search_query,
+            search_results.get("total_hits", 0),
+            skip_llm,
         )
 
-        messages: list[dict[str, Any]] = [
-            {"role": "user", "content": user_message},
-        ]
-
         sensor_snapshot = ""
-        max_rounds = claude_cfg.get("max_tool_rounds", 5)
         final_text = ""
 
-        try:
-            for round_num in range(max_rounds):
-                response = anthropic_client.messages.create(
-                    model=claude_cfg["model"],
-                    max_tokens=claude_cfg.get("max_tokens", 1024),
-                    system=system_prompt,
-                    tools=TOOLS,
-                    messages=messages,
-                )
+        if skip_llm:
+            # Step 5 スキップ: 高札検索結果からplan生成
+            logger.info("LLMスキップ — 高札検索結果からplan生成")
+            plan_output = build_plan_from_search_results(search_results, now=now)
 
-                # レスポンス解析
-                assistant_content = response.content
-                has_tool_use = any(
-                    block.type == "tool_use" for block in assistant_content
-                )
-
-                # アシスタントメッセージを追加
-                messages.append({"role": "assistant", "content": assistant_content})
-
-                if not has_tool_use:
-                    # 最終テキスト応答
-                    for block in assistant_content:
-                        if block.type == "text":
-                            final_text = block.text
-                    break
-
-                # ツール呼び出し処理
-                tool_results = []
-                for block in assistant_content:
-                    if block.type != "tool_use":
-                        continue
-                    tool_name = block.name
-                    tool_input = block.input or {}
-                    logger.info(
-                        "Tool call [round %d]: %s", round_num, tool_name
-                    )
-                    try:
-                        result_text = call_tool(
-                            http_client, base_url, api_key,
-                            tool_name, tool_input,
-                        )
-                    except Exception as exc:
-                        logger.error("Tool call failed: %s: %s", tool_name, exc)
-                        result_text = json.dumps(
-                            {"error": str(exc)}, ensure_ascii=False
-                        )
-
-                    if tool_name in ("get_sensors", "get_status"):
-                        sensor_snapshot += f"\n--- {tool_name} ---\n{result_text}"
-
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result_text,
-                    })
-
-                messages.append({"role": "user", "content": tool_results})
-
-                # end_turn チェック
-                if response.stop_reason == "end_turn":
-                    for block in assistant_content:
-                        if block.type == "text":
-                            final_text = block.text
-                    break
-
-        except Exception as exc:
-            logger.error("Claude API error: %s", exc)
-            return {
-                "status": "error",
-                "reason": f"api_error: {exc}",
-            }
-
-        # Step 6: 計画 JSON 抽出 + スキーマ検証
-        plan_path = Path(state_cfg["plan_path"])
-        plan_data = extract_plan_json(final_text)
-
-        if plan_data and "actions" in plan_data:
-            validated_actions = validate_actions(plan_data.get("actions", []))
-            plan_output = {
-                "generated_at": now.isoformat(),
-                "valid_until": (now + timedelta(hours=1)).isoformat(),
-                "summary": plan_data.get("summary", final_text[:200]),
-                "actions": validated_actions,
-                "co2_advisory": plan_data.get("co2_advisory", ""),
-                "dewpoint_risk": plan_data.get("dewpoint_risk", "unknown"),
-                "next_check_note": plan_data.get("next_check_note", ""),
-            }
         else:
-            logger.warning("No valid plan JSON in LLM response, writing empty plan")
-            plan_output = {
-                "generated_at": now.isoformat(),
-                "valid_until": (now + timedelta(hours=1)).isoformat(),
-                "summary": final_text[:200] if final_text else "No plan generated",
-                "actions": [],
-                "co2_advisory": "",
-                "dewpoint_risk": "unknown",
-                "next_check_note": "",
-            }
+            # Step 5: Claude Haiku API 呼び出し
+            if anthropic_client is None:
+                import anthropic
+                anthropic_client = anthropic.Anthropic(
+                    timeout=claude_cfg.get("api_timeout_sec", 30.0),
+                )
+
+            user_message = (
+                f"## 直近の判断履歴\n{history}\n\n"
+                f"## 現在の状況\n"
+                f"現在時刻: {now.strftime('%Y-%m-%d %H:%M %Z')}\n"
+                f"時間帯: {time_period}\n"
+                f"日の出: {sunrise_str} / 日没: {sunset_str}\n\n"
+                f"## 指示\n"
+                f"ツールを使ってセンサーデータとリレー状態を確認し、"
+                f"向こう1時間のアクション計画をJSON形式で生成してください。\n"
+                f"リレー操作は行わないでください。計画のみ生成してください。"
+            )
+
+            messages: list[dict[str, Any]] = [
+                {"role": "user", "content": user_message},
+            ]
+
+            max_rounds = claude_cfg.get("max_tool_rounds", 5)
+
+            try:
+                for round_num in range(max_rounds):
+                    response = anthropic_client.messages.create(
+                        model=claude_cfg["model"],
+                        max_tokens=claude_cfg.get("max_tokens", 1024),
+                        system=system_prompt,
+                        tools=TOOLS,
+                        messages=messages,
+                    )
+
+                    # レスポンス解析
+                    assistant_content = response.content
+                    has_tool_use = any(
+                        block.type == "tool_use" for block in assistant_content
+                    )
+
+                    # アシスタントメッセージを追加
+                    messages.append({"role": "assistant", "content": assistant_content})
+
+                    if not has_tool_use:
+                        # 最終テキスト応答
+                        for block in assistant_content:
+                            if block.type == "text":
+                                final_text = block.text
+                        break
+
+                    # ツール呼び出し処理
+                    tool_results = []
+                    for block in assistant_content:
+                        if block.type != "tool_use":
+                            continue
+                        tool_name = block.name
+                        tool_input = block.input or {}
+                        logger.info(
+                            "Tool call [round %d]: %s", round_num, tool_name
+                        )
+                        try:
+                            result_text = call_tool(
+                                http_client, base_url, api_key,
+                                tool_name, tool_input,
+                            )
+                        except Exception as exc:
+                            logger.error("Tool call failed: %s: %s", tool_name, exc)
+                            result_text = json.dumps(
+                                {"error": str(exc)}, ensure_ascii=False
+                            )
+
+                        if tool_name in ("get_sensors", "get_status"):
+                            sensor_snapshot += f"\n--- {tool_name} ---\n{result_text}"
+
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": result_text,
+                        })
+
+                    messages.append({"role": "user", "content": tool_results})
+
+                    # end_turn チェック
+                    if response.stop_reason == "end_turn":
+                        for block in assistant_content:
+                            if block.type == "text":
+                                final_text = block.text
+                        break
+
+            except Exception as exc:
+                logger.error("Claude API error: %s", exc)
+                return {
+                    "status": "error",
+                    "reason": f"api_error: {exc}",
+                }
+
+            # Step 6: 計画 JSON 抽出 + スキーマ検証
+            plan_data = extract_plan_json(final_text)
+
+            if plan_data and "actions" in plan_data:
+                validated_actions = validate_actions(plan_data.get("actions", []))
+                plan_output = {
+                    "generated_at": now.isoformat(),
+                    "valid_until": (now + timedelta(hours=1)).isoformat(),
+                    "summary": plan_data.get("summary", final_text[:200]),
+                    "actions": validated_actions,
+                    "co2_advisory": plan_data.get("co2_advisory", ""),
+                    "dewpoint_risk": plan_data.get("dewpoint_risk", "unknown"),
+                    "next_check_note": plan_data.get("next_check_note", ""),
+                }
+            else:
+                logger.warning("No valid plan JSON in LLM response, writing empty plan")
+                plan_output = {
+                    "generated_at": now.isoformat(),
+                    "valid_until": (now + timedelta(hours=1)).isoformat(),
+                    "summary": final_text[:200] if final_text else "No plan generated",
+                    "actions": [],
+                    "co2_advisory": "",
+                    "dewpoint_risk": "unknown",
+                    "next_check_note": "",
+                }
 
         # Step 7: current_plan.json 書き込み
+        plan_path = Path(state_cfg["plan_path"])
         plan_path.parent.mkdir(parents=True, exist_ok=True)
         plan_path.write_text(
             json.dumps(plan_output, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         logger.info("Plan written to %s (%d actions)", plan_path, len(plan_output["actions"]))
+
+        # Step 7.5: 検索ログ + PIDオーバーライド更新
+        log_search(
+            query=search_query,
+            hits=search_results.get("total_hits", 0),
+            skipped_llm=skip_llm,
+            plan_source=plan_source,
+        )
+        convert_llm_to_pid_override(plan_output)
 
         # Step 8: 判断ログ保存
         actions_summary = "; ".join(
