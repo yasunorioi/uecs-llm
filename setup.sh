@@ -7,7 +7,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-VENV_DIR="${SCRIPT_DIR}/venv"
+VENV_DIR="${SCRIPT_DIR}/.venv"
 ENV_FILE="${SCRIPT_DIR}/.env"
 CONFIG_DIR="/etc/agriha"
 DATA_DIR="/var/lib/agriha"
