@@ -71,6 +71,8 @@ echo "  → ${DATA_DIR} 作成完了"
 sudo mkdir -p /var/log/agriha
 sudo chown "${AGRIHA_USER}:${AGRIHA_USER}" /var/log/agriha
 echo "  → /var/log/agriha 作成完了"
+sudo chown -R "${AGRIHA_USER}:${AGRIHA_USER}" "${SCRIPT_DIR}"
+echo "  → ${SCRIPT_DIR} 所有権を ${AGRIHA_USER} に変更"
 
 # Step 4: systemd サービスファイルインストール + enable
 # __REPO_DIR__ を実際のリポジトリパスに置換してからインストール
@@ -115,9 +117,4 @@ fi
 
 echo ""
 echo "=== AgriHA v4 セットアップ完了 ==="
-echo "次のステップ:"
-echo "  1. nano .env  ← ANTHROPIC_API_KEY を記入"
-echo "  2. sudo nano /etc/agriha/unipi_daemon.yaml  ← ハードウェア設定確認"
-echo "  3. sudo systemctl start unipi-daemon  ← デーモン起動"
-echo "  4. sudo systemctl start agriha-ui  ← WebUI起動"
-echo "  5. http://<RPiのIP>/ でダッシュボード確認"
+echo "セットアップ完了。.envにAPI KEYを設定後、sudo systemctl start unipi-daemon agriha-ui で起動"
