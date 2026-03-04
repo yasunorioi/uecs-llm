@@ -6,10 +6,10 @@ After=network.target unipi-daemon.service
 Type=simple
 User=agriha
 Group=agriha
-WorkingDirectory=/home/agriha/uecs-llm
-EnvironmentFile=/home/agriha/uecs-llm/.env
-Environment="PATH=/home/agriha/uecs-llm/venv/bin:/usr/local/bin:/usr/bin"
-ExecStart=/home/agriha/uecs-llm/venv/bin/uvicorn agriha.chat.app:app --host 0.0.0.0 --port 8501
+WorkingDirectory=__REPO_DIR__
+EnvironmentFile=__REPO_DIR__/.env
+Environment="PATH=__REPO_DIR__/.venv/bin:/usr/local/bin:/usr/bin"
+ExecStart=__REPO_DIR__/.venv/bin/uvicorn agriha.chat.app:app --host 0.0.0.0 --port 8501
 Restart=on-failure
 RestartSec=5s
 StandardOutput=journal

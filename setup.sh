@@ -70,12 +70,15 @@ sudo chown "${AGRIHA_USER}:${AGRIHA_USER}" "$DATA_DIR"
 echo "  → ${DATA_DIR} 作成完了"
 
 # Step 4: systemd サービスファイルインストール + enable
+# __REPO_DIR__ を実際のリポジトリパスに置換してからインストール
 echo "[4/6] systemdサービスインストール..."
-sudo cp "${SCRIPT_DIR}/systemd/unipi-daemon.service" /etc/systemd/system/
-sudo cp "${SCRIPT_DIR}/systemd/agriha-ui.service" /etc/systemd/system/
+for svc in unipi-daemon.service agriha-ui.service; do
+    sed "s|__REPO_DIR__|${SCRIPT_DIR}|g" "${SCRIPT_DIR}/systemd/${svc}" \
+        | sudo tee "/etc/systemd/system/${svc}" > /dev/null
+done
 sudo systemctl daemon-reload
 sudo systemctl enable unipi-daemon agriha-ui
-echo "  → unipi-daemon, agriha-ui を有効化"
+echo "  → unipi-daemon, agriha-ui を有効化（パス: ${SCRIPT_DIR}）"
 
 # Step 5: cron設定（三層制御用）
 # cron内のハードコードパス（/home/agriha/uecs-llm）をこのリポジトリのパスに置換
