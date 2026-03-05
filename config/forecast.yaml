@@ -1,11 +1,13 @@
 # Layer 3: LLM 1時間予報設定
 # 設計書: docs/v2_three_layer_design.md §6.3
-claude:
+llm:
+  provider: "anthropic"
   model: "claude-haiku-4-5-20251001"
+  base_url: ""                    # 空の場合はデフォルトエンドポイントを使用
+  api_key_env: "ANTHROPIC_API_KEY"  # API キーを読む環境変数名
   max_tokens: 1024
   max_tool_rounds: 5
   api_timeout_sec: 30.0
-  # ANTHROPIC_API_KEY は環境変数から読み込み
 
 system_prompt_path: "/etc/agriha/system_prompt.txt"
 

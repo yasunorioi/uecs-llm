@@ -49,12 +49,17 @@ VC_CACHE_TTL = 3600  # TTL: 1時間（秒）
 # ---------------------------------------------------------------------------
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "claude": {
+    "llm": {
+        "provider": "anthropic",
         "model": "claude-haiku-4-5-20251001",
+        "base_url": "",
+        "api_key_env": "ANTHROPIC_API_KEY",
         "max_tokens": 1024,
         "max_tool_rounds": 5,
         "api_timeout_sec": 30.0,
     },
+    # 後方互換性: "claude" キーが渡された場合は "llm" にマージされる
+    "claude": {},
     "system_prompt_path": "/etc/agriha/system_prompt.txt",
     "db": {
         "path": "/var/lib/agriha/control_log.db",
@@ -78,26 +83,32 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 # ---------------------------------------------------------------------------
-# ツール定義 (Anthropic tools 形式) — set_relay は除外
+# ツール定義 (OpenAI tools 形式) — set_relay は除外
 # ---------------------------------------------------------------------------
 
 TOOLS: list[dict[str, Any]] = [
     {
-        "name": "get_sensors",
-        "description": (
-            "全センサーデータ取得。"
-            "CCM内気象(温度/湿度/CO2) + DS18B20 + Misol外気象(気温/風速/風向/降雨) "
-            "+ リレー状態を返す。"
-        ),
-        "input_schema": {"type": "object", "properties": {}},
+        "type": "function",
+        "function": {
+            "name": "get_sensors",
+            "description": (
+                "全センサーデータ取得。"
+                "CCM内気象(温度/湿度/CO2) + DS18B20 + Misol外気象(気温/風速/風向/降雨) "
+                "+ リレー状態を返す。"
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
     },
     {
-        "name": "get_status",
-        "description": (
-            "デーモン状態取得。"
-            "リレー状態(ch1-8 ON/OFF) + ロックアウト状態 + 稼働時間を返す。"
-        ),
-        "input_schema": {"type": "object", "properties": {}},
+        "type": "function",
+        "function": {
+            "name": "get_status",
+            "description": (
+                "デーモン状態取得。"
+                "リレー状態(ch1-8 ON/OFF) + ロックアウト状態 + 稼働時間を返す。"
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
     },
 ]
 
@@ -688,14 +699,16 @@ def extract_plan_json(text: str) -> dict[str, Any] | None:
 def run_forecast(
     config: dict[str, Any] | None = None,
     *,
-    anthropic_client: Any = None,
+    llm_client: Any = None,
+    anthropic_client: Any = None,  # 後方互換性エイリアス
     http_client: Any = None,
 ) -> dict[str, Any]:
     """メイン予報生成ループ（1回実行、cron から呼ばれる）。
 
     Args:
         config: 設定辞書。None の場合は DEFAULT_CONFIG を使用。
-        anthropic_client: anthropic.Anthropic クライアント（テスト用 DI）。
+        llm_client: OpenAI互換クライアント（テスト用 DI）。
+        anthropic_client: 後方互換性のためのエイリアス。llm_client が None の場合に使用。
         http_client: unipi-daemon REST API 用 HTTP クライアント（テスト用 DI）。
 
     Returns:
@@ -704,11 +717,20 @@ def run_forecast(
     """
     cfg = _merge_config(DEFAULT_CONFIG, config or {})
 
-    claude_cfg = cfg["claude"]
+    # 後方互換性: cfg["claude"] が設定されていれば cfg["llm"] にマージ
+    if cfg.get("claude"):
+        cfg["llm"] = _merge_config(cfg["llm"], cfg["claude"])
+
+    # 後方互換性: anthropic_client エイリアスをサポート
+    if llm_client is None and anthropic_client is not None:
+        llm_client = anthropic_client
+
+    llm_cfg = cfg["llm"]
     db_cfg = cfg["db"]
     state_cfg = cfg["state"]
     unipi_cfg = cfg["unipi_api"]
     loc_cfg = cfg["location"]
+
 
     base_url = unipi_cfg["base_url"]
     api_key = unipi_cfg.get("api_key", "")
@@ -797,12 +819,18 @@ def run_forecast(
             plan_output = build_plan_from_search_results(search_results, now=now)
 
         else:
-            # Step 5: Claude Haiku API 呼び出し
-            if anthropic_client is None:
-                import anthropic
-                anthropic_client = anthropic.Anthropic(
-                    timeout=claude_cfg.get("api_timeout_sec", 30.0),
-                )
+            # Step 5: LLM API 呼び出し (OpenAI SDK互換)
+            if llm_client is None:
+                from openai import OpenAI  # type: ignore[import]
+                client_kwargs: dict[str, Any] = {
+                    "api_key": os.environ.get(
+                        llm_cfg.get("api_key_env", "ANTHROPIC_API_KEY"), "dummy"
+                    ),
+                    "timeout": llm_cfg.get("api_timeout_sec", 30.0),
+                }
+                if llm_cfg.get("base_url"):
+                    client_kwargs["base_url"] = llm_cfg["base_url"]
+                llm_client = OpenAI(**client_kwargs)
 
             user_message = (
                 f"## 直近の判断履歴\n{history}\n\n"
@@ -817,44 +845,41 @@ def run_forecast(
             )
 
             messages: list[dict[str, Any]] = [
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ]
 
-            max_rounds = claude_cfg.get("max_tool_rounds", 5)
+            max_rounds = llm_cfg.get("max_tool_rounds", 5)
 
             try:
                 for round_num in range(max_rounds):
-                    response = anthropic_client.messages.create(
-                        model=claude_cfg["model"],
-                        max_tokens=claude_cfg.get("max_tokens", 1024),
-                        system=system_prompt,
+                    response = llm_client.chat.completions.create(
+                        model=llm_cfg["model"],
+                        max_tokens=llm_cfg.get("max_tokens", 1024),
                         tools=TOOLS,
                         messages=messages,
                     )
 
                     # レスポンス解析
-                    assistant_content = response.content
-                    has_tool_use = any(
-                        block.type == "tool_use" for block in assistant_content
-                    )
+                    choice = response.choices[0]
+                    msg = choice.message
+                    has_tool_calls = bool(msg.tool_calls)
 
                     # アシスタントメッセージを追加
-                    messages.append({"role": "assistant", "content": assistant_content})
+                    messages.append(msg.model_dump(exclude_unset=False))
 
-                    if not has_tool_use:
+                    if not has_tool_calls:
                         # 最終テキスト応答
-                        for block in assistant_content:
-                            if block.type == "text":
-                                final_text = block.text
+                        final_text = msg.content or ""
                         break
 
                     # ツール呼び出し処理
-                    tool_results = []
-                    for block in assistant_content:
-                        if block.type != "tool_use":
-                            continue
-                        tool_name = block.name
-                        tool_input = block.input or {}
+                    for tc in msg.tool_calls:
+                        tool_name = tc.function.name
+                        try:
+                            tool_input = json.loads(tc.function.arguments or "{}")
+                        except json.JSONDecodeError:
+                            tool_input = {}
                         logger.info(
                             "Tool call [round %d]: %s", round_num, tool_name
                         )
@@ -872,23 +897,19 @@ def run_forecast(
                         if tool_name in ("get_sensors", "get_status"):
                             sensor_snapshot += f"\n--- {tool_name} ---\n{result_text}"
 
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
                             "content": result_text,
                         })
 
-                    messages.append({"role": "user", "content": tool_results})
-
-                    # end_turn チェック
-                    if response.stop_reason == "end_turn":
-                        for block in assistant_content:
-                            if block.type == "text":
-                                final_text = block.text
+                    # stop チェック
+                    if choice.finish_reason == "stop":
+                        final_text = msg.content or ""
                         break
 
             except Exception as exc:
-                logger.error("Claude API error: %s", exc)
+                logger.error("LLM API error: %s", exc)
                 return {
                     "status": "error",
                     "reason": f"api_error: {exc}",

@@ -2,7 +2,7 @@
 
 設計書: docs/v2_three_layer_design.md §7.3
 テスト方針:
-  - anthropic.Anthropic() をモック（API 呼び出しなし）
+  - openai.OpenAI() をモック（API 呼び出しなし）
   - httpx.Client をモック（REST API 呼び出しなし）
   - SQLite は :memory: で動作
 """
@@ -84,22 +84,31 @@ PLAN_TEXT = """以下が向こう1時間のアクション計画です。
 """
 
 
-def _make_text_block(text: str) -> SimpleNamespace:
-    return SimpleNamespace(type="text", text=text)
-
-
-def _make_tool_use_block(
-    tool_id: str, name: str, input_data: dict | None = None
-) -> SimpleNamespace:
+def _make_oai_tool_call(tool_id: str, name: str, arguments: str = "{}") -> SimpleNamespace:
     return SimpleNamespace(
-        type="tool_use", id=tool_id, name=name, input=input_data or {}
+        id=tool_id,
+        function=SimpleNamespace(name=name, arguments=arguments),
     )
 
 
-def _make_response(
-    content: list, stop_reason: str = "end_turn"
+def _make_oai_response(
+    content: str | None = None,
+    tool_calls: list | None = None,
+    finish_reason: str | None = None,
 ) -> SimpleNamespace:
-    return SimpleNamespace(content=content, stop_reason=stop_reason)
+    """OpenAI SDK互換レスポンスを生成する。"""
+    if finish_reason is None:
+        finish_reason = "tool_calls" if tool_calls else "stop"
+    msg = MagicMock()
+    msg.content = content
+    msg.tool_calls = tool_calls or []
+    msg.model_dump.return_value = {
+        "role": "assistant",
+        "content": content,
+        "tool_calls": tool_calls,
+    }
+    choice = SimpleNamespace(message=msg, finish_reason=finish_reason)
+    return SimpleNamespace(choices=[choice])
 
 
 def _base_config(tmp_path: Path) -> dict[str, Any]:
@@ -108,7 +117,7 @@ def _base_config(tmp_path: Path) -> dict[str, Any]:
     prompt_path.write_text("あなたは温室制御AIです。", encoding="utf-8")
 
     return {
-        "claude": {
+        "llm": {
             "model": "claude-haiku-4-5-20251001",
             "max_tokens": 1024,
             "max_tool_rounds": 5,
@@ -137,29 +146,20 @@ def _base_config(tmp_path: Path) -> dict[str, Any]:
     }
 
 
-def _mock_anthropic_normal() -> MagicMock:
+def _mock_openai_normal() -> MagicMock:
     """正常フロー: get_sensors → get_status → テキスト応答 の3ラウンド。"""
     mock = MagicMock()
 
     responses = [
-        # Round 0: tool_use (get_sensors)
-        _make_response(
-            [_make_tool_use_block("call_1", "get_sensors")],
-            stop_reason="tool_use",
-        ),
-        # Round 1: tool_use (get_status)
-        _make_response(
-            [_make_tool_use_block("call_2", "get_status")],
-            stop_reason="tool_use",
-        ),
+        # Round 0: tool_calls (get_sensors)
+        _make_oai_response(tool_calls=[_make_oai_tool_call("call_1", "get_sensors")]),
+        # Round 1: tool_calls (get_status)
+        _make_oai_response(tool_calls=[_make_oai_tool_call("call_2", "get_status")]),
         # Round 2: text response (計画 JSON)
-        _make_response(
-            [_make_text_block(PLAN_TEXT)],
-            stop_reason="end_turn",
-        ),
+        _make_oai_response(content=PLAN_TEXT),
     ]
 
-    mock.messages.create.side_effect = responses
+    mock.chat.completions.create.side_effect = responses
     return mock
 
 
@@ -200,13 +200,13 @@ def test_layer1_lockout_skips_forecast(tmp_path):
     mock_client = MagicMock()
     result = run_forecast(
         cfg,
-        anthropic_client=mock_client,
+        llm_client=mock_client,
         http_client=_mock_http_client(),
     )
 
     assert result["status"] == "skipped"
     assert result["reason"] == "layer1_lockout"
-    mock_client.messages.create.assert_not_called()
+    mock_client.chat.completions.create.assert_not_called()
     assert not Path(cfg["state"]["plan_path"]).exists()
 
 
@@ -226,12 +226,12 @@ def test_commandgate_lockout_skips_forecast(tmp_path):
 
     mock_client = MagicMock()
     result = run_forecast(
-        cfg, anthropic_client=mock_client, http_client=http_mock,
+        cfg, llm_client=mock_client, http_client=http_mock,
     )
 
     assert result["status"] == "skipped"
     assert result["reason"] == "commandgate_lockout"
-    mock_client.messages.create.assert_not_called()
+    mock_client.chat.completions.create.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +251,7 @@ def test_normal_flow_generates_plan(mock_sun, tmp_path):
     cfg = _base_config(tmp_path)
     result = run_forecast(
         cfg,
-        anthropic_client=_mock_anthropic_normal(),
+        llm_client=_mock_openai_normal(),
         http_client=_mock_http_client(),
     )
 
@@ -282,11 +282,11 @@ def test_api_timeout_no_plan(mock_sun, tmp_path):
     cfg = _base_config(tmp_path)
 
     mock_client = MagicMock()
-    mock_client.messages.create.side_effect = TimeoutError("API timeout")
+    mock_client.chat.completions.create.side_effect = TimeoutError("API timeout")
 
     result = run_forecast(
         cfg,
-        anthropic_client=mock_client,
+        llm_client=mock_client,
         http_client=_mock_http_client(),
     )
 
@@ -312,11 +312,11 @@ def test_api_error_failsafe(mock_sun, tmp_path):
     cfg = _base_config(tmp_path)
 
     mock_client = MagicMock()
-    mock_client.messages.create.side_effect = RuntimeError("Authentication failed")
+    mock_client.chat.completions.create.side_effect = RuntimeError("Authentication failed")
 
     result = run_forecast(
         cfg,
-        anthropic_client=mock_client,
+        llm_client=mock_client,
         http_client=_mock_http_client(),
     )
 
@@ -339,15 +339,15 @@ def test_tool_calling_loop(mock_sun, tmp_path):
     }
 
     cfg = _base_config(tmp_path)
-    mock_anthropic = _mock_anthropic_normal()
+    mock_openai = _mock_openai_normal()
 
     run_forecast(
         cfg,
-        anthropic_client=mock_anthropic,
+        llm_client=mock_openai,
         http_client=_mock_http_client(),
     )
 
-    assert mock_anthropic.messages.create.call_count == 3
+    assert mock_openai.chat.completions.create.call_count == 3
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +397,7 @@ def test_decision_log_saved(mock_sun, tmp_path):
     cfg = _base_config(tmp_path)
     run_forecast(
         cfg,
-        anthropic_client=_mock_anthropic_normal(),
+        llm_client=_mock_openai_normal(),
         http_client=_mock_http_client(),
     )
 
@@ -436,17 +436,20 @@ def test_system_prompt_and_history_injected(mock_sun, tmp_path):
     save_decision(db, "前回:高温対応", "ch5=ON", "", "")
     db.close()
 
-    mock_anthropic = _mock_anthropic_normal()
+    mock_openai = _mock_openai_normal()
     run_forecast(
         cfg,
-        anthropic_client=mock_anthropic,
+        llm_client=mock_openai,
         http_client=_mock_http_client(),
     )
 
-    # 最初の messages.create 呼び出しの引数を検証
-    call_kwargs = mock_anthropic.messages.create.call_args_list[0]
-    assert "テスト用プロンプト" in call_kwargs.kwargs["system"]
-    user_msg = call_kwargs.kwargs["messages"][0]["content"]
+    # 最初の chat.completions.create 呼び出しの引数を検証
+    call_kwargs = mock_openai.chat.completions.create.call_args_list[0]
+    # messages[0] が system プロンプト
+    assert call_kwargs.kwargs["messages"][0]["role"] == "system"
+    assert "テスト用プロンプト" in call_kwargs.kwargs["messages"][0]["content"]
+    # messages[1] が user メッセージ（判断履歴を含む）
+    user_msg = call_kwargs.kwargs["messages"][1]["content"]
     assert "前回:高温対応" in user_msg
     assert "判断履歴" in user_msg
 
@@ -517,11 +520,13 @@ def test_extract_plan_json_raw():
 # ---------------------------------------------------------------------------
 
 def test_tools_no_set_relay():
-    """TOOLS定義にset_relayが含まれていない。"""
-    tool_names = [t["name"] for t in TOOLS]
+    """TOOLS定義にset_relayが含まれていない（OpenAI tools形式）。"""
+    tool_names = [t["function"]["name"] for t in TOOLS]
     assert "set_relay" not in tool_names
     assert "get_sensors" in tool_names
     assert "get_status" in tool_names
+    # OpenAI形式: type="function" であること
+    assert all(t["type"] == "function" for t in TOOLS)
 
 
 # ---------------------------------------------------------------------------
@@ -554,7 +559,7 @@ def test_last_decision_updated(mock_sun, tmp_path):
     cfg = _base_config(tmp_path)
     run_forecast(
         cfg,
-        anthropic_client=_mock_anthropic_normal(),
+        llm_client=_mock_openai_normal(),
         http_client=_mock_http_client(),
     )
 
@@ -1047,7 +1052,7 @@ def test_run_forecast_kousatsu_skip_path(
 
     assert result["status"] == "ok"
     # LLMは呼ばれていないこと
-    mock_anthropic.messages.create.assert_not_called()
+    mock_anthropic.chat.completions.create.assert_not_called()
     # plan が書き込まれていること
     plan_path = Path(cfg["state"]["plan_path"])
     assert plan_path.exists()
@@ -1060,3 +1065,94 @@ def test_run_forecast_kousatsu_skip_path(
     log_entry = json.loads(log_path.read_text().strip().splitlines()[0])
     assert log_entry["skipped_llm"] is True
     assert log_entry["source"] == "kousatsu"
+
+
+# ---------------------------------------------------------------------------
+# Test 49: llm config — llm.base_url / llm.api_key_env フィールドが設定に含まれる
+# ---------------------------------------------------------------------------
+
+@patch("agriha.control.forecast_engine.get_sun_times")
+def test_llm_config_has_base_url_and_api_key_env(mock_sun, tmp_path):
+    """llm config に base_url / api_key_env を設定した場合も正常に動作する。"""
+    now = datetime.now(_JST)
+    mock_sun.return_value = {
+        "sunrise": now.replace(hour=5, minute=30),
+        "sunset": now.replace(hour=17, minute=30),
+        "elevation": 21,
+    }
+
+    cfg = _base_config(tmp_path)
+    cfg["llm"]["base_url"] = "https://custom.llm.example.com/v1"
+    cfg["llm"]["api_key_env"] = "CUSTOM_API_KEY"
+
+    with (
+        patch(
+            "agriha.control.forecast_engine.SEARCH_LOG_PATH",
+            str(tmp_path / "search_log.jsonl"),
+        ),
+        patch(
+            "agriha.control.forecast_engine.PID_OVERRIDE_PATH",
+            str(tmp_path / "pid_override.json"),
+        ),
+    ):
+        result = run_forecast(
+            cfg,
+            llm_client=_mock_openai_normal(),
+            http_client=_mock_http_client(),
+        )
+
+    assert result["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Test 50: backward compat — "claude" キーが "llm" にマージされる
+# ---------------------------------------------------------------------------
+
+@patch("agriha.control.forecast_engine.get_sun_times")
+def test_backward_compat_claude_config_key(mock_sun, tmp_path):
+    """後方互換性: "claude" キーが設定されても正常に動作する。"""
+    now = datetime.now(_JST)
+    mock_sun.return_value = {
+        "sunrise": now.replace(hour=5, minute=30),
+        "sunset": now.replace(hour=17, minute=30),
+        "elevation": 21,
+    }
+
+    prompt_path = tmp_path / "system_prompt.txt"
+    prompt_path.write_text("後方互換テスト", encoding="utf-8")
+
+    cfg = {
+        "claude": {
+            "model": "claude-haiku-4-5-20251001",
+            "max_tokens": 512,
+            "max_tool_rounds": 3,
+            "api_timeout_sec": 15.0,
+        },
+        "system_prompt_path": str(prompt_path),
+        "db": {"path": str(tmp_path / "control_log.db"), "history_count": 3},
+        "state": {
+            "plan_path": str(tmp_path / "current_plan.json"),
+            "last_decision_path": str(tmp_path / "last_decision.json"),
+            "lockout_path": str(tmp_path / "lockout_state.json"),
+        },
+        "unipi_api": {"base_url": "http://localhost:8080", "api_key": "", "timeout_sec": 10},
+        "location": {"latitude": 42.888, "longitude": 141.603, "elevation": 21},
+    }
+
+    with (
+        patch(
+            "agriha.control.forecast_engine.SEARCH_LOG_PATH",
+            str(tmp_path / "search_log.jsonl"),
+        ),
+        patch(
+            "agriha.control.forecast_engine.PID_OVERRIDE_PATH",
+            str(tmp_path / "pid_override.json"),
+        ),
+    ):
+        result = run_forecast(
+            cfg,
+            llm_client=_mock_openai_normal(),
+            http_client=_mock_http_client(),
+        )
+
+    assert result["status"] == "ok"

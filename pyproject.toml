@@ -37,7 +37,7 @@ daemon = [
     "jinja2>=3.1",
     "python-multipart>=0.0.6",
     "astral>=3.2",
-    "anthropic>=0.20",
+    "openai>=1.0",
 ]
 dev = [
     "pytest>=7.0",
@@ -48,7 +48,7 @@ dev = [
     "jinja2>=3.1",
     "python-multipart>=0.0.6",
     "astral>=3.2",
-    "anthropic>=0.20",
+    "openai>=1.0",
 ]
 
 [project.scripts]
