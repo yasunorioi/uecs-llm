@@ -705,6 +705,37 @@ def test_write_env_key_creates_file_if_missing(tmp_path: Path) -> None:
     assert result["MY_KEY"] == "my-value"
 
 
+def test_read_env_file_export_prefix(tmp_path: Path) -> None:
+    """export KEY=value 形式のパースに対応する。"""
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "export ANTHROPIC_API_KEY=sk-ant-test123\n"
+        "# comment\n"
+        "export VC_API_KEY=vc-test456\n"
+        "PLAIN_KEY=plain-value\n",
+        encoding="utf-8",
+    )
+    result = read_env_file(str(env_file))
+    assert result["ANTHROPIC_API_KEY"] == "sk-ant-test123"
+    assert result["VC_API_KEY"] == "vc-test456"
+    assert result["PLAIN_KEY"] == "plain-value"
+
+
+def test_write_env_key_preserves_export_prefix(tmp_path: Path) -> None:
+    """export 付き行の更新時に export プレフィックスを維持する。"""
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "export ANTHROPIC_API_KEY=old-key\nexport OTHER=x\n",
+        encoding="utf-8",
+    )
+    write_env_key(str(env_file), "ANTHROPIC_API_KEY", "new-key")
+    content = env_file.read_text(encoding="utf-8")
+    assert "export ANTHROPIC_API_KEY=new-key" in content
+    assert "export OTHER=x" in content
+    result = read_env_file(str(env_file))
+    assert result["ANTHROPIC_API_KEY"] == "new-key"
+
+
 def test_mask_api_key_normal() -> None:
     """通常の長さのキーは末尾4文字のみ表示する。"""
     assert mask_api_key("sk-ant-abcdefghijklmn") == "****klmn"

@@ -154,13 +154,17 @@ def save_forecast_config(path: str, text: str) -> None:
 
 
 def read_env_file(path: str) -> dict[str, str]:
-    """`.env` ファイルをパースして key→value の dict を返す。ファイル不在時は空 dict。"""
+    """`.env` ファイルをパースして key→value の dict を返す。ファイル不在時は空 dict。
+    ``export KEY=value`` 形式にも対応。"""
     result: dict[str, str] = {}
     try:
         for line in Path(path).read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
                 continue
+            # export プレフィックスを除去
+            if stripped.startswith("export "):
+                stripped = stripped[7:]
             if "=" in stripped:
                 key, _, value = stripped.partition("=")
                 result[key.strip()] = value.strip()
@@ -170,7 +174,8 @@ def read_env_file(path: str) -> dict[str, str]:
 
 
 def write_env_key(path: str, key: str, value: str) -> None:
-    """`.env` ファイルの指定キーを更新する。キーが存在しなければ末尾に追記する。"""
+    """`.env` ファイルの指定キーを更新する。キーが存在しなければ末尾に追記する。
+    ``export KEY=value`` 形式を維持する。"""
     p = Path(path)
     lines: list[str] = []
     found = False
@@ -178,14 +183,20 @@ def write_env_key(path: str, key: str, value: str) -> None:
         for line in p.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
             if not stripped.startswith("#") and "=" in stripped:
-                k = stripped.split("=", 1)[0].strip()
+                # export プレフィックスを考慮してキー名を抽出
+                check = stripped
+                has_export = check.startswith("export ")
+                if has_export:
+                    check = check[7:]
+                k = check.split("=", 1)[0].strip()
                 if k == key:
-                    lines.append(f"{key}={value}")
+                    prefix = "export " if has_export else ""
+                    lines.append(f"{prefix}{key}={value}")
                     found = True
                     continue
             lines.append(line)
     if not found:
-        lines.append(f"{key}={value}")
+        lines.append(f"export {key}={value}")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
