@@ -55,7 +55,6 @@ if [ ! -f "${CONFIG_DIR}/system_prompt.txt" ]; then
 else
     echo "  → system_prompt.txt 既存 → スキップ"
 fi
-
 # Step 3: agriha ユーザー作成 + /var/lib/agriha/ データディレクトリ作成
 echo "[3/6] データディレクトリ作成..."
 # agriha ユーザーが存在しない場合のみ作成
@@ -73,6 +72,14 @@ sudo chown "${AGRIHA_USER}:${AGRIHA_USER}" /var/log/agriha
 echo "  → /var/log/agriha 作成完了"
 sudo chown -R "${AGRIHA_USER}:${AGRIHA_USER}" "${SCRIPT_DIR}"
 echo "  → ${SCRIPT_DIR} 所有権を ${AGRIHA_USER} に変更"
+# ダッシュボードから編集するファイルはagrihaユーザーに書き込み権限を付与
+for f in rules.yaml channel_map.yaml system_prompt.txt crop_irrigation.yaml forecast.yaml; do
+    if [ -f "${CONFIG_DIR}/${f}" ]; then
+        sudo chown "${AGRIHA_USER}:${AGRIHA_USER}" "${CONFIG_DIR}/${f}"
+        sudo chmod 664 "${CONFIG_DIR}/${f}"
+    fi
+done
+echo "  → ダッシュボード編集対象ファイルの権限設定完了"
 
 # Step 4: systemd サービスファイルインストール + enable
 # __REPO_DIR__ を実際のリポジトリパスに置換してからインストール
