@@ -31,6 +31,8 @@ SYSTEM_PROMPT_PATH = os.getenv("SYSTEM_PROMPT_PATH", "/etc/agriha/system_prompt.
 AGRIHA_THRESHOLDS_PATH = os.getenv("AGRIHA_THRESHOLDS_PATH", "/etc/agriha/thresholds.yaml")
 RULES_CONFIG_PATH = os.getenv("RULES_CONFIG_PATH", "/etc/agriha/rules.yaml")
 CHANNEL_MAP_PATH = os.getenv("CHANNEL_MAP_PATH", "/etc/agriha/channel_map.yaml")
+FORECAST_CONFIG_PATH = os.getenv("FORECAST_CONFIG_PATH", "/etc/agriha/forecast.yaml")
+ENV_FILE = os.getenv("ENV_FILE", "/opt/agriha/.env")
 CONTROL_LOG_DB = os.getenv("CONTROL_LOG_DB", "/var/lib/agriha/control_log.db")
 UI_AUTH_USER = os.getenv("UI_AUTH_USER", "admin")
 UI_AUTH_PASS = os.getenv("UI_AUTH_PASS", "agriha")
@@ -88,6 +90,7 @@ def save_thresholds(path: str, data: dict[str, Any]) -> None:
 
 _RULES_FALLBACK_PATH = str(Path(__file__).parent.parent.parent.parent / "config" / "rules.yaml")
 _CHANNEL_MAP_FALLBACK_PATH = str(Path(__file__).parent.parent.parent.parent / "config" / "channel_map.yaml")
+_FORECAST_CONFIG_FALLBACK_PATH = str(Path(__file__).parent.parent.parent.parent / "config" / "forecast.yaml")
 
 
 def _load_rules_text(path: str = RULES_CONFIG_PATH) -> str:
@@ -128,6 +131,70 @@ def save_channel_map(path: str, text: str) -> None:
         p.rename(f"{path}.bak.{ts}")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(text, encoding="utf-8")
+
+
+def _load_forecast_config_text(path: str = FORECAST_CONFIG_PATH) -> str:
+    """forecast.yaml をテキストとして読み込む。ファイルがなければフォールバックパスを試みる。"""
+    for p in [path, _FORECAST_CONFIG_FALLBACK_PATH]:
+        try:
+            return Path(p).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue
+    return ""
+
+
+def save_forecast_config(path: str, text: str) -> None:
+    """forecast.yaml にテキストをそのまま書き込む（バックアップ付き）。"""
+    p = Path(path)
+    if p.exists():
+        ts = datetime.now().strftime("%Y%m%d%H%M%S")
+        p.rename(f"{path}.bak.{ts}")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text, encoding="utf-8")
+
+
+def read_env_file(path: str) -> dict[str, str]:
+    """`.env` ファイルをパースして key→value の dict を返す。ファイル不在時は空 dict。"""
+    result: dict[str, str] = {}
+    try:
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if "=" in stripped:
+                key, _, value = stripped.partition("=")
+                result[key.strip()] = value.strip()
+    except FileNotFoundError:
+        pass
+    return result
+
+
+def write_env_key(path: str, key: str, value: str) -> None:
+    """`.env` ファイルの指定キーを更新する。キーが存在しなければ末尾に追記する。"""
+    p = Path(path)
+    lines: list[str] = []
+    found = False
+    if p.exists():
+        for line in p.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("#") and "=" in stripped:
+                k = stripped.split("=", 1)[0].strip()
+                if k == key:
+                    lines.append(f"{key}={value}")
+                    found = True
+                    continue
+            lines.append(line)
+    if not found:
+        lines.append(f"{key}={value}")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def mask_api_key(value: str) -> str:
+    """APIキーをマスク表示する（末尾4文字のみ表示）。4文字未満は全マスク。"""
+    if len(value) <= 4:
+        return "****"
+    return "****" + value[-4:]
 
 
 def load_system_prompt(path: str = SYSTEM_PROMPT_PATH) -> str:
@@ -439,6 +506,17 @@ async def settings(
     system_prompt = load_system_prompt()
     rules_text = _load_rules_text()
     channel_map_text = _load_channel_map_text()
+    forecast_config_text = _load_forecast_config_text()
+    # APIキー設定状態（設定済みならマスク表示、未設定ならNone）
+    env_vars = read_env_file(ENV_FILE)
+    api_key_status = {
+        k: (mask_api_key(v) if v else None)
+        for k, v in {
+            "ANTHROPIC_API_KEY": env_vars.get("ANTHROPIC_API_KEY", ""),
+            "OPENAI_API_KEY": env_vars.get("OPENAI_API_KEY", ""),
+            "GOOGLE_API_KEY": env_vars.get("GOOGLE_API_KEY", ""),
+        }.items()
+    }
     flash: str | None = None
     if saved:
         flash = "設定を保存しました"
@@ -450,6 +528,8 @@ async def settings(
         "thresholds": thresholds,
         "rules_text": rules_text,
         "channel_map_text": channel_map_text,
+        "forecast_config_text": forecast_config_text,
+        "api_key_status": api_key_status,
         "flash": flash,
     }
     return templates.TemplateResponse("settings.html", ctx)
@@ -520,6 +600,45 @@ async def save_channel_map_route(
         return RedirectResponse(url="/settings?error=1", status_code=303)
     try:
         save_channel_map(CHANNEL_MAP_PATH, channel_map_text)
+        return RedirectResponse(url="/settings?saved=1", status_code=303)
+    except Exception:
+        return RedirectResponse(url="/settings?error=1", status_code=303)
+
+
+@app.post("/settings/forecast")
+async def save_forecast_config_route(
+    forecast_config_text: str = Form(...),
+    _: None = Depends(verify_auth),
+) -> RedirectResponse:
+    """forecast.yaml をテキストのまま保存する。構文チェック（yaml.safe_load）のみ実施。"""
+    try:
+        yaml.safe_load(forecast_config_text)
+    except yaml.YAMLError:
+        return RedirectResponse(url="/settings?error=1", status_code=303)
+    try:
+        save_forecast_config(FORECAST_CONFIG_PATH, forecast_config_text)
+        return RedirectResponse(url="/settings?saved=1", status_code=303)
+    except Exception:
+        return RedirectResponse(url="/settings?error=1", status_code=303)
+
+
+@app.post("/settings/api_keys")
+async def save_api_keys_route(
+    anthropic_api_key: str = Form(default=""),
+    openai_api_key: str = Form(default=""),
+    google_api_key: str = Form(default=""),
+    _: None = Depends(verify_auth),
+) -> RedirectResponse:
+    """APIキーを .env ファイルに保存する。空欄のキーは変更しない。"""
+    try:
+        keys = {
+            "ANTHROPIC_API_KEY": anthropic_api_key,
+            "OPENAI_API_KEY": openai_api_key,
+            "GOOGLE_API_KEY": google_api_key,
+        }
+        for key, value in keys.items():
+            if value:
+                write_env_key(ENV_FILE, key, value)
         return RedirectResponse(url="/settings?saved=1", status_code=303)
     except Exception:
         return RedirectResponse(url="/settings?error=1", status_code=303)

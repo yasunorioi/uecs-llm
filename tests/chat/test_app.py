@@ -31,10 +31,15 @@ import agriha.chat.app as app_module
 from agriha.chat.app import (
     _build_plan_timeline,
     _load_channel_map_text,
+    _load_forecast_config_text,
     _load_rules_text,
     app,
+    mask_api_key,
+    read_env_file,
     save_channel_map,
+    save_forecast_config,
     save_rules,
+    write_env_key,
 )
 
 
@@ -609,3 +614,238 @@ async def test_settings_page_renders_channel_map_textarea(
     assert "チャンネルマップ設定" in html
     assert "channel_map_text" in html
     assert "channel: 4" in html
+
+
+# ── _load_forecast_config_text / save_forecast_config ─────────────────────
+
+def test_load_forecast_config_text_from_file(tmp_path: Path) -> None:
+    """forecast.yaml が存在する場合、そのテキストを返す。"""
+    fc_file = tmp_path / "forecast.yaml"
+    content = "llm:\n  model: claude-haiku-4-5-20251001\n"
+    fc_file.write_text(content, encoding="utf-8")
+    result = _load_forecast_config_text(str(fc_file))
+    assert result == content
+
+
+def test_load_forecast_config_text_missing_file_returns_empty(tmp_path: Path) -> None:
+    """forecast.yaml が存在しない場合、空文字を返す（フォールバックも不在）。"""
+    with patch.object(app_module, "_FORECAST_CONFIG_FALLBACK_PATH", str(tmp_path / "fallback.yaml")):
+        result = _load_forecast_config_text(str(tmp_path / "nonexistent.yaml"))
+    assert result == ""
+
+
+def test_save_forecast_config_writes_text_and_creates_backup(tmp_path: Path) -> None:
+    """save_forecast_config はテキストを書き込み、既存ファイルをバックアップする。"""
+    fc_file = tmp_path / "forecast.yaml"
+    fc_file.write_text("llm:\n  model: old-model\n", encoding="utf-8")
+
+    new_content = "llm:\n  model: claude-haiku-4-5-20251001\n  base_url: ''\n"
+    save_forecast_config(str(fc_file), new_content)
+
+    assert fc_file.read_text(encoding="utf-8") == new_content
+    backups = list(tmp_path.glob("forecast.yaml.bak.*"))
+    assert len(backups) == 1
+
+
+# ── read_env_file / write_env_key / mask_api_key ──────────────────────────
+
+def test_read_env_file_parses_keys(tmp_path: Path) -> None:
+    """read_env_file は .env ファイルを正しくパースする。"""
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "ANTHROPIC_API_KEY=sk-ant-test123\n"
+        "# comment\n"
+        "OPENAI_API_KEY=sk-openai-test456\n"
+        "\n"
+        "GOOGLE_API_KEY=AIza-test789\n",
+        encoding="utf-8",
+    )
+    result = read_env_file(str(env_file))
+    assert result["ANTHROPIC_API_KEY"] == "sk-ant-test123"
+    assert result["OPENAI_API_KEY"] == "sk-openai-test456"
+    assert result["GOOGLE_API_KEY"] == "AIza-test789"
+    assert "# comment" not in result
+
+
+def test_read_env_file_missing_returns_empty(tmp_path: Path) -> None:
+    """ファイルが存在しない場合は空 dict を返す。"""
+    result = read_env_file(str(tmp_path / "nonexistent.env"))
+    assert result == {}
+
+
+def test_write_env_key_new_key(tmp_path: Path) -> None:
+    """存在しないキーは末尾に追記する。"""
+    env_file = tmp_path / ".env"
+    env_file.write_text("EXISTING_KEY=value\n", encoding="utf-8")
+    write_env_key(str(env_file), "ANTHROPIC_API_KEY", "sk-new-key")
+    content = env_file.read_text(encoding="utf-8")
+    assert "ANTHROPIC_API_KEY=sk-new-key" in content
+    assert "EXISTING_KEY=value" in content
+
+
+def test_write_env_key_updates_existing_key(tmp_path: Path) -> None:
+    """既存キーは値を上書きする。"""
+    env_file = tmp_path / ".env"
+    env_file.write_text("ANTHROPIC_API_KEY=old-key\nOTHER=x\n", encoding="utf-8")
+    write_env_key(str(env_file), "ANTHROPIC_API_KEY", "new-key")
+    result = read_env_file(str(env_file))
+    assert result["ANTHROPIC_API_KEY"] == "new-key"
+    assert result["OTHER"] == "x"
+    # 重複しないこと
+    lines = env_file.read_text(encoding="utf-8").splitlines()
+    assert sum("ANTHROPIC_API_KEY" in l for l in lines) == 1
+
+
+def test_write_env_key_creates_file_if_missing(tmp_path: Path) -> None:
+    """ファイルが存在しない場合は新規作成する。"""
+    env_file = tmp_path / "new.env"
+    write_env_key(str(env_file), "MY_KEY", "my-value")
+    assert env_file.exists()
+    result = read_env_file(str(env_file))
+    assert result["MY_KEY"] == "my-value"
+
+
+def test_mask_api_key_normal() -> None:
+    """通常の長さのキーは末尾4文字のみ表示する。"""
+    assert mask_api_key("sk-ant-abcdefghijklmn") == "****klmn"
+    assert mask_api_key("sk-ant-test1234") == "****1234"
+
+
+def test_mask_api_key_short() -> None:
+    """4文字以下のキーは全マスクする。"""
+    assert mask_api_key("abcd") == "****"
+    assert mask_api_key("ab") == "****"
+    assert mask_api_key("") == "****"
+
+
+# ── POST /settings/forecast + POST /settings/api_keys ────────────────────
+
+@pytest.fixture
+async def settings_client_with_forecast(tmp_path: Path) -> AsyncClient:
+    """forecast.yaml / .env を含む settings テスト用クライアント。"""
+    fc_file = tmp_path / "forecast.yaml"
+    fc_file.write_text("llm:\n  model: claude-haiku-4-5-20251001\n", encoding="utf-8")
+    env_file = tmp_path / ".env"
+    env_file.write_text("ANTHROPIC_API_KEY=sk-ant-existing1234\n", encoding="utf-8")
+
+    with (
+        patch.object(app_module, "UI_AUTH_USER", "testadmin"),
+        patch.object(app_module, "UI_AUTH_PASS", "testpass"),
+        patch.object(app_module, "AGRIHA_FLAG_DIR", str(tmp_path)),
+        patch.object(app_module, "CURRENT_PLAN_PATH", str(tmp_path / "current_plan.json")),
+        patch.object(app_module, "AGRIHA_LOG_DIR", str(tmp_path)),
+        patch.object(app_module, "RULES_CONFIG_PATH", str(tmp_path / "rules.yaml")),
+        patch.object(app_module, "CHANNEL_MAP_PATH", str(tmp_path / "channel_map.yaml")),
+        patch.object(app_module, "FORECAST_CONFIG_PATH", str(fc_file)),
+        patch.object(app_module, "ENV_FILE", str(env_file)),
+        patch.object(app_module, "SYSTEM_PROMPT_PATH", str(tmp_path / "system_prompt.txt")),
+        patch.object(app_module, "AGRIHA_THRESHOLDS_PATH", str(tmp_path / "thresholds.yaml")),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            headers=_basic_auth(),
+            follow_redirects=True,
+        ) as ac:
+            yield ac
+
+
+async def test_post_forecast_valid_yaml(
+    settings_client_with_forecast: AsyncClient,
+) -> None:
+    """正常な YAML で POST すると saved=1 にリダイレクトされファイルが保存される。"""
+    new_yaml = "llm:\n  model: gpt-4o\n  base_url: 'https://api.openai.com/v1/'\n"
+    r = await settings_client_with_forecast.post(
+        "/settings/forecast", data={"forecast_config_text": new_yaml}
+    )
+    assert r.status_code == 200
+    assert "saved=1" in str(r.url)
+
+
+async def test_post_forecast_invalid_yaml_redirects_error(
+    settings_client_with_forecast: AsyncClient,
+) -> None:
+    """YAML 構文エラーの場合は error=1 にリダイレクトされる。"""
+    r = await settings_client_with_forecast.post(
+        "/settings/forecast",
+        data={"forecast_config_text": "llm:\n  model: [\nbad yaml"},
+    )
+    assert r.status_code == 200
+    assert "error=1" in str(r.url)
+
+
+async def test_post_forecast_invalid_yaml_does_not_write_file(
+    settings_client_with_forecast: AsyncClient, tmp_path: Path,
+) -> None:
+    """YAML 構文エラーの場合はファイルが書き込まれない。"""
+    fc_file = tmp_path / "forecast.yaml"
+    original = fc_file.read_text(encoding="utf-8")
+
+    await settings_client_with_forecast.post(
+        "/settings/forecast",
+        data={"forecast_config_text": "llm:\n  model: [\nbad yaml"},
+    )
+
+    assert fc_file.read_text(encoding="utf-8") == original
+
+
+async def test_post_api_keys_saves_to_env_file(
+    settings_client_with_forecast: AsyncClient, tmp_path: Path,
+) -> None:
+    """非空のAPIキーを POST すると .env ファイルに保存される。"""
+    r = await settings_client_with_forecast.post(
+        "/settings/api_keys",
+        data={
+            "anthropic_api_key": "sk-ant-newkey12345",
+            "openai_api_key": "sk-openai-newkey6789",
+            "google_api_key": "",
+        },
+    )
+    assert r.status_code == 200
+    assert "saved=1" in str(r.url)
+
+    env_file = tmp_path / ".env"
+    result = read_env_file(str(env_file))
+    assert result["ANTHROPIC_API_KEY"] == "sk-ant-newkey12345"
+    assert result["OPENAI_API_KEY"] == "sk-openai-newkey6789"
+    # 空欄のキーは書き込まれていない（またはそのまま）
+    assert "GOOGLE_API_KEY" not in result
+
+
+async def test_post_api_keys_empty_values_not_written(
+    settings_client_with_forecast: AsyncClient, tmp_path: Path,
+) -> None:
+    """全て空欄で POST すると .env ファイルが変更されない。"""
+    env_file = tmp_path / ".env"
+    original = env_file.read_text(encoding="utf-8")
+
+    await settings_client_with_forecast.post(
+        "/settings/api_keys",
+        data={"anthropic_api_key": "", "openai_api_key": "", "google_api_key": ""},
+    )
+
+    assert env_file.read_text(encoding="utf-8") == original
+
+
+async def test_settings_page_renders_forecast_textarea_and_api_key_status(
+    settings_client_with_forecast: AsyncClient,
+) -> None:
+    """GET /settings が LLM設定・APIキー設定セクションを描画する。"""
+    with (
+        patch("agriha.chat.app.fetch_sensors", return_value={}),
+        patch("agriha.chat.app.get_relay_labels", return_value={}),
+    ):
+        r = await settings_client_with_forecast.get("/settings")
+    assert r.status_code == 200
+    html = r.text
+    # LLM設定セクション
+    assert "LLM設定" in html
+    assert "forecast_config_text" in html
+    assert "claude-haiku-4-5-20251001" in html
+    # APIキー設定セクション
+    assert "APIキー設定" in html
+    assert "ANTHROPIC_API_KEY" in html
+    # 設定済みのキーはマスク表示される
+    assert "****1234" in html
+
