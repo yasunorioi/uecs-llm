@@ -47,14 +47,9 @@ def base_cfg() -> dict[str, Any]:
             "target_night": 17.0,
             "margin_open": 2.0,
             "margin_close": 1.0,
-            "window_channels": [5, 6, 7, 8],
         },
         "wind": {
             "strong_wind_threshold_ms": 5.0,
-            "north_directions": [1, 2, 16],
-            "north_channels": [5, 6],
-            "south_directions": [8, 9, 10],
-            "south_channels": [7, 8],
         },
         "rain": {
             "threshold_mm_h": 0.5,
@@ -75,6 +70,39 @@ def base_cfg() -> dict[str, Any]:
             "elevation": 21,
         },
     }
+
+
+@pytest.fixture
+def channel_map_file(tmp_path: Path) -> Path:
+    """テスト用 channel_map.yaml (groups形式) を tmp_path に生成。"""
+    data = {
+        "irrigation": {"channel": 4, "label": "灌水ポンプ"},
+        "side_window": {
+            "groups": [
+                {
+                    "name": "北側窓",
+                    "open_channel": 5,
+                    "close_channel": 6,
+                    "wind_close_directions": [1, 2, 16],
+                },
+                {
+                    "name": "南側窓",
+                    "open_channel": 8,
+                    "close_channel": 7,
+                    "wind_close_directions": [8, 9, 10],
+                },
+            ],
+        },
+        "relay_labels": {
+            1: "暖房", 2: "循環扇", 3: "CO2発生器", 4: "灌水ポンプ",
+            5: "北側窓(開)", 6: "北側窓(閉)", 7: "南側窓(閉)", 8: "南側窓(開)",
+        },
+        "valid_channels": {"min": 1, "max": 8},
+    }
+    p = tmp_path / "channel_map.yaml"
+    with open(p, "w", encoding="utf-8") as f:
+        yaml.dump(data, f, allow_unicode=True)
+    return p
 
 
 @pytest.fixture
@@ -134,8 +162,8 @@ NIGHTTIME = datetime(2026, 3, 1, 0, 0, 0, tzinfo=_JST)
 # ① 降雨検知 → 全窓閉
 # ──────────────────────────────────────────────
 
-def test_rain_closes_all_windows(base_cfg, base_crop_cfg, status_normal):
-    """降雨 rainfall=1.5mm/h → 全窓閉 (ch5,6,7,8 value=0)。"""
+def test_rain_closes_all_windows(base_cfg, base_crop_cfg, status_normal, channel_map_file):
+    """降雨 rainfall=1.5mm/h → 全窓閉 (close_ch=1, open_ch=0)。"""
     sensors = {
         "sensors": {
             "agriha/h01/ccm/InAirTemp": {"value": 25.0},
@@ -149,15 +177,18 @@ def test_rain_closes_all_windows(base_cfg, base_crop_cfg, status_normal):
     }
     solar_acc = {"date": "2026-03-01", "accumulated_mj": 0.0, "irrigations_today": 0}
     result = evaluate_rules(
-        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None, now=DAYTIME
+        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None,
+        now=DAYTIME, channel_map_path=channel_map_file,
     )
     triggered = result["triggered_rules"]
     actions = {a[0]: a[1] for a in result["relay_actions"]}
 
     assert "rain_close_all" in triggered
+    # 北側窓: close_channel(6)=1, open_channel(5)=0
+    assert actions[6] == 1
     assert actions[5] == 0
-    assert actions[6] == 0
-    assert actions[7] == 0
+    # 南側窓: close_channel(7)=1, open_channel(8)=0
+    assert actions[7] == 1
     assert actions[8] == 0
 
 
@@ -165,8 +196,8 @@ def test_rain_closes_all_windows(base_cfg, base_crop_cfg, status_normal):
 # ② 強風（北風 5m/s 超）→ 北側窓閉、南側はアクションなし
 # ──────────────────────────────────────────────
 
-def test_strong_north_wind_closes_north_windows(base_cfg, base_crop_cfg, status_normal):
-    """北風 wind_dir=2, speed=6m/s → ch5,6 閉のみ。ch7,8はアクションなし。"""
+def test_strong_north_wind_closes_north_windows(base_cfg, base_crop_cfg, status_normal, channel_map_file):
+    """北風 wind_dir=2, speed=6m/s → 北側窓閉 (close_ch6=1, open_ch5=0)。南側はアクションなし。"""
     sensors = {
         "sensors": {
             "agriha/h01/ccm/InAirTemp": {"value": 25.0},
@@ -180,14 +211,17 @@ def test_strong_north_wind_closes_north_windows(base_cfg, base_crop_cfg, status_
     }
     solar_acc = {"date": "2026-03-01", "accumulated_mj": 0.0, "irrigations_today": 0}
     result = evaluate_rules(
-        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None, now=DAYTIME
+        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None,
+        now=DAYTIME, channel_map_path=channel_map_file,
     )
     triggered = result["triggered_rules"]
     actions = {a[0]: a[1] for a in result["relay_actions"]}
 
     assert "strong_wind" in triggered
+    # 北側窓: close_channel(6)=1, open_channel(5)=0
+    assert actions.get(6) == 1
     assert actions.get(5) == 0
-    assert actions.get(6) == 0
+    # 南側窓: アクションなし
     assert 7 not in actions
     assert 8 not in actions
 
@@ -196,47 +230,53 @@ def test_strong_north_wind_closes_north_windows(base_cfg, base_crop_cfg, status_
 # ③ 高温（target+margin 超過）→ 側窓開
 # ──────────────────────────────────────────────
 
-def test_high_temp_opens_windows(base_cfg, base_crop_cfg, sensors_normal, status_normal):
-    """気温 29℃ (> 26+2=28℃) → ch5-8 開。"""
+def test_high_temp_opens_windows(base_cfg, base_crop_cfg, sensors_normal, status_normal, channel_map_file):
+    """気温 29℃ (> 26+2=28℃) → 全窓開 (open_ch=1, close_ch=0)。"""
     sensors = dict(sensors_normal)
     sensors["sensors"] = dict(sensors_normal["sensors"])
     sensors["sensors"]["agriha/h01/ccm/InAirTemp"] = {"value": 29.0}
     solar_acc = {"date": "2026-03-01", "accumulated_mj": 0.0, "irrigations_today": 0}
 
     result = evaluate_rules(
-        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None, now=DAYTIME
+        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None,
+        now=DAYTIME, channel_map_path=channel_map_file,
     )
     triggered = result["triggered_rules"]
     actions = {a[0]: a[1] for a in result["relay_actions"]}
 
     assert "temp_high_open" in triggered
+    # 北側窓: open_channel(5)=1, close_channel(6)=0
     assert actions[5] == 1
-    assert actions[6] == 1
-    assert actions[7] == 1
+    assert actions[6] == 0
+    # 南側窓: open_channel(8)=1, close_channel(7)=0
     assert actions[8] == 1
+    assert actions[7] == 0
 
 
 # ──────────────────────────────────────────────
 # ④ 低温（target-margin 未満）→ 側窓閉
 # ──────────────────────────────────────────────
 
-def test_low_temp_closes_windows(base_cfg, base_crop_cfg, sensors_normal, status_normal):
-    """気温 24℃ (< 26-1=25℃) → ch5-8 閉。"""
+def test_low_temp_closes_windows(base_cfg, base_crop_cfg, sensors_normal, status_normal, channel_map_file):
+    """気温 24℃ (< 26-1=25℃) → 全窓閉 (close_ch=1, open_ch=0)。"""
     sensors = dict(sensors_normal)
     sensors["sensors"] = dict(sensors_normal["sensors"])
     sensors["sensors"]["agriha/h01/ccm/InAirTemp"] = {"value": 24.0}
     solar_acc = {"date": "2026-03-01", "accumulated_mj": 0.0, "irrigations_today": 0}
 
     result = evaluate_rules(
-        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None, now=DAYTIME
+        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None,
+        now=DAYTIME, channel_map_path=channel_map_file,
     )
     triggered = result["triggered_rules"]
     actions = {a[0]: a[1] for a in result["relay_actions"]}
 
     assert "temp_low_close" in triggered
+    # 北側窓: close_channel(6)=1, open_channel(5)=0
+    assert actions[6] == 1
     assert actions[5] == 0
-    assert actions[6] == 0
-    assert actions[7] == 0
+    # 南側窓: close_channel(7)=1, open_channel(8)=0
+    assert actions[7] == 1
     assert actions[8] == 0
 
 
@@ -464,8 +504,8 @@ def test_api_failure_returns_error(tmp_path, base_cfg, base_crop_cfg):
 # ⑬ 日没後 → 全窓閉
 # ──────────────────────────────────────────────
 
-def test_nighttime_closes_all_windows(base_cfg, base_crop_cfg, status_normal):
-    """夜間(00:00 JST)の場合、nighttime_close がトリガーされ全窓閉。"""
+def test_nighttime_closes_all_windows(base_cfg, base_crop_cfg, status_normal, channel_map_file):
+    """夜間(00:00 JST)の場合、nighttime_close がトリガーされ全窓閉 (close_ch=1, open_ch=0)。"""
     sensors = {
         "sensors": {
             "agriha/h01/ccm/InAirTemp": {"value": 20.0},
@@ -480,15 +520,18 @@ def test_nighttime_closes_all_windows(base_cfg, base_crop_cfg, status_normal):
     solar_acc = {"date": "2026-03-01", "accumulated_mj": 0.0, "irrigations_today": 0}
 
     result = evaluate_rules(
-        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None, now=NIGHTTIME
+        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None,
+        now=NIGHTTIME, channel_map_path=channel_map_file,
     )
     triggered = result["triggered_rules"]
     actions = {a[0]: a[1] for a in result["relay_actions"]}
 
     assert "nighttime_close" in triggered
+    # 北側窓: close_channel(6)=1, open_channel(5)=0
+    assert actions.get(6) == 1
     assert actions.get(5) == 0
-    assert actions.get(6) == 0
-    assert actions.get(7) == 0
+    # 南側窓: close_channel(7)=1, open_channel(8)=0
+    assert actions.get(7) == 1
     assert actions.get(8) == 0
 
 

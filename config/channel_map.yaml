@@ -1,6 +1,6 @@
 # config/channel_map.yaml
 # チャンネル割当設定 — 農家ごとにカスタマイズ可能
-# v4 spec準拠: ch5,6=南側窓, ch7,8=北側窓
+# v4 spec準拠: ch5=北開, ch6=北閉, ch7=南閉, ch8=南開（実測確認済み）
 #
 # ■ 用途:
 #   UniPiリレーch番号と制御機器のマッピングを定義する。
@@ -18,7 +18,11 @@
 #
 # ■ フィールド説明:
 #   irrigation: 灌水ポンプのch番号とラベル
-#   side_window: 側窓のch番号（南北別）とラベル
+#   side_window.groups: 側窓グループ（窓ごとに開チャンネル・閉チャンネルを分離定義）
+#     - name: グループ名（ログ・UI表示用）
+#     - open_channel: 窓を開けるリレーch番号
+#     - close_channel: 窓を閉めるリレーch番号
+#     - wind_close_directions: この窓を閉める強風方角コード（MISOL wind_direction値）
 #   relay_labels: ch1-8の表示ラベル一覧（WebUI・ログ表示用）
 #   valid_channels: 有効ch番号の範囲（バリデーション用）
 #
@@ -30,22 +34,25 @@ irrigation:
   label: "灌水ポンプ"
 
 side_window:
-  south:
-    channels: [5, 6]
-    label: "南側窓"
-  north:
-    channels: [7, 8]
-    label: "北側窓"
+  groups:
+    - name: "北側窓"
+      open_channel: 5
+      close_channel: 6
+      wind_close_directions: [1, 2, 16]
+    - name: "南側窓"
+      open_channel: 8
+      close_channel: 7
+      wind_close_directions: [8, 9, 10]
 
 relay_labels:
   1: "暖房"
   2: "循環扇"
   3: "CO2発生器"
   4: "灌水ポンプ"
-  5: "南側窓"
-  6: "南側窓"
-  7: "北側窓"
-  8: "北側窓"
+  5: "北側窓(開)"
+  6: "北側窓(閉)"
+  7: "南側窓(閉)"
+  8: "南側窓(開)"
 
 valid_channels:
   min: 1

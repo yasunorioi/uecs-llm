@@ -32,27 +32,30 @@ def load_channel_map(path: str | Path | None = None) -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
+def load_window_groups(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """側窓グループ設定（open/closeチャンネル分離）を返す。
+
+    各グループは以下のキーを持つ:
+        name: str — グループ名
+        open_channel: int — 窓を開けるリレーch番号
+        close_channel: int — 窓を閉めるリレーch番号
+        wind_close_directions: list[int] — この窓を閉める強風方角コード
+    """
+    if config is None:
+        config = load_channel_map()
+    return config["side_window"]["groups"]
+
+
 def get_window_channels(config: dict[str, Any] | None = None) -> list[int]:
-    """全窓チャンネル（南+北）を返す。"""
+    """全窓チャンネル（全グループのopen+close両方）を返す。"""
     if config is None:
         config = load_channel_map()
-    south = config["side_window"]["south"]["channels"]
-    north = config["side_window"]["north"]["channels"]
-    return south + north
-
-
-def get_south_channels(config: dict[str, Any] | None = None) -> list[int]:
-    """南側窓チャンネルを返す。"""
-    if config is None:
-        config = load_channel_map()
-    return config["side_window"]["south"]["channels"]
-
-
-def get_north_channels(config: dict[str, Any] | None = None) -> list[int]:
-    """北側窓チャンネルを返す。"""
-    if config is None:
-        config = load_channel_map()
-    return config["side_window"]["north"]["channels"]
+    groups = config["side_window"]["groups"]
+    chs: list[int] = []
+    for g in groups:
+        chs.append(g["open_channel"])
+        chs.append(g["close_channel"])
+    return chs
 
 
 def get_irrigation_channel(config: dict[str, Any] | None = None) -> int:

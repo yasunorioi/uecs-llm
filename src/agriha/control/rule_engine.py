@@ -23,7 +23,7 @@ import yaml
 from astral import LocationInfo
 from astral.sun import sun
 
-from agriha.control.channel_config import load_channel_map, get_window_channels
+from agriha.control.channel_config import load_channel_map, load_window_groups, get_window_channels
 
 # ──────────────────────────────────────────────
 # 定数・デフォルトパス（環境変数で上書き可能）
@@ -309,7 +309,7 @@ def evaluate_rules(
     wind_cfg = cfg["wind"]
     rain_cfg = cfg["rain"]
     _ch_config = load_channel_map(channel_map_path)
-    window_chs: list[int] = get_window_channels(_ch_config)
+    groups: list[dict] = load_window_groups(_ch_config)
 
     misol = get_misol(sensors)
     rainfall = misol.get("rainfall", 0.0) or 0.0
@@ -324,11 +324,28 @@ def evaluate_rules(
     # Layer 3 計画が有効かどうか
     layer3_active = current_plan is not None
 
+    def _acted_chs() -> set[int]:
+        return {a[0] for a in relay_actions}
+
+    def _close_group(g: dict) -> None:
+        """グループを閉める: close_channel ON, open_channel OFF"""
+        relay_actions.append((g["close_channel"], 1, None))
+        relay_actions.append((g["open_channel"], 0, None))
+
+    def _open_group(g: dict) -> None:
+        """グループを開ける: open_channel ON, close_channel OFF"""
+        relay_actions.append((g["open_channel"], 1, None))
+        relay_actions.append((g["close_channel"], 0, None))
+
+    def _group_acted(g: dict) -> bool:
+        chs = _acted_chs()
+        return g["open_channel"] in chs or g["close_channel"] in chs
+
     # ── Rule 6a: 降雨チェック ───────────────────────────
     if rainfall > rain_cfg["threshold_mm_h"]:
         triggered_rules.append("rain_close_all")
-        for ch in window_chs:
-            relay_actions.append((ch, 0, None))
+        for g in groups:
+            _close_group(g)
         logger.info("Rule 6a: rainfall=%.2f > %.2f → 全窓閉", rainfall, rain_cfg["threshold_mm_h"])
         # 降雨時は以降の窓制御をスキップ（灌水のみ評価継続）
         _eval_irrigation(
@@ -343,26 +360,26 @@ def evaluate_rules(
     # ── Rule 6b: 強風チェック ──────────────────────────
     if wind_speed > wind_cfg["strong_wind_threshold_ms"]:
         triggered_rules.append("strong_wind")
-        if wind_dir in wind_cfg["north_directions"]:
-            logger.info("Rule 6b: 北風 %.1fm/s → 北側窓閉 ch%s", wind_speed, wind_cfg["north_channels"])
-            for ch in wind_cfg["north_channels"]:
-                relay_actions.append((ch, 0, None))
-        elif wind_dir in wind_cfg["south_directions"]:
-            logger.info("Rule 6b: 南風 %.1fm/s → 南側窓閉 ch%s", wind_speed, wind_cfg["south_channels"])
-            for ch in wind_cfg["south_channels"]:
-                relay_actions.append((ch, 0, None))
+        matched = [g for g in groups if wind_dir in g["wind_close_directions"]]
+        if matched:
+            for g in matched:
+                logger.info(
+                    "Rule 6b: 強風 %.1fm/s dir=%d → %s閉 (close_ch=%d)",
+                    wind_speed, wind_dir, g["name"], g["close_channel"],
+                )
+                _close_group(g)
         else:
-            logger.info("Rule 6b: 強風 %.1fm/s dir=%d → 全窓閉", wind_speed, wind_dir)
-            for ch in window_chs:
-                relay_actions.append((ch, 0, None))
+            logger.info("Rule 6b: 強風 %.1fm/s dir=%d → 方角不明 → 全窓閉", wind_speed, wind_dir)
+            for g in groups:
+                _close_group(g)
 
     # ── Rule 6c: 時間帯制御 ───────────────────────────
     if nighttime:
         triggered_rules.append("nighttime_close")
         logger.info("Rule 6c: 夜間 → 全窓閉")
-        for ch in window_chs:
-            if not any(a[0] == ch for a in relay_actions):
-                relay_actions.append((ch, 0, None))
+        for g in groups:
+            if not _group_acted(g):
+                _close_group(g)
 
     # ── Rule 6d: 温度制御（Layer 3 計画があれば委譲） ──
     if not layer3_active:
@@ -375,18 +392,18 @@ def evaluate_rules(
                     "Rule 6d: 高温 %.1f℃ > %.1f+%.1f → 側窓開",
                     indoor_temp, target_temp, margin_open,
                 )
-                for ch in window_chs:
-                    if not any(a[0] == ch for a in relay_actions):
-                        relay_actions.append((ch, 1, None))
+                for g in groups:
+                    if not _group_acted(g):
+                        _open_group(g)
             elif indoor_temp < target_temp - margin_close:
                 triggered_rules.append("temp_low_close")
                 logger.info(
                     "Rule 6d: 低温 %.1f℃ < %.1f-%.1f → 側窓閉",
                     indoor_temp, target_temp, margin_close,
                 )
-                for ch in window_chs:
-                    if not any(a[0] == ch for a in relay_actions):
-                        relay_actions.append((ch, 0, None))
+                for g in groups:
+                    if not _group_acted(g):
+                        _close_group(g)
     else:
         logger.info("Rule 6d: Layer 3 計画有効 → 温度制御を Layer 3 に委譲")
 

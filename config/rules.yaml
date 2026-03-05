@@ -4,16 +4,11 @@ temperature:
   target_night: 17.0           # 夜間目標温度 (℃) ※LOW_TEMP_THRESHOLD(16℃)+1℃以上を推奨
   margin_open: 2.0             # 目標+Nで窓開 (℃)
   margin_close: 1.0            # 目標-Nで窓閉 (℃)
-  window_channels: [5, 6, 7, 8]
+  # window_channels は channel_map.yaml の side_window.groups に集約（open/close分離）
 
 wind:
   strong_wind_threshold_ms: 5.0  # 強風閾値 (m/s)
-  # 北風(NNW～NNE): wind_direction 1,2,16
-  north_directions: [1, 2, 16]
-  north_channels: [5, 6]        # 北側窓チャンネル（要実測確認）
-  # 南風(SSE～SSW): wind_direction 8,9,10
-  south_directions: [8, 9, 10]
-  south_channels: [7, 8]        # 南側窓チャンネル（要実測確認）
+  # 風向別の窓閉判定は channel_map.yaml の side_window.groups[].wind_close_directions に集約
 
 rain:
   threshold_mm_h: 0.5           # 降雨閾値 (mm/h)
