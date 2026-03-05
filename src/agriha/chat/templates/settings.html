@@ -126,102 +126,83 @@
   </form>
 </section>
 
-{# ─── LLM設定 ─────────────────────────────────── #}
+{# ─── LLMプロバイダー設定 ─────────────────────── #}
 <section class="section">
-  <h2 class="section__title">LLM設定</h2>
-  <p class="section__desc">
-    LLMプロバイダー、モデル、APIエンドポイントを設定します（forecast.yaml）。
-    <code>base_url</code> を変更することで Claude / OpenAI / Gemini / ローカルLLM を切り替えできます。
-    保存時に YAML 構文チェックを行います。
-  </p>
-  <p class="section__desc">
-    プロバイダー別 base_url 例:
-    <code>https://api.anthropic.com/v1/</code> (Anthropic) ·
-    <code>https://api.openai.com/v1/</code> (OpenAI) ·
-    <code>https://generativelanguage.googleapis.com/v1beta/openai/</code> (Gemini) ·
-    <code>http://localhost:11434/v1/</code> (Ollama)
-  </p>
-  <form action="/settings/forecast" method="post">
-    <div class="form-group">
-      <textarea
-        name="forecast_config_text"
-        rows="25"
-        cols="80"
-        wrap="off"
-        class="textarea-mono"
-        placeholder="forecast.yaml の内容を入力...">{{ forecast_config_text or '' }}</textarea>
-    </div>
-    <button type="submit" class="btn btn--primary">保存</button>
-  </form>
-</section>
-
-{# ─── APIキー設定 ──────────────────────────────── #}
-<section class="section">
-  <h2 class="section__title">APIキー設定</h2>
-  <p class="section__desc">APIキーは .env ファイルに保存されます。空欄のまま保存すると変更されません。</p>
-  <form action="/settings/api_keys" method="post">
+  <h2 class="section__title">LLMプロバイダー設定</h2>
+  <p class="section__desc">Layer 3（LLM予報制御）で使用するプロバイダーを選択し、APIキーを設定します。</p>
+  <form action="/settings/llm_provider" method="post">
     <div class="form-row">
-      <label class="form-label" for="anthropic_api_key">ANTHROPIC_API_KEY</label>
+      <label class="form-label" for="provider">プロバイダー</label>
+      <div class="form-input-group">
+        <select id="provider" name="provider" class="input">
+          {% for p in llm_providers %}
+          <option value="{{ p.id }}"
+            data-base-url="{{ p.base_url }}"
+            data-default-model="{{ p.default_model }}"
+            {% if p.id == current_provider %}selected{% endif %}>
+            {{ p.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label" for="model">モデル名</label>
+      <div class="form-input-group">
+        <input
+          type="text"
+          id="model"
+          name="model"
+          class="input"
+          placeholder="空欄=デフォルトモデル使用">
+      </div>
+      <p class="form-hint">空欄の場合、選択プロバイダーのデフォルトモデルを使用します。</p>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label" for="api_key">APIキー</label>
       <div class="form-input-group">
         <input
           type="password"
-          id="anthropic_api_key"
-          name="anthropic_api_key"
+          id="api_key"
+          name="api_key"
           class="input"
           placeholder="新しいキーを入力（空欄=変更なし）"
           autocomplete="new-password">
       </div>
       <p class="form-hint">
-        {% if api_key_status and api_key_status.ANTHROPIC_API_KEY %}
-          設定済み: {{ api_key_status.ANTHROPIC_API_KEY }}
+        {% if current_api_key_masked %}
+          設定済み: {{ current_api_key_masked }}
         {% else %}
           未設定
         {% endif %}
-      </p>
-    </div>
-
-    <div class="form-row">
-      <label class="form-label" for="openai_api_key">OPENAI_API_KEY</label>
-      <div class="form-input-group">
-        <input
-          type="password"
-          id="openai_api_key"
-          name="openai_api_key"
-          class="input"
-          placeholder="新しいキーを入力（空欄=変更なし）"
-          autocomplete="new-password">
-      </div>
-      <p class="form-hint">
-        {% if api_key_status and api_key_status.OPENAI_API_KEY %}
-          設定済み: {{ api_key_status.OPENAI_API_KEY }}
-        {% else %}
-          未設定
-        {% endif %}
-      </p>
-    </div>
-
-    <div class="form-row">
-      <label class="form-label" for="google_api_key">GOOGLE_API_KEY</label>
-      <div class="form-input-group">
-        <input
-          type="password"
-          id="google_api_key"
-          name="google_api_key"
-          class="input"
-          placeholder="新しいキーを入力（空欄=変更なし）"
-          autocomplete="new-password">
-      </div>
-      <p class="form-hint">
-        {% if api_key_status and api_key_status.GOOGLE_API_KEY %}
-          設定済み: {{ api_key_status.GOOGLE_API_KEY }}
-        {% else %}
-          未設定
-        {% endif %}
+        · 空欄のまま保存すると既存キーを維持します。
       </p>
     </div>
 
     <button type="submit" class="btn btn--primary">保存</button>
   </form>
+</section>
+
+{# ─── LLM詳細設定（forecast.yaml直接編集）────── #}
+<section class="section">
+  <details>
+    <summary class="section__title" style="cursor: pointer;">LLM詳細設定（forecast.yaml）</summary>
+    <p class="section__desc">forecast.yaml を直接編集できます。保存時に YAML 構文チェックを行います。</p>
+    <form action="/settings/forecast" method="post">
+      <div class="form-group">
+        <textarea
+          name="forecast_config_text"
+          rows="25"
+          cols="80"
+          wrap="off"
+          class="textarea-mono"
+          placeholder="forecast.yaml の内容を入力...">{{ forecast_config_text or '' }}</textarea>
+      </div>
+      <button type="submit" class="btn btn--primary">保存</button>
+    </form>
+  </details>
 </section>
 {% endblock %}
 

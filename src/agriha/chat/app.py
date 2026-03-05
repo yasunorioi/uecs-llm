@@ -208,6 +208,57 @@ def mask_api_key(value: str) -> str:
     return "****" + value[-4:]
 
 
+# プロバイダー定義（プルダウン用）
+LLM_PROVIDERS: list[dict[str, str]] = [
+    {
+        "id": "anthropic",
+        "name": "Anthropic (Claude)",
+        "base_url": "https://api.anthropic.com/v1/",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "default_model": "claude-haiku-4-5-20251001",
+    },
+    {
+        "id": "openai",
+        "name": "OpenAI (GPT)",
+        "base_url": "https://api.openai.com/v1/",
+        "api_key_env": "OPENAI_API_KEY",
+        "default_model": "gpt-4o-mini",
+    },
+    {
+        "id": "gemini",
+        "name": "Google (Gemini)",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "api_key_env": "GOOGLE_API_KEY",
+        "default_model": "gemini-2.0-flash",
+    },
+    {
+        "id": "ollama",
+        "name": "ローカルLLM (Ollama)",
+        "base_url": "http://localhost:11434/v1/",
+        "api_key_env": "OLLAMA_API_KEY",
+        "default_model": "qwen3:8b",
+    },
+]
+
+
+def _get_provider_by_id(provider_id: str) -> dict[str, str] | None:
+    """プロバイダーIDからプロバイダー定義を取得する。"""
+    for p in LLM_PROVIDERS:
+        if p["id"] == provider_id:
+            return p
+    return None
+
+
+def _get_current_provider(forecast_path: str = FORECAST_CONFIG_PATH) -> str:
+    """現在のforecast.yamlからプロバイダーIDを取得する。"""
+    try:
+        with open(forecast_path, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return (data.get("llm") or {}).get("provider", "anthropic")
+    except (FileNotFoundError, yaml.YAMLError):
+        return "anthropic"
+
+
 def load_system_prompt(path: str = SYSTEM_PROMPT_PATH) -> str:
     """system_prompt.txt を読み込む。ファイルがなければ空文字を返す。"""
     try:
@@ -518,16 +569,12 @@ async def settings(
     rules_text = _load_rules_text()
     channel_map_text = _load_channel_map_text()
     forecast_config_text = _load_forecast_config_text()
-    # APIキー設定状態（設定済みならマスク表示、未設定ならNone）
+    # 現在のプロバイダー + APIキー状態
+    current_provider = _get_current_provider()
     env_vars = read_env_file(ENV_FILE)
-    api_key_status = {
-        k: (mask_api_key(v) if v else None)
-        for k, v in {
-            "ANTHROPIC_API_KEY": env_vars.get("ANTHROPIC_API_KEY", ""),
-            "OPENAI_API_KEY": env_vars.get("OPENAI_API_KEY", ""),
-            "GOOGLE_API_KEY": env_vars.get("GOOGLE_API_KEY", ""),
-        }.items()
-    }
+    provider_def = _get_provider_by_id(current_provider) or LLM_PROVIDERS[0]
+    current_api_key_raw = env_vars.get(provider_def["api_key_env"], "")
+    current_api_key_masked = mask_api_key(current_api_key_raw) if current_api_key_raw else None
     flash: str | None = None
     if saved:
         flash = "設定を保存しました"
@@ -540,7 +587,9 @@ async def settings(
         "rules_text": rules_text,
         "channel_map_text": channel_map_text,
         "forecast_config_text": forecast_config_text,
-        "api_key_status": api_key_status,
+        "llm_providers": LLM_PROVIDERS,
+        "current_provider": current_provider,
+        "current_api_key_masked": current_api_key_masked,
         "flash": flash,
     }
     return templates.TemplateResponse("settings.html", ctx)
@@ -633,23 +682,49 @@ async def save_forecast_config_route(
         return RedirectResponse(url="/settings?error=1", status_code=303)
 
 
-@app.post("/settings/api_keys")
-async def save_api_keys_route(
-    anthropic_api_key: str = Form(default=""),
-    openai_api_key: str = Form(default=""),
-    google_api_key: str = Form(default=""),
+@app.post("/settings/llm_provider")
+async def save_llm_provider_route(
+    provider: str = Form(...),
+    model: str = Form(default=""),
+    api_key: str = Form(default=""),
     _: None = Depends(verify_auth),
 ) -> RedirectResponse:
-    """APIキーを .env ファイルに保存する。空欄のキーは変更しない。"""
+    """LLMプロバイダー選択 + APIキーを保存する。
+
+    forecast.yaml の llm セクションを更新し、APIキーは .env に保存する。
+    """
     try:
-        keys = {
-            "ANTHROPIC_API_KEY": anthropic_api_key,
-            "OPENAI_API_KEY": openai_api_key,
-            "GOOGLE_API_KEY": google_api_key,
-        }
-        for key, value in keys.items():
-            if value:
-                write_env_key(ENV_FILE, key, value)
+        provider_def = _get_provider_by_id(provider)
+        if provider_def is None:
+            return RedirectResponse(url="/settings?error=1", status_code=303)
+
+        # forecast.yaml 読み込み → llm セクション更新
+        forecast_text = _load_forecast_config_text()
+        try:
+            forecast_data = yaml.safe_load(forecast_text) or {}
+        except yaml.YAMLError:
+            forecast_data = {}
+
+        llm_section = forecast_data.get("llm", {})
+        if not isinstance(llm_section, dict):
+            llm_section = {}
+        llm_section["provider"] = provider
+        llm_section["base_url"] = provider_def["base_url"]
+        llm_section["api_key_env"] = provider_def["api_key_env"]
+        if model:
+            llm_section["model"] = model
+        elif "model" not in llm_section:
+            llm_section["model"] = provider_def["default_model"]
+        forecast_data["llm"] = llm_section
+
+        # forecast.yaml 書き出し
+        new_text = yaml.dump(forecast_data, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        save_forecast_config(FORECAST_CONFIG_PATH, new_text)
+
+        # APIキーを .env に保存（入力があれば）
+        if api_key:
+            write_env_key(ENV_FILE, provider_def["api_key_env"], api_key)
+
         return RedirectResponse(url="/settings?saved=1", status_code=303)
     except Exception:
         return RedirectResponse(url="/settings?error=1", status_code=303)

@@ -821,48 +821,66 @@ async def test_post_forecast_invalid_yaml_does_not_write_file(
     assert fc_file.read_text(encoding="utf-8") == original
 
 
-async def test_post_api_keys_saves_to_env_file(
+async def test_post_llm_provider_saves_forecast_and_env(
     settings_client_with_forecast: AsyncClient, tmp_path: Path,
 ) -> None:
-    """非空のAPIキーを POST すると .env ファイルに保存される。"""
+    """プロバイダー選択 + APIキーを POST すると forecast.yaml と .env が更新される。"""
     r = await settings_client_with_forecast.post(
-        "/settings/api_keys",
+        "/settings/llm_provider",
         data={
-            "anthropic_api_key": "sk-ant-newkey12345",
-            "openai_api_key": "sk-openai-newkey6789",
-            "google_api_key": "",
+            "provider": "openai",
+            "model": "gpt-4o",
+            "api_key": "sk-openai-newkey6789",
         },
     )
     assert r.status_code == 200
     assert "saved=1" in str(r.url)
 
+    # forecast.yaml が更新されている
+    fc_file = tmp_path / "forecast.yaml"
+    fc_data = yaml.safe_load(fc_file.read_text(encoding="utf-8"))
+    assert fc_data["llm"]["provider"] == "openai"
+    assert fc_data["llm"]["model"] == "gpt-4o"
+    assert fc_data["llm"]["api_key_env"] == "OPENAI_API_KEY"
+
+    # .env にキーが保存されている
     env_file = tmp_path / ".env"
     result = read_env_file(str(env_file))
-    assert result["ANTHROPIC_API_KEY"] == "sk-ant-newkey12345"
     assert result["OPENAI_API_KEY"] == "sk-openai-newkey6789"
-    # 空欄のキーは書き込まれていない（またはそのまま）
-    assert "GOOGLE_API_KEY" not in result
 
 
-async def test_post_api_keys_empty_values_not_written(
+async def test_post_llm_provider_empty_api_key_keeps_existing(
     settings_client_with_forecast: AsyncClient, tmp_path: Path,
 ) -> None:
-    """全て空欄で POST すると .env ファイルが変更されない。"""
+    """APIキー空欄で POST すると .env の既存キーは変更されない。"""
     env_file = tmp_path / ".env"
     original = env_file.read_text(encoding="utf-8")
 
     await settings_client_with_forecast.post(
-        "/settings/api_keys",
-        data={"anthropic_api_key": "", "openai_api_key": "", "google_api_key": ""},
+        "/settings/llm_provider",
+        data={"provider": "anthropic", "model": "", "api_key": ""},
     )
 
+    # .env は変更されていない（既存キーが維持される）
     assert env_file.read_text(encoding="utf-8") == original
 
 
-async def test_settings_page_renders_forecast_textarea_and_api_key_status(
+async def test_post_llm_provider_invalid_provider_returns_error(
     settings_client_with_forecast: AsyncClient,
 ) -> None:
-    """GET /settings が LLM設定・APIキー設定セクションを描画する。"""
+    """不正なプロバイダーIDで POST すると error=1 にリダイレクトされる。"""
+    r = await settings_client_with_forecast.post(
+        "/settings/llm_provider",
+        data={"provider": "nonexistent", "model": "", "api_key": ""},
+    )
+    assert r.status_code == 200
+    assert "error=1" in str(r.url)
+
+
+async def test_settings_page_renders_provider_select_and_api_key_status(
+    settings_client_with_forecast: AsyncClient,
+) -> None:
+    """GET /settings がプロバイダー選択・APIキー状態を描画する。"""
     with (
         patch("agriha.chat.app.fetch_sensors", return_value={}),
         patch("agriha.chat.app.get_relay_labels", return_value={}),
@@ -870,13 +888,12 @@ async def test_settings_page_renders_forecast_textarea_and_api_key_status(
         r = await settings_client_with_forecast.get("/settings")
     assert r.status_code == 200
     html = r.text
-    # LLM設定セクション
-    assert "LLM設定" in html
+    # プロバイダー選択セクション
+    assert "LLM" in html
+    assert "Anthropic" in html
+    assert "OpenAI" in html
+    # forecast.yaml直接編集（詳細設定）
     assert "forecast_config_text" in html
-    assert "claude-haiku-4-5-20251001" in html
-    # APIキー設定セクション
-    assert "APIキー設定" in html
-    assert "ANTHROPIC_API_KEY" in html
     # 設定済みのキーはマスク表示される
     assert "****1234" in html
 
