@@ -38,6 +38,7 @@ daemon = [
     "python-multipart>=0.0.6",
     "astral>=3.2",
     "openai>=1.0",
+    "line-bot-sdk>=3.0",
 ]
 dev = [
     "pytest>=7.0",

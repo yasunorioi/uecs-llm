@@ -36,6 +36,9 @@ ENV_FILE = os.getenv("ENV_FILE", "/opt/agriha/.env")
 CONTROL_LOG_DB = os.getenv("CONTROL_LOG_DB", "/var/lib/agriha/control_log.db")
 UI_AUTH_USER = os.getenv("UI_AUTH_USER", "admin")
 UI_AUTH_PASS = os.getenv("UI_AUTH_PASS", "agriha")
+LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+LINE_USER_ID = os.getenv("LINE_USER_ID", "")
 
 # ── ランタイムデータファイルパス ───────────────────────────────────────────
 RULE_ENGINE_STATE_PATH = os.getenv("RULE_ENGINE_STATE_PATH", "/var/lib/agriha/rule_engine_state.json")
@@ -728,6 +731,88 @@ async def save_llm_provider_route(
         return RedirectResponse(url="/settings?saved=1", status_code=303)
     except Exception:
         return RedirectResponse(url="/settings?error=1", status_code=303)
+
+
+# ── LINE Bot Webhook ───────────────────────────────────────────────────────
+
+@app.post("/callback")
+async def line_callback(request: Request) -> dict[str, str]:
+    """LINE Webhook エンドポイント。
+
+    1. X-Line-Signature 署名検証
+    2. テキストメッセージ → LLM tool calling → Reply
+    """
+    from agriha.chat.linebot_handler import handle_message, send_reply, verify_signature
+
+    # 設定確認
+    if not LINE_CHANNEL_SECRET or not LINE_CHANNEL_ACCESS_TOKEN:
+        raise HTTPException(status_code=503, detail="LINE Bot not configured")
+
+    # 署名検証
+    body = await request.body()
+    signature = request.headers.get("X-Line-Signature", "")
+    if not verify_signature(body, signature, LINE_CHANNEL_SECRET):
+        raise HTTPException(status_code=403, detail="Invalid signature")
+
+    # イベント処理
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    events = payload.get("events", [])
+    for event in events:
+        if event.get("type") != "message":
+            continue
+        msg = event.get("message", {})
+        if msg.get("type") != "text":
+            continue
+
+        text = msg.get("text", "")
+        reply_token = event.get("replyToken", "")
+
+        # forecast.yaml からLLM設定を読み込む
+        forecast_text = _load_forecast_config_text()
+        try:
+            forecast_data = yaml.safe_load(forecast_text) or {}
+        except yaml.YAMLError:
+            forecast_data = {}
+        llm_cfg: dict[str, Any] = forecast_data.get("llm", {})
+
+        # system_prompt 読み込み
+        try:
+            system_prompt = Path(SYSTEM_PROMPT_PATH).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            system_prompt = "あなたは農業温室の管理アシスタントです。"
+
+        # LLM クライアント生成
+        from openai import OpenAI  # type: ignore[import]
+        client_kwargs: dict[str, Any] = {
+            "api_key": os.environ.get(llm_cfg.get("api_key_env", "ANTHROPIC_API_KEY"), "dummy"),
+        }
+        if llm_cfg.get("base_url"):
+            client_kwargs["base_url"] = llm_cfg["base_url"]
+        llm_client = OpenAI(**client_kwargs)
+
+        # HTTP クライアント
+        unipi_cfg: dict[str, Any] = forecast_data.get("unipi", {})
+        base_url = unipi_cfg.get("base_url", UNIPI_API_URL)
+        api_key = unipi_cfg.get("api_key", "")
+
+        with httpx.Client(timeout=10.0) as http_client:
+            reply_text = await handle_message(
+                text=text,
+                llm_client=llm_client,
+                llm_cfg=llm_cfg,
+                system_prompt=system_prompt,
+                http_client=http_client,
+                base_url=base_url,
+                api_key=api_key,
+            )
+
+        send_reply(reply_token, reply_text, LINE_CHANNEL_ACCESS_TOKEN)
+
+    return {"status": "ok"}
 
 
 @app.get("/history", response_class=HTMLResponse)
