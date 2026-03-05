@@ -29,6 +29,7 @@ from fastapi.templating import Jinja2Templates
 UNIPI_API_URL = os.getenv("UNIPI_API_URL", "http://localhost:8080")
 SYSTEM_PROMPT_PATH = os.getenv("SYSTEM_PROMPT_PATH", "/etc/agriha/system_prompt.txt")
 AGRIHA_THRESHOLDS_PATH = os.getenv("AGRIHA_THRESHOLDS_PATH", "/etc/agriha/thresholds.yaml")
+RULES_CONFIG_PATH = os.getenv("RULES_CONFIG_PATH", "/etc/agriha/rules.yaml")
 CONTROL_LOG_DB = os.getenv("CONTROL_LOG_DB", "/var/lib/agriha/control_log.db")
 UI_AUTH_USER = os.getenv("UI_AUTH_USER", "admin")
 UI_AUTH_PASS = os.getenv("UI_AUTH_PASS", "agriha")
@@ -82,6 +83,45 @@ def save_thresholds(path: str, data: dict[str, Any]) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         yaml.dump(data, f, allow_unicode=True, default_flow_style=False)
+
+
+_RULES_DEFAULTS: dict[str, Any] = {
+    "temperature": {
+        "target_day": 26.0,
+        "target_night": 17.0,
+        "margin_open": 2.0,
+        "margin_close": 1.0,
+    },
+    "wind": {"strong_wind_threshold_ms": 5.0},
+    "rain": {"threshold_mm_h": 0.5, "resume_delay_min": 30},
+    "irrigation": {"channel": 4},
+}
+
+
+def load_rules(path: str = RULES_CONFIG_PATH) -> dict[str, Any]:
+    """rules.yaml を読み込む。ファイルがなければデフォルト値を返す。"""
+    fallback_paths = [path, str(Path(__file__).parent.parent.parent.parent / "config" / "rules.yaml")]
+    for p in fallback_paths:
+        try:
+            with open(p, encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            return data
+        except FileNotFoundError:
+            continue
+    return _RULES_DEFAULTS.copy()
+
+
+def save_rules(path: str, updates: dict[str, Any], current: dict[str, Any]) -> None:
+    """rules.yaml に書き込む。location/unipi_api 等の既存フィールドは保持する。"""
+    merged = current.copy()
+    for section, values in updates.items():
+        if section in merged and isinstance(merged[section], dict):
+            merged[section] = {**merged[section], **values}
+        else:
+            merged[section] = values
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.dump(merged, f, allow_unicode=True, default_flow_style=False)
 
 
 def load_system_prompt(path: str = SYSTEM_PROMPT_PATH) -> str:
@@ -391,6 +431,7 @@ async def settings(
     """設定画面。"""
     thresholds = load_thresholds()
     system_prompt = load_system_prompt()
+    rules = load_rules()
     flash: str | None = None
     if saved:
         flash = "設定を保存しました"
@@ -400,6 +441,7 @@ async def settings(
         "request": request,
         "system_prompt": system_prompt,
         "thresholds": thresholds,
+        "rules": rules,
         "flash": flash,
     }
     return templates.TemplateResponse("settings.html", ctx)
@@ -436,6 +478,60 @@ async def save_thresholds_route(
             "co2": {"target_ppm": co2_target},
         }
         save_thresholds(AGRIHA_THRESHOLDS_PATH, data)
+        return RedirectResponse(url="/settings?saved=1", status_code=303)
+    except Exception:
+        return RedirectResponse(url="/settings?error=1", status_code=303)
+
+
+@app.post("/settings/rules")
+async def save_rules_route(
+    target_day: float = Form(...),
+    target_night: float = Form(...),
+    margin_open: float = Form(...),
+    margin_close: float = Form(...),
+    strong_wind_threshold_ms: float = Form(...),
+    threshold_mm_h: float = Form(...),
+    resume_delay_min: int = Form(...),
+    irrigation_channel: int = Form(...),
+    _: None = Depends(verify_auth),
+) -> RedirectResponse:
+    """rules.yaml の制御ルールパラメータを保存する。"""
+    try:
+        if target_day <= target_night:
+            return RedirectResponse(url="/settings?error=1", status_code=303)
+        if not (15.0 <= target_day <= 35.0):
+            return RedirectResponse(url="/settings?error=1", status_code=303)
+        if not (5.0 <= target_night <= 25.0):
+            return RedirectResponse(url="/settings?error=1", status_code=303)
+        if not (0.5 <= margin_open <= 5.0):
+            return RedirectResponse(url="/settings?error=1", status_code=303)
+        if not (0.5 <= margin_close <= 5.0):
+            return RedirectResponse(url="/settings?error=1", status_code=303)
+        if not (1.0 <= strong_wind_threshold_ms <= 20.0):
+            return RedirectResponse(url="/settings?error=1", status_code=303)
+        if not (0.0 <= threshold_mm_h <= 10.0):
+            return RedirectResponse(url="/settings?error=1", status_code=303)
+        if not (0 <= resume_delay_min <= 120):
+            return RedirectResponse(url="/settings?error=1", status_code=303)
+        if not (1 <= irrigation_channel <= 8):
+            return RedirectResponse(url="/settings?error=1", status_code=303)
+
+        current = load_rules(RULES_CONFIG_PATH)
+        updates = {
+            "temperature": {
+                "target_day": target_day,
+                "target_night": target_night,
+                "margin_open": margin_open,
+                "margin_close": margin_close,
+            },
+            "wind": {"strong_wind_threshold_ms": strong_wind_threshold_ms},
+            "rain": {
+                "threshold_mm_h": threshold_mm_h,
+                "resume_delay_min": resume_delay_min,
+            },
+            "irrigation": {"channel": irrigation_channel},
+        }
+        save_rules(RULES_CONFIG_PATH, updates, current)
         return RedirectResponse(url="/settings?saved=1", status_code=303)
     except Exception:
         return RedirectResponse(url="/settings?error=1", status_code=303)

@@ -89,6 +89,158 @@
     <button type="submit" class="btn btn--primary">保存</button>
   </form>
 </section>
+
+{# ─── Layer2 制御ルール設定 ──────────────────────── #}
+<section class="section">
+  <h2 class="section__title">制御ルール設定</h2>
+  <p class="section__desc">Layer 2（ルールベース制御）のパラメータを設定します。</p>
+  <form action="/settings/rules" method="post">
+
+    <h3 class="section__subtitle">温度制御</h3>
+
+    <div class="form-row">
+      <label class="form-label" for="target_day">日中目標温度</label>
+      <div class="form-input-group">
+        <input
+          type="number"
+          id="target_day"
+          name="target_day"
+          step="0.5"
+          min="15"
+          max="35"
+          value="{{ rules.temperature.target_day if rules and rules.temperature else '26.0' }}"
+          class="input input--number">
+        <span class="input-unit">℃</span>
+      </div>
+      <p class="form-hint">日中の目標温度（15〜35℃）。夜間目標より高くする必要があります。</p>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label" for="target_night">夜間目標温度</label>
+      <div class="form-input-group">
+        <input
+          type="number"
+          id="target_night"
+          name="target_night"
+          step="0.5"
+          min="5"
+          max="25"
+          value="{{ rules.temperature.target_night if rules and rules.temperature else '17.0' }}"
+          class="input input--number">
+        <span class="input-unit">℃</span>
+      </div>
+      <p class="form-hint">夜間の目標温度（5〜25℃）。日中目標より低くする必要があります。</p>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label" for="margin_open">窓開マージン</label>
+      <div class="form-input-group">
+        <input
+          type="number"
+          id="margin_open"
+          name="margin_open"
+          step="0.5"
+          min="0.5"
+          max="5"
+          value="{{ rules.temperature.margin_open if rules and rules.temperature else '2.0' }}"
+          class="input input--number">
+        <span class="input-unit">℃</span>
+      </div>
+      <p class="form-hint">目標温度 + この値を超えると窓を開く（0.5〜5℃）</p>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label" for="margin_close">窓閉マージン</label>
+      <div class="form-input-group">
+        <input
+          type="number"
+          id="margin_close"
+          name="margin_close"
+          step="0.5"
+          min="0.5"
+          max="5"
+          value="{{ rules.temperature.margin_close if rules and rules.temperature else '1.0' }}"
+          class="input input--number">
+        <span class="input-unit">℃</span>
+      </div>
+      <p class="form-hint">目標温度 - この値を下回ると窓を閉じる（0.5〜5℃）</p>
+    </div>
+
+    <h3 class="section__subtitle">風雨制御</h3>
+
+    <div class="form-row">
+      <label class="form-label" for="strong_wind_threshold_ms">強風閾値</label>
+      <div class="form-input-group">
+        <input
+          type="number"
+          id="strong_wind_threshold_ms"
+          name="strong_wind_threshold_ms"
+          step="0.5"
+          min="1"
+          max="20"
+          value="{{ rules.wind.strong_wind_threshold_ms if rules and rules.wind else '5.0' }}"
+          class="input input--number">
+        <span class="input-unit">m/s</span>
+      </div>
+      <p class="form-hint">この風速を超えると強風とみなし窓を閉じる（1〜20 m/s）</p>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label" for="threshold_mm_h">降雨閾値</label>
+      <div class="form-input-group">
+        <input
+          type="number"
+          id="threshold_mm_h"
+          name="threshold_mm_h"
+          step="0.1"
+          min="0"
+          max="10"
+          value="{{ rules.rain.threshold_mm_h if rules and rules.rain else '0.5' }}"
+          class="input input--number">
+        <span class="input-unit">mm/h</span>
+      </div>
+      <p class="form-hint">この降水量を超えると雨天とみなし灌水を停止する（0〜10 mm/h）</p>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label" for="resume_delay_min">降雨後再開猶予</label>
+      <div class="form-input-group">
+        <input
+          type="number"
+          id="resume_delay_min"
+          name="resume_delay_min"
+          step="5"
+          min="0"
+          max="120"
+          value="{{ rules.rain.resume_delay_min if rules and rules.rain else '30' }}"
+          class="input input--number">
+        <span class="input-unit">分</span>
+      </div>
+      <p class="form-hint">降雨停止後、この時間が経過してから灌水を再開する（0〜120分）</p>
+    </div>
+
+    <h3 class="section__subtitle">灌水設定</h3>
+
+    <div class="form-row">
+      <label class="form-label" for="irrigation_channel">灌水チャンネル</label>
+      <div class="form-input-group">
+        <input
+          type="number"
+          id="irrigation_channel"
+          name="irrigation_channel"
+          step="1"
+          min="1"
+          max="8"
+          value="{{ rules.irrigation.channel if rules and rules.irrigation else '4' }}"
+          class="input input--number">
+        <span class="input-unit">ch</span>
+      </div>
+      <p class="form-hint">灌水電磁弁のリレーチャンネル番号（1〜8）</p>
+    </div>
+
+    <button type="submit" class="btn btn--primary">保存</button>
+  </form>
+</section>
 {% endblock %}
 
 {% block scripts %}

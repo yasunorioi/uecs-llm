@@ -1,4 +1,4 @@
-"""tests/chat/test_app.py — dashboard API + 計画タイムライン のテスト
+"""tests/chat/test_app.py — dashboard API + 計画タイムライン + rules設定 のテスト
 
 テスト対象:
 - GET /api/flags    フラグファイル存在チェック
@@ -8,6 +8,8 @@
 - _build_plan_timeline  計画タイムライン算出
 - GET /             dashboard HTML レンダリング
 - GET /api/dashboard-partial  partial HTML レンダリング
+- load_rules / save_rules  rules.yaml 読み書き
+- POST /settings/rules  制御ルール保存エンドポイント
 """
 
 from __future__ import annotations
@@ -21,8 +23,10 @@ from unittest.mock import patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+import yaml
+
 import agriha.chat.app as app_module
-from agriha.chat.app import _build_plan_timeline, app
+from agriha.chat.app import _build_plan_timeline, app, load_rules, save_rules
 
 
 def _basic_auth(user: str = "testadmin", pw: str = "testpass") -> dict[str, str]:
@@ -366,3 +370,197 @@ async def test_dashboard_renders_empty_plan(
         r = await client.get("/api/dashboard-partial")
     assert r.status_code == 200
     assert "現在の予定アクションはありません" in r.text
+
+
+# ── load_rules / save_rules ───────────────────────────────────────────────────
+
+def test_load_rules_from_file(tmp_path: Path) -> None:
+    """rules.yaml が存在する場合、その内容を返す。"""
+    rules_file = tmp_path / "rules.yaml"
+    rules_file.write_text(
+        "temperature:\n  target_day: 28.0\n  target_night: 18.0\n"
+        "wind:\n  strong_wind_threshold_ms: 6.0\n",
+        encoding="utf-8",
+    )
+    result = load_rules(str(rules_file))
+    assert result["temperature"]["target_day"] == 28.0
+    assert result["temperature"]["target_night"] == 18.0
+    assert result["wind"]["strong_wind_threshold_ms"] == 6.0
+
+
+def test_load_rules_missing_file_returns_defaults(tmp_path: Path) -> None:
+    """rules.yaml が存在しない場合、デフォルト値を返す。"""
+    result = load_rules(str(tmp_path / "nonexistent.yaml"))
+    assert "temperature" in result
+    assert result["temperature"]["target_day"] == 26.0
+    assert result["temperature"]["target_night"] == 17.0
+
+
+def test_save_rules_preserves_unedited_fields(tmp_path: Path) -> None:
+    """save_rules は location/unipi_api 等の既存フィールドを保持する。"""
+    rules_file = tmp_path / "rules.yaml"
+    original = {
+        "temperature": {"target_day": 26.0, "target_night": 17.0, "margin_open": 2.0, "margin_close": 1.0},
+        "wind": {"strong_wind_threshold_ms": 5.0, "north_directions": [1, 2, 16]},
+        "rain": {"threshold_mm_h": 0.5, "resume_delay_min": 30},
+        "irrigation": {"channel": 4, "crop_config_path": "/etc/agriha/crop.yaml"},
+        "location": {"latitude": 42.888, "longitude": 141.603},
+        "unipi_api": {"base_url": "http://localhost:8080", "api_key": ""},
+    }
+    rules_file.write_text(yaml.dump(original, allow_unicode=True), encoding="utf-8")
+
+    updates = {
+        "temperature": {"target_day": 28.0, "target_night": 18.0},
+        "wind": {"strong_wind_threshold_ms": 7.0},
+    }
+    save_rules(str(rules_file), updates, original)
+
+    saved = yaml.safe_load(rules_file.read_text(encoding="utf-8"))
+    assert saved["temperature"]["target_day"] == 28.0
+    assert saved["temperature"]["target_night"] == 18.0
+    # 既存フィールドが保持されること
+    assert saved["temperature"]["margin_open"] == 2.0
+    assert saved["temperature"]["margin_close"] == 1.0
+    assert saved["wind"]["north_directions"] == [1, 2, 16]
+    assert saved["irrigation"]["crop_config_path"] == "/etc/agriha/crop.yaml"
+    assert saved["location"]["latitude"] == 42.888
+    assert saved["unipi_api"]["base_url"] == "http://localhost:8080"
+
+
+# ── POST /settings/rules ───────────────────────────────────────────────────────
+
+@pytest.fixture
+async def settings_client(tmp_path: Path) -> AsyncClient:
+    rules_file = tmp_path / "rules.yaml"
+    rules_content = {
+        "temperature": {"target_day": 26.0, "target_night": 17.0, "margin_open": 2.0, "margin_close": 1.0,
+                        "window_channels": [5, 6, 7, 8]},
+        "wind": {"strong_wind_threshold_ms": 5.0},
+        "rain": {"threshold_mm_h": 0.5, "resume_delay_min": 30},
+        "irrigation": {"channel": 4},
+        "location": {"latitude": 42.888, "longitude": 141.603},
+        "unipi_api": {"base_url": "http://localhost:8080"},
+    }
+    rules_file.write_text(yaml.dump(rules_content, allow_unicode=True), encoding="utf-8")
+
+    with (
+        patch.object(app_module, "UI_AUTH_USER", "testadmin"),
+        patch.object(app_module, "UI_AUTH_PASS", "testpass"),
+        patch.object(app_module, "AGRIHA_FLAG_DIR", str(tmp_path)),
+        patch.object(app_module, "CURRENT_PLAN_PATH", str(tmp_path / "current_plan.json")),
+        patch.object(app_module, "AGRIHA_LOG_DIR", str(tmp_path)),
+        patch.object(app_module, "RULES_CONFIG_PATH", str(rules_file)),
+        patch.object(app_module, "SYSTEM_PROMPT_PATH", str(tmp_path / "system_prompt.txt")),
+        patch.object(app_module, "AGRIHA_THRESHOLDS_PATH", str(tmp_path / "thresholds.yaml")),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            headers=_basic_auth(),
+            follow_redirects=True,
+        ) as ac:
+            yield ac
+
+
+async def test_post_rules_valid(settings_client: AsyncClient, tmp_path: Path) -> None:
+    """有効なパラメータで POST すると 200 にリダイレクトされ設定が保存される。"""
+    r = await settings_client.post("/settings/rules", data={
+        "target_day": "28.0",
+        "target_night": "18.0",
+        "margin_open": "2.5",
+        "margin_close": "1.5",
+        "strong_wind_threshold_ms": "6.0",
+        "threshold_mm_h": "1.0",
+        "resume_delay_min": "45",
+        "irrigation_channel": "3",
+    })
+    assert r.status_code == 200
+    assert "saved=1" in str(r.url)
+
+
+async def test_post_rules_target_day_not_greater_than_night(
+    settings_client: AsyncClient, tmp_path: Path,
+) -> None:
+    """target_day <= target_night の場合はエラーにリダイレクトされる。"""
+    r = await settings_client.post("/settings/rules", data={
+        "target_day": "17.0",
+        "target_night": "17.0",
+        "margin_open": "2.0",
+        "margin_close": "1.0",
+        "strong_wind_threshold_ms": "5.0",
+        "threshold_mm_h": "0.5",
+        "resume_delay_min": "30",
+        "irrigation_channel": "4",
+    })
+    assert r.status_code == 200
+    assert "error=1" in str(r.url)
+
+
+async def test_post_rules_target_day_out_of_range(
+    settings_client: AsyncClient, tmp_path: Path,
+) -> None:
+    """target_day が範囲外（>35）の場合はエラーにリダイレクトされる。"""
+    r = await settings_client.post("/settings/rules", data={
+        "target_day": "40.0",
+        "target_night": "17.0",
+        "margin_open": "2.0",
+        "margin_close": "1.0",
+        "strong_wind_threshold_ms": "5.0",
+        "threshold_mm_h": "0.5",
+        "resume_delay_min": "30",
+        "irrigation_channel": "4",
+    })
+    assert r.status_code == 200
+    assert "error=1" in str(r.url)
+
+
+async def test_post_rules_wind_threshold_out_of_range(
+    settings_client: AsyncClient, tmp_path: Path,
+) -> None:
+    """strong_wind_threshold_ms が範囲外（>20）の場合はエラーになる。"""
+    r = await settings_client.post("/settings/rules", data={
+        "target_day": "26.0",
+        "target_night": "17.0",
+        "margin_open": "2.0",
+        "margin_close": "1.0",
+        "strong_wind_threshold_ms": "25.0",
+        "threshold_mm_h": "0.5",
+        "resume_delay_min": "30",
+        "irrigation_channel": "4",
+    })
+    assert r.status_code == 200
+    assert "error=1" in str(r.url)
+
+
+async def test_post_rules_irrigation_channel_out_of_range(
+    settings_client: AsyncClient, tmp_path: Path,
+) -> None:
+    """irrigation_channel が範囲外（>8）の場合はエラーになる。"""
+    r = await settings_client.post("/settings/rules", data={
+        "target_day": "26.0",
+        "target_night": "17.0",
+        "margin_open": "2.0",
+        "margin_close": "1.0",
+        "strong_wind_threshold_ms": "5.0",
+        "threshold_mm_h": "0.5",
+        "resume_delay_min": "30",
+        "irrigation_channel": "9",
+    })
+    assert r.status_code == 200
+    assert "error=1" in str(r.url)
+
+
+async def test_settings_page_renders_rules(settings_client: AsyncClient) -> None:
+    """GET /settings が制御ルール設定セクションを描画する。"""
+    with (
+        patch("agriha.chat.app.fetch_sensors", return_value={}),
+        patch("agriha.chat.app.get_relay_labels", return_value={}),
+    ):
+        r = await settings_client.get("/settings")
+    assert r.status_code == 200
+    html = r.text
+    assert "制御ルール設定" in html
+    assert "target_day" in html
+    assert "target_night" in html
+    assert "strong_wind_threshold_ms" in html
