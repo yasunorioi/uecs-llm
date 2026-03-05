@@ -107,6 +107,24 @@
     <button type="submit" class="btn btn--primary">保存</button>
   </form>
 </section>
+
+{# ─── チャンネルマップ設定 ──────────────────────── #}
+<section class="section">
+  <h2 class="section__title">チャンネルマップ設定</h2>
+  <p class="section__desc">リレーチャンネルと機器のマッピング（channel_map.yaml）を直接編集できます。保存時に YAML 構文チェックを行います。</p>
+  <form action="/settings/channel_map" method="post">
+    <div class="form-group">
+      <textarea
+        name="channel_map_text"
+        rows="30"
+        cols="80"
+        wrap="off"
+        class="textarea-mono"
+        placeholder="channel_map.yaml の内容を入力...">{{ channel_map_text or '' }}</textarea>
+    </div>
+    <button type="submit" class="btn btn--primary">保存</button>
+  </form>
+</section>
 {% endblock %}
 
 {% block scripts %}

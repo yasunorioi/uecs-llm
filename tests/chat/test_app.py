@@ -1,4 +1,4 @@
-"""tests/chat/test_app.py — dashboard API + 計画タイムライン + rules設定 のテスト
+"""tests/chat/test_app.py — dashboard API + 計画タイムライン + rules設定 + channel_map設定 のテスト
 
 テスト対象:
 - GET /api/flags    フラグファイル存在チェック
@@ -10,6 +10,8 @@
 - GET /api/dashboard-partial  partial HTML レンダリング
 - load_rules / save_rules  rules.yaml 読み書き
 - POST /settings/rules  制御ルール保存エンドポイント
+- _load_channel_map_text / save_channel_map  channel_map.yaml 読み書き
+- POST /settings/channel_map  チャンネルマップ保存エンドポイント
 """
 
 from __future__ import annotations
@@ -26,7 +28,14 @@ from httpx import ASGITransport, AsyncClient
 import yaml
 
 import agriha.chat.app as app_module
-from agriha.chat.app import _build_plan_timeline, _load_rules_text, app, save_rules
+from agriha.chat.app import (
+    _build_plan_timeline,
+    _load_channel_map_text,
+    _load_rules_text,
+    app,
+    save_channel_map,
+    save_rules,
+)
 
 
 def _basic_auth(user: str = "testadmin", pw: str = "testpass") -> dict[str, str]:
@@ -478,3 +487,125 @@ async def test_settings_page_renders_rules_textarea(settings_client: AsyncClient
     assert "制御ルール設定" in html
     assert "rules_text" in html
     assert "target_day" in html
+
+
+# ── _load_channel_map_text / save_channel_map ─────────────────────────────────
+
+def test_load_channel_map_text_from_file(tmp_path: Path) -> None:
+    """channel_map.yaml が存在する場合、そのテキストを返す。"""
+    ch_file = tmp_path / "channel_map.yaml"
+    content = "irrigation:\n  channel: 4\n"
+    ch_file.write_text(content, encoding="utf-8")
+    result = _load_channel_map_text(str(ch_file))
+    assert result == content
+
+
+def test_load_channel_map_text_missing_file_returns_empty(tmp_path: Path) -> None:
+    """channel_map.yaml が存在しない場合、空文字を返す（フォールバックも不在）。"""
+    with patch.object(app_module, "_CHANNEL_MAP_FALLBACK_PATH", str(tmp_path / "fallback.yaml")):
+        result = _load_channel_map_text(str(tmp_path / "nonexistent.yaml"))
+    assert result == ""
+
+
+def test_save_channel_map_writes_text_and_creates_backup(tmp_path: Path) -> None:
+    """save_channel_map はテキストを書き込み、既存ファイルをバックアップする。"""
+    ch_file = tmp_path / "channel_map.yaml"
+    ch_file.write_text("irrigation:\n  channel: 4\n", encoding="utf-8")
+
+    new_content = "irrigation:\n  channel: 4\nvalid_channels:\n  min: 1\n  max: 8\n"
+    save_channel_map(str(ch_file), new_content)
+
+    assert ch_file.read_text(encoding="utf-8") == new_content
+    backups = list(tmp_path.glob("channel_map.yaml.bak.*"))
+    assert len(backups) == 1
+
+
+# ── POST /settings/channel_map ─────────────────────────────────────────────────
+
+@pytest.fixture
+async def settings_client_with_channel_map(tmp_path: Path) -> AsyncClient:
+    rules_file = tmp_path / "rules.yaml"
+    rules_file.write_text(
+        "temperature:\n  target_day: 26.0\n  target_night: 17.0\n",
+        encoding="utf-8",
+    )
+    ch_file = tmp_path / "channel_map.yaml"
+    ch_file.write_text(
+        "irrigation:\n  channel: 4\nvalid_channels:\n  min: 1\n  max: 8\n",
+        encoding="utf-8",
+    )
+
+    with (
+        patch.object(app_module, "UI_AUTH_USER", "testadmin"),
+        patch.object(app_module, "UI_AUTH_PASS", "testpass"),
+        patch.object(app_module, "AGRIHA_FLAG_DIR", str(tmp_path)),
+        patch.object(app_module, "CURRENT_PLAN_PATH", str(tmp_path / "current_plan.json")),
+        patch.object(app_module, "AGRIHA_LOG_DIR", str(tmp_path)),
+        patch.object(app_module, "RULES_CONFIG_PATH", str(rules_file)),
+        patch.object(app_module, "CHANNEL_MAP_PATH", str(ch_file)),
+        patch.object(app_module, "SYSTEM_PROMPT_PATH", str(tmp_path / "system_prompt.txt")),
+        patch.object(app_module, "AGRIHA_THRESHOLDS_PATH", str(tmp_path / "thresholds.yaml")),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            headers=_basic_auth(),
+            follow_redirects=True,
+        ) as ac:
+            yield ac
+
+
+async def test_post_channel_map_valid_yaml(
+    settings_client_with_channel_map: AsyncClient,
+) -> None:
+    """正常な YAML テキストで POST すると saved=1 にリダイレクトされファイルが保存される。"""
+    new_yaml = "irrigation:\n  channel: 4\nvalid_channels:\n  min: 1\n  max: 8\n"
+    r = await settings_client_with_channel_map.post(
+        "/settings/channel_map", data={"channel_map_text": new_yaml}
+    )
+    assert r.status_code == 200
+    assert "saved=1" in str(r.url)
+
+
+async def test_post_channel_map_invalid_yaml_redirects_error(
+    settings_client_with_channel_map: AsyncClient,
+) -> None:
+    """YAML 構文エラーの場合は error=1 にリダイレクトされる。"""
+    r = await settings_client_with_channel_map.post(
+        "/settings/channel_map",
+        data={"channel_map_text": "irrigation:\n  channel: [\nbad yaml"},
+    )
+    assert r.status_code == 200
+    assert "error=1" in str(r.url)
+
+
+async def test_post_channel_map_invalid_yaml_does_not_write_file(
+    settings_client_with_channel_map: AsyncClient, tmp_path: Path,
+) -> None:
+    """YAML 構文エラーの場合はファイルが書き込まれない。"""
+    ch_file = tmp_path / "channel_map.yaml"
+    original = ch_file.read_text(encoding="utf-8")
+
+    await settings_client_with_channel_map.post(
+        "/settings/channel_map",
+        data={"channel_map_text": "irrigation:\n  channel: [\nbad yaml"},
+    )
+
+    assert ch_file.read_text(encoding="utf-8") == original
+
+
+async def test_settings_page_renders_channel_map_textarea(
+    settings_client_with_channel_map: AsyncClient,
+) -> None:
+    """GET /settings がチャンネルマップ設定セクション（textarea）を描画する。"""
+    with (
+        patch("agriha.chat.app.fetch_sensors", return_value={}),
+        patch("agriha.chat.app.get_relay_labels", return_value={}),
+    ):
+        r = await settings_client_with_channel_map.get("/settings")
+    assert r.status_code == 200
+    html = r.text
+    assert "チャンネルマップ設定" in html
+    assert "channel_map_text" in html
+    assert "channel: 4" in html

@@ -30,6 +30,7 @@ UNIPI_API_URL = os.getenv("UNIPI_API_URL", "http://localhost:8080")
 SYSTEM_PROMPT_PATH = os.getenv("SYSTEM_PROMPT_PATH", "/etc/agriha/system_prompt.txt")
 AGRIHA_THRESHOLDS_PATH = os.getenv("AGRIHA_THRESHOLDS_PATH", "/etc/agriha/thresholds.yaml")
 RULES_CONFIG_PATH = os.getenv("RULES_CONFIG_PATH", "/etc/agriha/rules.yaml")
+CHANNEL_MAP_PATH = os.getenv("CHANNEL_MAP_PATH", "/etc/agriha/channel_map.yaml")
 CONTROL_LOG_DB = os.getenv("CONTROL_LOG_DB", "/var/lib/agriha/control_log.db")
 UI_AUTH_USER = os.getenv("UI_AUTH_USER", "admin")
 UI_AUTH_PASS = os.getenv("UI_AUTH_PASS", "agriha")
@@ -86,6 +87,7 @@ def save_thresholds(path: str, data: dict[str, Any]) -> None:
 
 
 _RULES_FALLBACK_PATH = str(Path(__file__).parent.parent.parent.parent / "config" / "rules.yaml")
+_CHANNEL_MAP_FALLBACK_PATH = str(Path(__file__).parent.parent.parent.parent / "config" / "channel_map.yaml")
 
 
 def _load_rules_text(path: str = RULES_CONFIG_PATH) -> str:
@@ -98,8 +100,28 @@ def _load_rules_text(path: str = RULES_CONFIG_PATH) -> str:
     return ""
 
 
+def _load_channel_map_text(path: str = CHANNEL_MAP_PATH) -> str:
+    """channel_map.yaml をテキストとして読み込む。ファイルがなければフォールバックパスを試みる。"""
+    for p in [path, _CHANNEL_MAP_FALLBACK_PATH]:
+        try:
+            return Path(p).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue
+    return ""
+
+
 def save_rules(path: str, text: str) -> None:
     """rules.yaml にテキストをそのまま書き込む（バックアップ付き）。"""
+    p = Path(path)
+    if p.exists():
+        ts = datetime.now().strftime("%Y%m%d%H%M%S")
+        p.rename(f"{path}.bak.{ts}")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text, encoding="utf-8")
+
+
+def save_channel_map(path: str, text: str) -> None:
+    """channel_map.yaml にテキストをそのまま書き込む（バックアップ付き）。"""
     p = Path(path)
     if p.exists():
         ts = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -416,6 +438,7 @@ async def settings(
     thresholds = load_thresholds()
     system_prompt = load_system_prompt()
     rules_text = _load_rules_text()
+    channel_map_text = _load_channel_map_text()
     flash: str | None = None
     if saved:
         flash = "設定を保存しました"
@@ -426,6 +449,7 @@ async def settings(
         "system_prompt": system_prompt,
         "thresholds": thresholds,
         "rules_text": rules_text,
+        "channel_map_text": channel_map_text,
         "flash": flash,
     }
     return templates.TemplateResponse("settings.html", ctx)
@@ -479,6 +503,23 @@ async def save_rules_route(
         return RedirectResponse(url="/settings?error=1", status_code=303)
     try:
         save_rules(RULES_CONFIG_PATH, rules_text)
+        return RedirectResponse(url="/settings?saved=1", status_code=303)
+    except Exception:
+        return RedirectResponse(url="/settings?error=1", status_code=303)
+
+
+@app.post("/settings/channel_map")
+async def save_channel_map_route(
+    channel_map_text: str = Form(...),
+    _: None = Depends(verify_auth),
+) -> RedirectResponse:
+    """channel_map.yaml をテキストのまま保存する。構文チェック（yaml.safe_load）のみ実施。"""
+    try:
+        yaml.safe_load(channel_map_text)
+    except yaml.YAMLError:
+        return RedirectResponse(url="/settings?error=1", status_code=303)
+    try:
+        save_channel_map(CHANNEL_MAP_PATH, channel_map_text)
         return RedirectResponse(url="/settings?saved=1", status_code=303)
     except Exception:
         return RedirectResponse(url="/settings?error=1", status_code=303)
