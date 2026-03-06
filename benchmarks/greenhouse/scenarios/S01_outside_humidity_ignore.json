@@ -1,0 +1,61 @@
+{
+  "id": "S01",
+  "name": "外部湿度100%正しい無視",
+  "category": "殿指定",
+  "rule_ref": "ルール1",
+  "description": "雨上がりで外気湿度100%だが降雨はない。ハウス内温度が26.5℃と日中目標を超えており換気が必要。外湿度を理由に窓を閉めたままにするのが誤り。",
+  "datetime": "2025-07-15T13:00:00+09:00",
+  "sun": {
+    "sunrise": "04:03",
+    "sunset": "19:11",
+    "is_daytime": true,
+    "minutes_since_sunrise": 537
+  },
+  "sensors": {
+    "inside_temp_c": 26.5,
+    "inside_humidity_pct": 72.0,
+    "co2_ppm": 850,
+    "outside_temp_c": 22.0,
+    "outside_humidity_pct": 100.0,
+    "wind_speed_ms": 1.5,
+    "wind_direction": "南",
+    "rain": false,
+    "relay_states": {
+      "ch1": 0, "ch2": 1, "ch3": 0, "ch4": 0,
+      "ch5": 0, "ch6": 0, "ch7": 0, "ch8": 0
+    }
+  },
+  "weather_forecast_1h": {
+    "temp_c": 23.0,
+    "rain_probability_pct": 5,
+    "wind_speed_ms": 2.0,
+    "wind_direction": "南"
+  },
+  "grading": {
+    "rationale": "内温26.5℃は日中目標26℃超。降雨なし・弱風のため換気すべき。外気湿度100%は換気判断に無関係（ルール1）。",
+    "criteria": [
+      {
+        "points": 10,
+        "description": "南窓(ch5/ch6)を開放した",
+        "condition": {"any_on": [5, 6]}
+      },
+      {
+        "points": 7,
+        "description": "北窓(ch7/ch8)を開放した（換気はできているが最適でない）",
+        "condition": {"any_on": [7, 8]}
+      },
+      {
+        "points": 0,
+        "description": "換気しなかった（外湿度を理由に回避）",
+        "condition": {}
+      }
+    ],
+    "forbidden_conditions": [
+      {
+        "condition": {"relay_off": [5, 6, 7, 8]},
+        "note": "全窓閉のまま（外湿度100%を理由に換気を避けた）",
+        "penalty": 0
+      }
+    ]
+  }
+}

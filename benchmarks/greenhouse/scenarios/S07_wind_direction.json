@@ -1,0 +1,61 @@
+{
+  "id": "S07",
+  "name": "北風強風・方角別制御（北窓閉・南窓維持）",
+  "category": "追加",
+  "rule_ref": "基本ルール（換気）",
+  "description": "秋の午後、北風が6.5m/sと強い。内気温は25.5℃でまだ暑い。北側窓（風上側）を閉じ南側窓（風下側）は維持または開放するのが正解。北窓と南窓を全部閉めるのは誤り（換気不足になる）。",
+  "datetime": "2025-10-20T15:00:00+09:00",
+  "sun": {
+    "sunrise": "05:58",
+    "sunset": "17:02",
+    "is_daytime": true,
+    "minutes_since_sunrise": 542
+  },
+  "sensors": {
+    "inside_temp_c": 25.5,
+    "inside_humidity_pct": 62.0,
+    "co2_ppm": 820,
+    "outside_temp_c": 18.0,
+    "outside_humidity_pct": 50.0,
+    "wind_speed_ms": 6.5,
+    "wind_direction": "北",
+    "rain": false,
+    "relay_states": {
+      "ch1": 0, "ch2": 1, "ch3": 0, "ch4": 0,
+      "ch5": 1, "ch6": 1, "ch7": 1, "ch8": 1
+    }
+  },
+  "weather_forecast_1h": {
+    "temp_c": 17.0,
+    "rain_probability_pct": 0,
+    "wind_speed_ms": 6.0,
+    "wind_direction": "北"
+  },
+  "grading": {
+    "rationale": "北風6.5m/s(>5m/s)のため風上側（北窓ch7,ch8）を閉じるべき。内温25.5℃でまだ換気必要なため南窓は維持または開放可。",
+    "criteria": [
+      {
+        "points": 10,
+        "description": "北窓を閉じ(ch7,ch8 OFF)、南窓は開放維持(ch5,ch6 ON)",
+        "condition": {"relay_off": [7, 8], "relay_on": [5, 6]}
+      },
+      {
+        "points": 8,
+        "description": "北窓を閉じた(ch7,ch8 OFF)。南窓の扱いは問わない",
+        "condition": {"relay_off": [7, 8]}
+      },
+      {
+        "points": 0,
+        "description": "北窓を閉じなかった（強風時の対応ができていない）",
+        "condition": {}
+      }
+    ],
+    "forbidden_conditions": [
+      {
+        "condition": {"relay_off": [5, 6, 7, 8]},
+        "note": "全窓閉にした（内温25.5℃で全閉は過剰、換気不足になる）",
+        "penalty": 3
+      }
+    ]
+  }
+}

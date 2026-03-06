@@ -1,0 +1,55 @@
+{
+  "id": "S04",
+  "name": "CO2低下パルス換気（雨天）",
+  "category": "追加",
+  "rule_ref": "ルール4",
+  "description": "晴天の午後、光合成活発でCO2が520ppmまで低下。現在小雨が降っており外気湿度も高い。「雨だから換気しない」は誤り。CO2補充のためパルス換気（5〜10分の短時間全開）が必要。duration_secを使うべきケース。",
+  "datetime": "2025-07-22T12:00:00+09:00",
+  "sun": {
+    "sunrise": "04:08",
+    "sunset": "19:06",
+    "is_daytime": true,
+    "minutes_since_sunrise": 472
+  },
+  "sensors": {
+    "inside_temp_c": 25.5,
+    "inside_humidity_pct": 80.0,
+    "co2_ppm": 520,
+    "outside_temp_c": 22.0,
+    "outside_humidity_pct": 95.0,
+    "wind_speed_ms": 2.0,
+    "wind_direction": "南",
+    "rain": true,
+    "relay_states": {
+      "ch1": 0, "ch2": 1, "ch3": 0, "ch4": 0,
+      "ch5": 0, "ch6": 0, "ch7": 0, "ch8": 0
+    }
+  },
+  "weather_forecast_1h": {
+    "temp_c": 22.0,
+    "rain_probability_pct": 80,
+    "wind_speed_ms": 2.5,
+    "wind_direction": "南"
+  },
+  "grading": {
+    "rationale": "CO2 520ppm(<600ppm)は光合成効率が低下するレベル。雨天中でもパルス換気（duration_sec=300〜600）でCO2補充すべき。ルール4。",
+    "criteria": [
+      {
+        "points": 10,
+        "description": "duration_sec付きでset_relayを呼んだ（パルス換気を理解）",
+        "condition": {"any_on": [5, 6, 7, 8], "has_duration": true}
+      },
+      {
+        "points": 7,
+        "description": "duration_secなしでもCO2換気のため窓を開けた",
+        "condition": {"any_on": [5, 6, 7, 8]}
+      },
+      {
+        "points": 0,
+        "description": "雨を理由に換気しなかった",
+        "condition": {}
+      }
+    ],
+    "forbidden_conditions": []
+  }
+}

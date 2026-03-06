@@ -1,0 +1,61 @@
+{
+  "id": "S06",
+  "name": "夜間低温・暖房ON+全窓閉",
+  "category": "追加",
+  "rule_ref": "基本ルール（温度管理）",
+  "description": "真冬の深夜3時、内気温が15.5℃と緊急停止ライン16℃を下回った。全窓閉鎖と暖房ONが必要。窓が少し開いている状態からの修正も含む。",
+  "datetime": "2025-01-15T03:00:00+09:00",
+  "sun": {
+    "sunrise": "07:03",
+    "sunset": "16:17",
+    "is_daytime": false,
+    "minutes_since_sunrise": -244
+  },
+  "sensors": {
+    "inside_temp_c": 15.5,
+    "inside_humidity_pct": 75.0,
+    "co2_ppm": 950,
+    "outside_temp_c": -3.0,
+    "outside_humidity_pct": 70.0,
+    "wind_speed_ms": 3.5,
+    "wind_direction": "北西",
+    "rain": false,
+    "relay_states": {
+      "ch1": 0, "ch2": 0, "ch3": 0, "ch4": 0,
+      "ch5": 1, "ch6": 0, "ch7": 0, "ch8": 0
+    }
+  },
+  "weather_forecast_1h": {
+    "temp_c": -4.0,
+    "rain_probability_pct": 0,
+    "wind_speed_ms": 4.0,
+    "wind_direction": "北西"
+  },
+  "grading": {
+    "rationale": "内温15.5℃は緊急停止ライン16℃未満。暖房ON(ch1)+全窓閉(ch5-ch8全OFF)が必須。現在ch5が開いているのを閉める。",
+    "criteria": [
+      {
+        "points": 10,
+        "description": "暖房ON(ch1)+開いている窓を閉じた（ch5をOFF）",
+        "condition": {"relay_on": [1], "relay_off": [5]}
+      },
+      {
+        "points": 7,
+        "description": "暖房ONのみ（窓を閉じなかったが最重要アクションは実施）",
+        "condition": {"relay_on": [1]}
+      },
+      {
+        "points": 0,
+        "description": "暖房をONにしなかった",
+        "condition": {}
+      }
+    ],
+    "forbidden_conditions": [
+      {
+        "condition": {"any_on": [5, 6, 7, 8]},
+        "note": "冬の低温時に窓をさらに開けた（致命的な誤り）",
+        "penalty": 5
+      }
+    ]
+  }
+}

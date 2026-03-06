@@ -1,0 +1,61 @@
+{
+  "id": "S05",
+  "name": "高温緊急全窓全開",
+  "category": "追加",
+  "rule_ref": "基本ルール（温度管理）",
+  "description": "夏の真昼、内気温が27.8℃と緊急停止ライン27℃を超えた。全窓全開で即座に冷却が必要。",
+  "datetime": "2025-07-25T14:30:00+09:00",
+  "sun": {
+    "sunrise": "04:10",
+    "sunset": "19:03",
+    "is_daytime": true,
+    "minutes_since_sunrise": 620
+  },
+  "sensors": {
+    "inside_temp_c": 27.8,
+    "inside_humidity_pct": 68.0,
+    "co2_ppm": 750,
+    "outside_temp_c": 26.0,
+    "outside_humidity_pct": 55.0,
+    "wind_speed_ms": 3.0,
+    "wind_direction": "南西",
+    "rain": false,
+    "relay_states": {
+      "ch1": 0, "ch2": 1, "ch3": 1, "ch4": 1,
+      "ch5": 0, "ch6": 0, "ch7": 0, "ch8": 0
+    }
+  },
+  "weather_forecast_1h": {
+    "temp_c": 27.0,
+    "rain_probability_pct": 0,
+    "wind_speed_ms": 3.5,
+    "wind_direction": "南西"
+  },
+  "grading": {
+    "rationale": "内温27.8℃は緊急停止ライン27℃超。全窓全開が必須。CO2発生器(ch3)も停止すべき（温度上昇に寄与）。",
+    "criteria": [
+      {
+        "points": 10,
+        "description": "全窓全開（ch5,ch6,ch7,ch8を全てON）",
+        "condition": {"relay_on": [5, 6, 7, 8]}
+      },
+      {
+        "points": 6,
+        "description": "南窓または北窓のみ全開（片側のみ）",
+        "condition": {"any_on": [5, 6, 7, 8]}
+      },
+      {
+        "points": 0,
+        "description": "換気しなかった",
+        "condition": {}
+      }
+    ],
+    "forbidden_conditions": [
+      {
+        "condition": {"relay_on": [1]},
+        "note": "暖房をONにした（高温時に暖房は致命的な誤り）",
+        "penalty": 10
+      }
+    ]
+  }
+}

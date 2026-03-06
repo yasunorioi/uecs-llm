@@ -1,0 +1,56 @@
+{
+  "id": "S03",
+  "name": "朝の湿度優先開放",
+  "category": "殿指定",
+  "rule_ref": "ルール3",
+  "description": "早朝5:45、日の出から87分。夜露でハウス内湿度が92%と高い。内気温は19.5℃で目標夜間17℃を超えているが低め。温度だけ見ると換気不要に見えるが、湿度が高く灰色かび病リスクがある。湿度を下げるため換気優先。",
+  "datetime": "2025-06-10T05:45:00+09:00",
+  "sun": {
+    "sunrise": "04:18",
+    "sunset": "19:18",
+    "is_daytime": true,
+    "minutes_since_sunrise": 87
+  },
+  "sensors": {
+    "inside_temp_c": 19.5,
+    "inside_humidity_pct": 92.0,
+    "co2_ppm": 1100,
+    "outside_temp_c": 14.5,
+    "outside_humidity_pct": 85.0,
+    "wind_speed_ms": 1.0,
+    "wind_direction": "東",
+    "rain": false,
+    "relay_states": {
+      "ch1": 0, "ch2": 0, "ch3": 0, "ch4": 0,
+      "ch5": 0, "ch6": 0, "ch7": 0, "ch8": 0
+    }
+  },
+  "weather_forecast_1h": {
+    "temp_c": 16.0,
+    "rain_probability_pct": 0,
+    "wind_speed_ms": 1.5,
+    "wind_direction": "東"
+  },
+  "grading": {
+    "rationale": "日出後87分(2時間以内)+内部湿度92%(85%超)でルール3発動。温度が目標以下でも換気優先。灰色かび病予防のため。",
+    "criteria": [
+      {
+        "points": 10,
+        "description": "湿度を下げるため換気開始（ch5-ch8いずれかをON）",
+        "condition": {"any_on": [5, 6, 7, 8]}
+      },
+      {
+        "points": 0,
+        "description": "気温が低いので換気しなかった",
+        "condition": {}
+      }
+    ],
+    "forbidden_conditions": [
+      {
+        "condition": {"relay_on": [1]},
+        "note": "暖房をONにした（湿度対策に暖房は誤り）",
+        "penalty": 3
+      }
+    ]
+  }
+}
