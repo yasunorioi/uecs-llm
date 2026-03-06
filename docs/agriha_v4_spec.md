@@ -303,15 +303,16 @@ agriha/
 
 ### §3.3 forecast_engine.py（Layer3: LLM 1時間予報）
 
-**概要**: Claude Haiku APIで向こう1時間の制御計画を生成。毎時0分にcronで実行。高札APIの類似検索で既知パターンが3件以上あればLLMをスキップ。
+**概要**: デフォルトはNullClaw（ローカル・ゼロコスト）で向こう1時間の制御計画を生成。APIキー設定時はClaudeなどのクラウドAPIを優先使用し、API失敗・回線断時は自動でNullClawにフォールバック。毎時0分にcronで実行。高札APIの類似検索で既知パターンが3件以上あればLLMをスキップ。
 
 | 項目 | 内容 |
 |------|------|
 | **入力** | sensors API, Visual Crossing天気予報, 高札API類似検索, system_prompt.txt |
-| **設定** | config/system_prompt.txt, .env (ANTHROPIC_API_KEY, VISUAL_CROSSING_API_KEY) |
+| **設定** | config/system_prompt.txt, config/forecast.yaml (provider, api_key_env), .env (APIキー: オプション) |
 | **処理** | 天気予報取得→類似検索→LLM判断(or skip)→計画JSON生成→PIDパラメータ変換 |
 | **出力** | /var/lib/agriha/current_plan.json, pid_override.json, search_log.jsonl |
-| **依存** | Claude Haiku API, Visual Crossing API, 高札API, unipi-daemon REST API |
+| **依存** | NullClaw (デフォルト, localhost:3001), Visual Crossing API, 高札API, unipi-daemon REST API |
+| **依存(オプション)** | Claude Haiku API / OpenAI / Gemini (APIキー設定時のみ、失敗時はNullClaw) |
 | **コード行数** | 456行 |
 
 **実行フロー**:
@@ -593,6 +594,7 @@ agriha/
 | サービス | ポート | デプロイ先 | 実行ユーザー | 概要 |
 |---------|--------|----------|-------------|------|
 | unipi-daemon | 8080 | /opt/agriha/ | agriha | HW抽象化 + REST API + MQTT |
+| agriha-nullclaw-proxy | 3001 | /opt/agriha/ | agriha | NullClaw OpenAI互換プロキシ (デフォルトLLM) |
 | agriha-chat | 8501 | /opt/agriha-chat/ | root | WebUI + Chat + Dashboard API |
 | rain_detector | — | /opt/agriha/services/ | pi | 雨検知サービス |
 | uart_co2_reader | — | (リポジトリ直参照) | root | CO2センサー読取 |
@@ -649,10 +651,14 @@ http://rpi/health        → agriha-chat /health
 
 | サービス | 用途 | APIキー | 費用見込み |
 |---------|------|---------|-----------|
-| Claude Haiku API | forecast_engine + agriha_chat | ANTHROPIC_API_KEY | 月数百円→自然減衰 |
+| NullClaw (ローカル) | forecast_engine デフォルト | 不要 | **ゼロコスト** (箱出し即動作) |
+| Claude Haiku API | forecast_engine + agriha_chat (オプション) | ANTHROPIC_API_KEY | 月数百円→自然減衰 |
+| OpenAI / Gemini / Ollama | forecast_engine (オプション) | 各APIキー | 使用量に応じた費用 |
 | Visual Crossing | 天気予報 (24h先) | VISUAL_CROSSING_API_KEY | 無料枠 (1000 req/day) |
 | LINE Notify | 緊急通知 | LINE_NOTIFY_TOKEN | 無料 |
 | LINE Messaging API | Bot対話 | LINE_CHANNEL_* | 無料枠 (200 msg/day) |
+
+**設計思想**: デフォルト=NullClaw（ゼロコスト・オフライン・箱出し即動作）。APIキー設定時のみクラウドAPI優先。API失敗・回線断時は自動フォールバック。LLM自然減衰モデルの最終形=デフォルト状態に回帰。
 
 ---
 
