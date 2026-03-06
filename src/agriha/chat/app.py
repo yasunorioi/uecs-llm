@@ -117,21 +117,15 @@ def _load_channel_map_text(path: str = CHANNEL_MAP_PATH) -> str:
 
 
 def save_rules(path: str, text: str) -> None:
-    """rules.yaml にテキストをそのまま書き込む（バックアップ付き）。"""
+    """rules.yaml にテキストをそのまま書き込む。"""
     p = Path(path)
-    if p.exists():
-        ts = datetime.now().strftime("%Y%m%d%H%M%S")
-        p.rename(f"{path}.bak.{ts}")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(text, encoding="utf-8")
 
 
 def save_channel_map(path: str, text: str) -> None:
-    """channel_map.yaml にテキストをそのまま書き込む（バックアップ付き）。"""
+    """channel_map.yaml にテキストをそのまま書き込む。"""
     p = Path(path)
-    if p.exists():
-        ts = datetime.now().strftime("%Y%m%d%H%M%S")
-        p.rename(f"{path}.bak.{ts}")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(text, encoding="utf-8")
 
@@ -147,11 +141,8 @@ def _load_forecast_config_text(path: str = FORECAST_CONFIG_PATH) -> str:
 
 
 def save_forecast_config(path: str, text: str) -> None:
-    """forecast.yaml にテキストをそのまま書き込む（バックアップ付き）。"""
+    """forecast.yaml にテキストをそのまま書き込む。"""
     p = Path(path)
-    if p.exists():
-        ts = datetime.now().strftime("%Y%m%d%H%M%S")
-        p.rename(f"{path}.bak.{ts}")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(text, encoding="utf-8")
 
@@ -278,11 +269,8 @@ def load_system_prompt(path: str = SYSTEM_PROMPT_PATH) -> str:
 
 
 def save_system_prompt(path: str, text: str) -> None:
-    """system_prompt.txt に書き込む（バックアップ付き）。"""
+    """system_prompt.txt に書き込む。"""
     p = Path(path)
-    if p.exists():
-        ts = datetime.now().strftime("%Y%m%d%H%M%S")
-        p.rename(f"{path}.bak.{ts}")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(text, encoding="utf-8")
 

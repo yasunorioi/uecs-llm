@@ -405,7 +405,7 @@ def test_load_rules_text_missing_file_returns_empty(tmp_path: Path) -> None:
 
 
 def test_save_rules_writes_text_and_creates_backup(tmp_path: Path) -> None:
-    """save_rules はテキストを書き込み、既存ファイルをバックアップする。"""
+    """save_rules はテキストを書き込む。"""
     rules_file = tmp_path / "rules.yaml"
     rules_file.write_text("temperature:\n  target_day: 26.0\n", encoding="utf-8")
 
@@ -413,8 +413,6 @@ def test_save_rules_writes_text_and_creates_backup(tmp_path: Path) -> None:
     save_rules(str(rules_file), new_content)
 
     assert rules_file.read_text(encoding="utf-8") == new_content
-    backups = list(tmp_path.glob("rules.yaml.bak.*"))
-    assert len(backups) == 1
 
 
 # ── POST /settings/rules ───────────────────────────────────────────────────────
@@ -513,7 +511,7 @@ def test_load_channel_map_text_missing_file_returns_empty(tmp_path: Path) -> Non
 
 
 def test_save_channel_map_writes_text_and_creates_backup(tmp_path: Path) -> None:
-    """save_channel_map はテキストを書き込み、既存ファイルをバックアップする。"""
+    """save_channel_map はテキストを書き込む。"""
     ch_file = tmp_path / "channel_map.yaml"
     ch_file.write_text("irrigation:\n  channel: 4\n", encoding="utf-8")
 
@@ -521,8 +519,6 @@ def test_save_channel_map_writes_text_and_creates_backup(tmp_path: Path) -> None
     save_channel_map(str(ch_file), new_content)
 
     assert ch_file.read_text(encoding="utf-8") == new_content
-    backups = list(tmp_path.glob("channel_map.yaml.bak.*"))
-    assert len(backups) == 1
 
 
 # ── POST /settings/channel_map ─────────────────────────────────────────────────
@@ -635,7 +631,7 @@ def test_load_forecast_config_text_missing_file_returns_empty(tmp_path: Path) ->
 
 
 def test_save_forecast_config_writes_text_and_creates_backup(tmp_path: Path) -> None:
-    """save_forecast_config はテキストを書き込み、既存ファイルをバックアップする。"""
+    """save_forecast_config はテキストを書き込む。"""
     fc_file = tmp_path / "forecast.yaml"
     fc_file.write_text("llm:\n  model: old-model\n", encoding="utf-8")
 
@@ -643,8 +639,6 @@ def test_save_forecast_config_writes_text_and_creates_backup(tmp_path: Path) -> 
     save_forecast_config(str(fc_file), new_content)
 
     assert fc_file.read_text(encoding="utf-8") == new_content
-    backups = list(tmp_path.glob("forecast.yaml.bak.*"))
-    assert len(backups) == 1
 
 
 # ── read_env_file / write_env_key / mask_api_key ──────────────────────────

@@ -194,14 +194,13 @@ async def test_save_prompt_ok(client: AsyncClient, tmp_config: dict[str, str]) -
 async def test_save_prompt_backup_created(client: AsyncClient, tmp_config: dict[str, str]) -> None:
     prompt_path = tmp_config["prompt"]
     with patch.object(app_module, "SYSTEM_PROMPT_PATH", prompt_path):
-        await client.post(
+        r = await client.post(
             "/settings/prompt",
             data={"prompt_text": "更新後テキスト"},
             follow_redirects=False,
         )
-    parent = Path(prompt_path).parent
-    bak_files = list(parent.glob("*.bak.*"))
-    assert len(bak_files) >= 1
+    assert r.status_code in (302, 303)
+    assert Path(prompt_path).read_text(encoding="utf-8") == "更新後テキスト"
 
 
 # 8. POST /settings/thresholds → 302 redirect, thresholds.yamlが更新される
