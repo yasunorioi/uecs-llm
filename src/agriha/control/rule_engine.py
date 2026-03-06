@@ -51,6 +51,19 @@ DEFAULT_STATE_PATH = os.environ.get(
 DEFAULT_API_BASE = os.environ.get("UNIPI_API_BASE", "http://localhost:8080")
 LOG_PATH = os.environ.get("RULE_ENGINE_LOG", "/var/log/agriha/rule_engine.log")
 FLAG_DIR = os.environ.get("AGRIHA_FLAG_DIR", "/var/lib/agriha")
+DEFAULT_TEMP_HISTORY_PATH = os.environ.get(
+    "TEMP_HISTORY_PATH", "/var/lib/agriha/temp_history.json"
+)
+DEFAULT_THRESHOLD_HINT_PATH = os.environ.get(
+    "THRESHOLD_HINT_PATH", "/var/lib/agriha/threshold_hint.json"
+)
+
+# 温度履歴の最大保持件数（5分毎 × 12 = 1時間分）
+TEMP_HISTORY_MAX_POINTS = 12
+
+# 閾値（上限/下限）
+TEMP_THRESHOLD_HIGH = 27.0
+TEMP_THRESHOLD_LOW = 16.0
 
 # ──────────────────────────────────────────────
 # ロガー設定
@@ -473,6 +486,169 @@ def save_state(state_path: str, result: dict[str, Any]) -> None:
 
 
 # ──────────────────────────────────────────────
+# 温度履歴・閾値到達予測（先読みヒント生成）
+# ──────────────────────────────────────────────
+
+def load_temp_history(path: str = DEFAULT_TEMP_HISTORY_PATH) -> dict[str, Any]:
+    """温度履歴ファイルを読み込む。存在しなければ空の履歴を返す。"""
+    try:
+        data = json.loads(Path(path).read_text())
+        if "points" not in data or not isinstance(data["points"], list):
+            return {"points": []}
+        return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"points": []}
+
+
+def append_temp_history(
+    history: dict[str, Any],
+    temp_c: float,
+    timestamp: datetime | None = None,
+    max_points: int = TEMP_HISTORY_MAX_POINTS,
+    path: str = DEFAULT_TEMP_HISTORY_PATH,
+) -> dict[str, Any]:
+    """温度履歴に1点追加し、max_points を超えた古い点を削除してファイルに保存する。"""
+    ts = (timestamp or datetime.now(tz=_JST)).isoformat()
+    points: list[dict[str, Any]] = history.get("points", [])
+    points.append({"timestamp": ts, "temp_c": temp_c})
+    if len(points) > max_points:
+        points = points[-max_points:]
+    updated = {"points": points}
+    try:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text(json.dumps(updated, ensure_ascii=False, indent=2))
+    except OSError as e:
+        logger.warning("温度履歴保存失敗: %s", e)
+    return updated
+
+
+def compute_temperature_trend(history: dict[str, Any]) -> float | None:
+    """過去の温度履歴から上昇/下降速度(℃/h)を計算する。
+
+    点が2点未満の場合は None を返す。
+    最新点と最古点の差分を時間差で割る（単純差分）。
+    """
+    points = history.get("points", [])
+    if len(points) < 2:
+        return None
+    oldest = points[0]
+    newest = points[-1]
+    try:
+        t0 = datetime.fromisoformat(oldest["timestamp"])
+        t1 = datetime.fromisoformat(newest["timestamp"])
+        dt_hours = (t1 - t0).total_seconds() / 3600.0
+        if dt_hours <= 0:
+            return None
+        delta_temp = float(newest["temp_c"]) - float(oldest["temp_c"])
+        return delta_temp / dt_hours
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
+def compute_threshold_hint(
+    history: dict[str, Any],
+    outdoor_temp_forecast_c: float | None = None,
+) -> dict[str, str]:
+    """閾値到達予測ヒントを計算する。
+
+    Args:
+        history: load_temp_history() の戻り値。
+        outdoor_temp_forecast_c: 天気予報外気温（あれば精度向上。なくても動く）。
+
+    Returns:
+        {
+          "temperature_trend": "+2.3℃/h" などの文字列,
+          "threshold_eta": "27℃到達まで約35分" or "到達予測なし",
+          "recommendation": "先読み開放を検討" or "",
+        }
+    """
+    points = history.get("points", [])
+    hint: dict[str, str] = {
+        "temperature_trend": "データ不足",
+        "threshold_eta": "到達予測なし",
+        "recommendation": "",
+    }
+
+    if not points:
+        return hint
+
+    try:
+        current_temp = float(points[-1]["temp_c"])
+    except (KeyError, ValueError, TypeError):
+        return hint
+
+    trend = compute_temperature_trend(history)
+
+    if trend is None:
+        hint["temperature_trend"] = f"現在{current_temp:.1f}℃（履歴不足）"
+        return hint
+
+    # 外気温予報があれば補正（簡易: 外気温との差分で速度を補正）
+    if outdoor_temp_forecast_c is not None:
+        # 外気温が現在より高ければ上昇傾向を強化、低ければ弱化（重み0.2）
+        correction = (outdoor_temp_forecast_c - current_temp) * 0.2
+        trend = trend + correction
+
+    sign = "+" if trend >= 0 else ""
+    hint["temperature_trend"] = f"{sign}{trend:.1f}℃/h"
+
+    # 閾値到達予測（線形外挿）
+    if trend > 0:
+        # 上昇中 → 27℃上限到達まで
+        remaining = TEMP_THRESHOLD_HIGH - current_temp
+        if remaining <= 0:
+            hint["threshold_eta"] = f"現在{current_temp:.1f}℃ — 既に{TEMP_THRESHOLD_HIGH:.0f}℃超過"
+            hint["recommendation"] = "即時開放を検討"
+        else:
+            eta_hours = remaining / trend
+            eta_min = int(eta_hours * 60)
+            if eta_min <= 120:
+                hint["threshold_eta"] = f"{TEMP_THRESHOLD_HIGH:.0f}℃到達まで約{eta_min}分"
+                if eta_min <= 40:
+                    hint["recommendation"] = "先読み開放を検討"
+                else:
+                    hint["recommendation"] = ""
+            else:
+                hint["threshold_eta"] = "到達予測なし（2時間超）"
+    elif trend < 0:
+        # 下降中 → 16℃下限到達まで
+        remaining = current_temp - TEMP_THRESHOLD_LOW
+        if remaining <= 0:
+            hint["threshold_eta"] = f"現在{current_temp:.1f}℃ — 既に{TEMP_THRESHOLD_LOW:.0f}℃以下"
+            hint["recommendation"] = "即時閉窓を検討"
+        else:
+            eta_hours = remaining / (-trend)
+            eta_min = int(eta_hours * 60)
+            if eta_min <= 120:
+                hint["threshold_eta"] = f"{TEMP_THRESHOLD_LOW:.0f}℃到達まで約{eta_min}分"
+                if eta_min <= 40:
+                    hint["recommendation"] = "先読み閉窓を検討"
+                else:
+                    hint["recommendation"] = ""
+            else:
+                hint["threshold_eta"] = "到達予測なし（2時間超）"
+    else:
+        # 横ばい
+        hint["threshold_eta"] = "到達予測なし（横ばい）"
+
+    return hint
+
+
+def save_threshold_hint(
+    hint: dict[str, str],
+    path: str = DEFAULT_THRESHOLD_HINT_PATH,
+) -> None:
+    """閾値到達予測ヒントをファイルに保存する。"""
+    data = dict(hint)
+    data["generated_at"] = datetime.now(tz=_JST).isoformat()
+    try:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    except OSError as e:
+        logger.warning("threshold_hint保存失敗: %s", e)
+
+
+# ──────────────────────────────────────────────
 # weather flag 更新
 # ──────────────────────────────────────────────
 
@@ -530,6 +706,8 @@ def run(
     api_base: str = DEFAULT_API_BASE,
     channel_map_path: str | None = None,
     flag_dir: str = FLAG_DIR,
+    temp_history_path: str = DEFAULT_TEMP_HISTORY_PATH,
+    threshold_hint_path: str = DEFAULT_THRESHOLD_HINT_PATH,
 ) -> int:
     """
     rule_engine のメイン処理。
@@ -563,6 +741,28 @@ def run(
 
             # Step 3.5: weather flag 更新（ロックアウト状態によらず実行）
             update_weather_flags(cfg, sensors, flag_dir=flag_dir)
+
+            # Step 3.6: 温度履歴更新 + 閾値到達予測ヒント生成（ロックアウト状態によらず実行）
+            indoor_temp_for_hint = get_indoor_temp(sensors)
+            if indoor_temp_for_hint is not None:
+                temp_history = load_temp_history(temp_history_path)
+                temp_history = append_temp_history(
+                    temp_history, indoor_temp_for_hint, path=temp_history_path
+                )
+                # 天気予報外気温（あれば）を取得して精度向上
+                outdoor_temp_for_hint: float | None = None
+                try:
+                    outdoor_temp_for_hint = float(
+                        get_misol(sensors).get("temperature_c") or 0.0
+                    ) or None
+                except (TypeError, ValueError):
+                    pass
+                hint = compute_threshold_hint(temp_history, outdoor_temp_for_hint)
+                save_threshold_hint(hint, threshold_hint_path)
+                logger.info(
+                    "閾値到達予測: trend=%s eta=%s",
+                    hint["temperature_trend"], hint["threshold_eta"],
+                )
 
             # CommandGate ロックアウト確認
             if status.get("locked_out", False):

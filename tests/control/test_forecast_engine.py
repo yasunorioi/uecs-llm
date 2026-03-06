@@ -36,6 +36,7 @@ from agriha.control.forecast_engine import (
     is_commandgate_locked,
     is_layer1_locked,
     load_recent_history,
+    load_threshold_hint,
     log_search,
     run_forecast,
     save_decision,
@@ -1107,6 +1108,118 @@ def test_llm_config_has_base_url_and_api_key_env(mock_sun, tmp_path):
 # ---------------------------------------------------------------------------
 # Test 50: backward compat — "claude" キーが "llm" にマージされる
 # ---------------------------------------------------------------------------
+
+class TestLoadThresholdHint:
+    """load_threshold_hint テスト"""
+
+    def test_returns_empty_when_file_missing(self, tmp_path: Path) -> None:
+        """ファイルなし → 空dict"""
+        result = load_threshold_hint(str(tmp_path / "nonexistent.json"))
+        assert result == {}
+
+    def test_returns_hint_when_fresh(self, tmp_path: Path) -> None:
+        """新鮮なファイル → ヒントが返る"""
+        from datetime import timezone
+        path = tmp_path / "threshold_hint.json"
+        data = {
+            "temperature_trend": "+2.0℃/h",
+            "threshold_eta": "27℃到達まで約20分",
+            "recommendation": "先読み開放を検討",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        path.write_text(json.dumps(data), encoding="utf-8")
+        result = load_threshold_hint(str(path))
+        assert result["temperature_trend"] == "+2.0℃/h"
+        assert result["threshold_eta"] == "27℃到達まで約20分"
+        assert result["recommendation"] == "先読み開放を検討"
+
+    def test_returns_empty_when_stale(self, tmp_path: Path) -> None:
+        """2時間前のファイル → 空dict（古い）"""
+        from datetime import timezone, timedelta
+        path = tmp_path / "threshold_hint.json"
+        old_time = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        data = {
+            "temperature_trend": "+1.0℃/h",
+            "threshold_eta": "27℃到達まで約30分",
+            "recommendation": "",
+            "generated_at": old_time,
+        }
+        path.write_text(json.dumps(data), encoding="utf-8")
+        result = load_threshold_hint(str(path))
+        assert result == {}
+
+    def test_hint_inserted_in_user_message(self, tmp_path: Path) -> None:
+        """ヒントがrun_forecastのuser_messageに含まれる（統合テスト）"""
+        from datetime import timezone
+        from unittest.mock import patch as mpatch
+
+        hint_path = tmp_path / "threshold_hint.json"
+        hint_data = {
+            "temperature_trend": "+2.5℃/h",
+            "threshold_eta": "27℃到達まで約15分",
+            "recommendation": "先読み開放を検討",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        hint_path.write_text(json.dumps(hint_data), encoding="utf-8")
+
+        captured_messages: list = []
+
+        def _mock_create(**kwargs: Any) -> Any:
+            captured_messages.extend(kwargs.get("messages", []))
+            ns = SimpleNamespace()
+            ns.choices = [SimpleNamespace(
+                message=SimpleNamespace(
+                    content=PLAN_TEXT,
+                    tool_calls=None,
+                    model_dump=lambda **kw: {"role": "assistant", "content": PLAN_TEXT},
+                ),
+                finish_reason="stop",
+            )]
+            return ns
+
+        mock_llm = SimpleNamespace(chat=SimpleNamespace(
+            completions=SimpleNamespace(create=lambda **kw: _mock_create(**kw))
+        ))
+        mock_http = _mock_http_client()
+
+        prompt_path = tmp_path / "system_prompt.txt"
+        prompt_path.write_text("温室AIテスト", encoding="utf-8")
+
+        cfg = {
+            "system_prompt_path": str(prompt_path),
+            "db": {"path": str(tmp_path / "control_log.db"), "history_count": 3},
+            "state": {
+                "plan_path": str(tmp_path / "current_plan.json"),
+                "last_decision_path": str(tmp_path / "last_decision.json"),
+                "lockout_path": str(tmp_path / "lockout_state.json"),
+            },
+            "unipi_api": {"base_url": "http://localhost:8080", "api_key": "", "timeout_sec": 10},
+            "location": {"latitude": 42.888, "longitude": 141.603, "elevation": 21},
+        }
+
+        with (
+            mpatch(
+                "agriha.control.forecast_engine.THRESHOLD_HINT_PATH",
+                str(hint_path),
+            ),
+            mpatch(
+                "agriha.control.forecast_engine.SEARCH_LOG_PATH",
+                str(tmp_path / "search_log.jsonl"),
+            ),
+            mpatch(
+                "agriha.control.forecast_engine.PID_OVERRIDE_PATH",
+                str(tmp_path / "pid_override.json"),
+            ),
+        ):
+            run_forecast(cfg, llm_client=mock_llm, http_client=mock_http)
+
+        user_msgs = [m for m in captured_messages if isinstance(m, dict) and m.get("role") == "user"]
+        assert user_msgs, "user メッセージが見つからない"
+        content = user_msgs[0]["content"]
+        assert "+2.5℃/h" in content
+        assert "27℃到達まで約15分" in content
+        assert "先読み開放を検討" in content
+
 
 @patch("agriha.control.forecast_engine.get_sun_times")
 def test_backward_compat_claude_config_key(mock_sun, tmp_path):

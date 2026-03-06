@@ -20,6 +20,9 @@ import pytest
 import yaml
 
 from agriha.control.rule_engine import (
+    append_temp_history,
+    compute_temperature_trend,
+    compute_threshold_hint,
     evaluate_rules,
     fetch_sensors,
     fetch_status,
@@ -27,9 +30,11 @@ from agriha.control.rule_engine import (
     is_nighttime,
     load_current_plan,
     load_solar_accumulator,
+    load_temp_history,
     post_relay,
     run,
     save_solar_accumulator,
+    save_threshold_hint,
 )
 
 _JST = ZoneInfo("Asia/Tokyo")
@@ -669,3 +674,150 @@ class TestWeatherFlags:
         update_weather_flags(base_cfg, sensors, flag_dir=str(tmp_path))
         assert not (tmp_path / "rain_flag").exists()
         assert not (tmp_path / "wind_flag").exists()
+
+
+class TestTempHistory:
+    """温度履歴 CRUD テスト"""
+
+    def test_load_empty_history(self, tmp_path: Path) -> None:
+        """存在しないファイル → 空の履歴が返る"""
+        h = load_temp_history(str(tmp_path / "nonexistent.json"))
+        assert h == {"points": []}
+
+    def test_append_and_load(self, tmp_path: Path) -> None:
+        """温度を追記して読み込める"""
+        path = str(tmp_path / "temp_history.json")
+        h = load_temp_history(path)
+        h = append_temp_history(h, 24.5, path=path)
+        h2 = load_temp_history(path)
+        assert len(h2["points"]) == 1
+        assert h2["points"][0]["temp_c"] == 24.5
+
+    def test_max_points_trim(self, tmp_path: Path) -> None:
+        """max_points を超えた古いデータは削除される"""
+        path = str(tmp_path / "temp_history.json")
+        h = {"points": []}
+        for i in range(15):
+            h = append_temp_history(h, float(20 + i), max_points=12, path=path)
+        h2 = load_temp_history(path)
+        assert len(h2["points"]) == 12
+        # 最古点は index=3 (20+3=23.0) のはず
+        assert h2["points"][0]["temp_c"] == 23.0
+
+
+class TestTemperatureTrend:
+    """温度トレンド計算テスト"""
+
+    def test_insufficient_data_returns_none(self) -> None:
+        """1点のみ → None"""
+        h = {"points": [{"timestamp": "2026-03-07T10:00:00+09:00", "temp_c": 20.0}]}
+        assert compute_temperature_trend(h) is None
+
+    def test_rising_trend(self) -> None:
+        """30分で+2℃ → +4.0℃/h"""
+        from datetime import timezone
+        from zoneinfo import ZoneInfo
+        jst = ZoneInfo("Asia/Tokyo")
+        h = {
+            "points": [
+                {"timestamp": "2026-03-07T10:00:00+09:00", "temp_c": 20.0},
+                {"timestamp": "2026-03-07T10:30:00+09:00", "temp_c": 22.0},
+            ]
+        }
+        trend = compute_temperature_trend(h)
+        assert trend is not None
+        assert abs(trend - 4.0) < 0.01
+
+    def test_falling_trend(self) -> None:
+        """60分で-3℃ → -3.0℃/h"""
+        h = {
+            "points": [
+                {"timestamp": "2026-03-07T09:00:00+09:00", "temp_c": 25.0},
+                {"timestamp": "2026-03-07T10:00:00+09:00", "temp_c": 22.0},
+            ]
+        }
+        trend = compute_temperature_trend(h)
+        assert trend is not None
+        assert abs(trend - (-3.0)) < 0.01
+
+    def test_flat_trend(self) -> None:
+        """温度変化なし → 0.0℃/h"""
+        h = {
+            "points": [
+                {"timestamp": "2026-03-07T10:00:00+09:00", "temp_c": 24.0},
+                {"timestamp": "2026-03-07T10:30:00+09:00", "temp_c": 24.0},
+            ]
+        }
+        trend = compute_temperature_trend(h)
+        assert trend == 0.0
+
+
+class TestComputeThresholdHint:
+    """閾値到達予測テスト"""
+
+    def test_empty_history_returns_default(self) -> None:
+        """空履歴 → データ不足の hint"""
+        hint = compute_threshold_hint({"points": []})
+        assert hint["temperature_trend"] == "データ不足"
+        assert hint["threshold_eta"] == "到達予測なし"
+
+    def test_rising_eta_within_range(self) -> None:
+        """上昇中で27℃到達まで30分以内 → recommendation あり"""
+        h = {
+            "points": [
+                {"timestamp": "2026-03-07T10:00:00+09:00", "temp_c": 26.0},
+                {"timestamp": "2026-03-07T10:30:00+09:00", "temp_c": 26.5},
+            ]
+        }
+        hint = compute_threshold_hint(h)
+        # trend=+1.0℃/h, 26.5→27.0まで0.5℃, ETA=30分
+        assert "27℃" in hint["threshold_eta"]
+        assert "先読み開放" in hint["recommendation"]
+
+    def test_already_above_threshold(self) -> None:
+        """既に27℃超過 → 即時開放"""
+        h = {
+            "points": [
+                {"timestamp": "2026-03-07T10:00:00+09:00", "temp_c": 27.5},
+                {"timestamp": "2026-03-07T10:30:00+09:00", "temp_c": 28.0},
+            ]
+        }
+        hint = compute_threshold_hint(h)
+        assert "超過" in hint["threshold_eta"]
+        assert hint["recommendation"] == "即時開放を検討"
+
+    def test_falling_eta_within_range(self) -> None:
+        """下降中で16℃到達まで30分以内 → recommendation あり"""
+        h = {
+            "points": [
+                {"timestamp": "2026-03-07T10:00:00+09:00", "temp_c": 17.0},
+                {"timestamp": "2026-03-07T10:30:00+09:00", "temp_c": 16.5},
+            ]
+        }
+        hint = compute_threshold_hint(h)
+        # trend=-1.0℃/h, 16.5→16.0まで0.5℃, ETA=30分
+        assert "16℃" in hint["threshold_eta"]
+        assert "先読み閉窓" in hint["recommendation"]
+
+    def test_outdoor_temp_correction(self) -> None:
+        """外気温補正あり → トレンドが変化"""
+        h = {
+            "points": [
+                {"timestamp": "2026-03-07T10:00:00+09:00", "temp_c": 24.0},
+                {"timestamp": "2026-03-07T10:30:00+09:00", "temp_c": 24.0},
+            ]
+        }
+        # 外気温35℃なら補正でトレンドが+になるはず
+        hint_with = compute_threshold_hint(h, outdoor_temp_forecast_c=35.0)
+        hint_without = compute_threshold_hint(h)
+        # 外気温補正ありの方がトレンドが高い（正方向）
+        assert "+" in hint_with["temperature_trend"]
+
+    def test_save_and_load_hint(self, tmp_path: Path) -> None:
+        """ヒントをファイル保存して読み込める"""
+        path = str(tmp_path / "threshold_hint.json")
+        hint = {"temperature_trend": "+1.5℃/h", "threshold_eta": "27℃到達まで約20分", "recommendation": "先読み開放を検討"}
+        save_threshold_hint(hint, path=path)
+        data = json.loads(Path(path).read_text())
+        assert data["temperature_trend"] == "+1.5℃/h"
+        assert "generated_at" in data

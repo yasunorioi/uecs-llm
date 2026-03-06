@@ -529,6 +529,36 @@ class NullClawFallbackClient:
 KOUSATSU_URL = os.environ.get("KOUSATSU_URL", "http://localhost:8080")
 SEARCH_LOG_PATH = os.environ.get("SEARCH_LOG_PATH", "/var/lib/agriha/search_log.jsonl")
 PID_OVERRIDE_PATH = os.environ.get("PID_OVERRIDE_PATH", "/var/lib/agriha/pid_override.json")
+THRESHOLD_HINT_PATH = os.environ.get("THRESHOLD_HINT_PATH", "/var/lib/agriha/threshold_hint.json")
+
+
+def load_threshold_hint(path: str | None = None) -> dict[str, str]:
+    """rule_engineが生成した閾値到達予測ヒントを読み込む。
+
+    ファイルが存在しないか古い（1時間超）場合は空dictを返す。
+
+    Returns:
+        {"temperature_trend": ..., "threshold_eta": ..., "recommendation": ...}
+        または {} (ヒントなし)。
+    """
+    hint_path = Path(path or THRESHOLD_HINT_PATH)
+    try:
+        data = json.loads(hint_path.read_text(encoding="utf-8"))
+        # 生成時刻が1時間以上前なら無効
+        generated_at_str = data.get("generated_at", "")
+        if generated_at_str:
+            generated_at = datetime.fromisoformat(generated_at_str)
+            age_sec = (datetime.now(timezone.utc) - generated_at.astimezone(timezone.utc)).total_seconds()
+            if age_sec > 3600:
+                logger.debug("threshold_hint が古い (%.0f秒) → スキップ", age_sec)
+                return {}
+        return {
+            "temperature_trend": data.get("temperature_trend", ""),
+            "threshold_eta": data.get("threshold_eta", ""),
+            "recommendation": data.get("recommendation", ""),
+        }
+    except (FileNotFoundError, json.JSONDecodeError, ValueError, KeyError):
+        return {}
 
 
 def search_kousatsu(query: str, timeout: int = 5) -> dict[str, Any]:
@@ -900,13 +930,26 @@ def run_forecast(
                     timeout=timeout,
                 )
 
+            # 閾値到達予測ヒント（rule_engineが計算済みファイルから読み込む）
+            threshold_hint = load_threshold_hint()
+            hint_section = ""
+            if threshold_hint:
+                hint_section = (
+                    f"\n## 温度トレンド予測（rule_engine算出）\n"
+                    f"温度変化速度: {threshold_hint.get('temperature_trend', '')}\n"
+                    f"閾値到達予測: {threshold_hint.get('threshold_eta', '')}\n"
+                )
+                if threshold_hint.get("recommendation"):
+                    hint_section += f"推奨アクション: {threshold_hint['recommendation']}\n"
+
             user_message = (
                 f"## 直近の判断履歴\n{history}\n\n"
                 f"## 現在の状況\n"
                 f"現在時刻: {now.strftime('%Y-%m-%d %H:%M %Z')}\n"
                 f"時間帯: {time_period}\n"
-                f"日の出: {sunrise_str} / 日没: {sunset_str}\n\n"
-                f"## 指示\n"
+                f"日の出: {sunrise_str} / 日没: {sunset_str}\n"
+                f"{hint_section}"
+                f"\n## 指示\n"
                 f"ツールを使ってセンサーデータとリレー状態を確認し、"
                 f"向こう1時間のアクション計画をJSON形式で生成してください。\n"
                 f"リレー操作は行わないでください。計画のみ生成してください。"
