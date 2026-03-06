@@ -878,14 +878,14 @@ def run_forecast(
             if llm_client is None:
                 from openai import OpenAI  # type: ignore[import]
 
-                api_key = os.environ.get(llm_cfg.get("api_key_env", "NULLCLAW_API_KEY"), "")
+                llm_api_key = os.environ.get(llm_cfg.get("api_key_env", "NULLCLAW_API_KEY"), "")
                 nullclaw_base_url = "http://localhost:3001/v1/"
                 timeout = llm_cfg.get("api_timeout_sec", 30.0)
 
-                if api_key:
+                if llm_api_key:
                     # APIキーあり → API優先クライアントを作成しフォールバックラッパーで包む
                     client_kwargs: dict[str, Any] = {
-                        "api_key": api_key,
+                        "api_key": llm_api_key,
                         "timeout": timeout,
                     }
                     if llm_cfg.get("base_url") and llm_cfg["base_url"] != nullclaw_base_url:
