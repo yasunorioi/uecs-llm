@@ -50,10 +50,10 @@ VC_CACHE_TTL = 3600  # TTL: 1時間（秒）
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "llm": {
-        "provider": "anthropic",
-        "model": "claude-haiku-4-5-20251001",
-        "base_url": "",
-        "api_key_env": "ANTHROPIC_API_KEY",
+        "provider": "nullclaw",
+        "model": "nullclaw-local",
+        "base_url": "http://localhost:3001/v1/",
+        "api_key_env": "NULLCLAW_API_KEY",
         "max_tokens": 1024,
         "max_tool_rounds": 5,
         "api_timeout_sec": 30.0,
@@ -468,6 +468,61 @@ def check_connectivity(host: str = "8.8.8.8", timeout: int = 3) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# NullClawFallbackClient — APIキー未設定/オフライン時のフォールバック (§3.3)
+# ---------------------------------------------------------------------------
+
+
+class NullClawFallbackClient:
+    """OpenAI SDK互換クライアントラッパー。
+
+    APIキー未設定またはオフライン時はNullClaw (localhost:3001/v1) にフォールバックする。
+    毎回check_connectivity()で判定するため、回線復帰時は自動でAPI優先に戻る。
+    """
+
+    def __init__(
+        self,
+        primary_client: Any | None,
+        nullclaw_base_url: str = "http://localhost:3001/v1/",
+        timeout: float = 30.0,
+    ) -> None:
+        self._primary = primary_client
+        self._nullclaw_base_url = nullclaw_base_url
+        self._timeout = timeout
+        self._using_fallback = False
+
+    def _get_nullclaw_client(self) -> Any:
+        from openai import OpenAI  # type: ignore[import]
+        return OpenAI(base_url=self._nullclaw_base_url, api_key="local", timeout=self._timeout)
+
+    @property
+    def chat(self) -> "NullClawFallbackClient":
+        return self
+
+    @property
+    def completions(self) -> "NullClawFallbackClient":
+        return self
+
+    def create(self, **kwargs: Any) -> Any:
+        if self._primary is None:
+            # APIキー未設定 → NullClaw直行
+            self._using_fallback = True
+            fallback_kwargs = {k: v for k, v in kwargs.items() if k != "tools"}
+            return self._get_nullclaw_client().chat.completions.create(**fallback_kwargs)
+
+        try:
+            if not check_connectivity():
+                raise ConnectionError("オフライン検知")
+            result = self._primary.chat.completions.create(**kwargs)
+            self._using_fallback = False
+            return result
+        except Exception as exc:
+            logger.warning("API失敗→NullClawフォールバック: %s", exc)
+            self._using_fallback = True
+            fallback_kwargs = {k: v for k, v in kwargs.items() if k != "tools"}
+            return self._get_nullclaw_client().chat.completions.create(**fallback_kwargs)
+
+
+# ---------------------------------------------------------------------------
 # 高札API検索 + LLMスキップ判定 (§3.3 + §7)
 # ---------------------------------------------------------------------------
 
@@ -819,18 +874,31 @@ def run_forecast(
             plan_output = build_plan_from_search_results(search_results, now=now)
 
         else:
-            # Step 5: LLM API 呼び出し (OpenAI SDK互換)
+            # Step 5: LLM API 呼び出し (OpenAI SDK互換 + NullClawフォールバック)
             if llm_client is None:
                 from openai import OpenAI  # type: ignore[import]
-                client_kwargs: dict[str, Any] = {
-                    "api_key": os.environ.get(
-                        llm_cfg.get("api_key_env", "ANTHROPIC_API_KEY"), "dummy"
-                    ),
-                    "timeout": llm_cfg.get("api_timeout_sec", 30.0),
-                }
-                if llm_cfg.get("base_url"):
-                    client_kwargs["base_url"] = llm_cfg["base_url"]
-                llm_client = OpenAI(**client_kwargs)
+
+                api_key = os.environ.get(llm_cfg.get("api_key_env", "NULLCLAW_API_KEY"), "")
+                nullclaw_base_url = "http://localhost:3001/v1/"
+                timeout = llm_cfg.get("api_timeout_sec", 30.0)
+
+                if api_key:
+                    # APIキーあり → API優先クライアントを作成しフォールバックラッパーで包む
+                    client_kwargs: dict[str, Any] = {
+                        "api_key": api_key,
+                        "timeout": timeout,
+                    }
+                    if llm_cfg.get("base_url") and llm_cfg["base_url"] != nullclaw_base_url:
+                        client_kwargs["base_url"] = llm_cfg["base_url"]
+                    primary = OpenAI(**client_kwargs)
+                else:
+                    primary = None  # APIキー未設定 → NullClaw直行
+
+                llm_client = NullClawFallbackClient(
+                    primary_client=primary,
+                    nullclaw_base_url=nullclaw_base_url,
+                    timeout=timeout,
+                )
 
             user_message = (
                 f"## 直近の判断履歴\n{history}\n\n"

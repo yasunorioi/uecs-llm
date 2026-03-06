@@ -755,7 +755,10 @@ def test_mask_api_key_short() -> None:
 async def settings_client_with_forecast(tmp_path: Path) -> AsyncClient:
     """forecast.yaml / .env を含む settings テスト用クライアント。"""
     fc_file = tmp_path / "forecast.yaml"
-    fc_file.write_text("llm:\n  model: claude-haiku-4-5-20251001\n", encoding="utf-8")
+    fc_file.write_text(
+        "llm:\n  provider: anthropic\n  model: claude-haiku-4-5-20251001\n",
+        encoding="utf-8",
+    )
     env_file = tmp_path / ".env"
     env_file.write_text("ANTHROPIC_API_KEY=sk-ant-existing1234\n", encoding="utf-8")
 
@@ -892,8 +895,9 @@ async def test_settings_page_renders_provider_select_and_api_key_status(
     assert "LLM" in html
     assert "Anthropic" in html
     assert "OpenAI" in html
+    assert "NullClaw" in html
     # forecast.yaml直接編集（詳細設定）
     assert "forecast_config_text" in html
-    # 設定済みのキーはマスク表示される
-    assert "****1234" in html
+    # NullClawがデフォルト（APIキー未設定でも動作するバナーが表示される）
+    assert "ローカル" in html
 

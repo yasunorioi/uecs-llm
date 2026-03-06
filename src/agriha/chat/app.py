@@ -214,8 +214,15 @@ def mask_api_key(value: str) -> str:
 # プロバイダー定義（プルダウン用）
 LLM_PROVIDERS: list[dict[str, str]] = [
     {
+        "id": "nullclaw",
+        "name": "NullClaw (ローカル・無料)",
+        "base_url": "http://localhost:3001/v1/",
+        "api_key_env": "NULLCLAW_API_KEY",
+        "default_model": "nullclaw-local",
+    },
+    {
         "id": "anthropic",
-        "name": "Anthropic (Claude)",
+        "name": "Anthropic (Claude) — APIキー必要",
         "base_url": "https://api.anthropic.com/v1/",
         "api_key_env": "ANTHROPIC_API_KEY",
         "default_model": "claude-haiku-4-5-20251001",
@@ -257,9 +264,9 @@ def _get_current_provider(forecast_path: str = FORECAST_CONFIG_PATH) -> str:
     try:
         with open(forecast_path, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
-        return (data.get("llm") or {}).get("provider", "anthropic")
+        return (data.get("llm") or {}).get("provider", "nullclaw")
     except (FileNotFoundError, yaml.YAMLError):
-        return "anthropic"
+        return "nullclaw"
 
 
 def load_system_prompt(path: str = SYSTEM_PROMPT_PATH) -> str:

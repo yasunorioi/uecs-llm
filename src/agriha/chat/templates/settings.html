@@ -183,6 +183,24 @@
 
     <button type="submit" class="btn btn--primary">保存</button>
   </form>
+
+  {# APIキー状態バナー #}
+  {% if current_provider == 'nullclaw' %}
+  <p class="form-hint" style="margin-top:0.75rem;">
+    ✅ NullClaw（ローカルAI）で動作中。インターネット不要・ゼロコスト。
+  </p>
+  <p class="form-hint">
+    💡 APIキーを入力すると、より高性能なクラウドLLMが利用できます。API失敗時は自動的にNullClawにフォールバックします。
+  </p>
+  {% elif current_api_key_masked %}
+  <p class="form-hint" style="margin-top:0.75rem;">
+    ☁️ クラウドAPI使用中。回線断・API失敗時は自動でNullClaw（ローカル）に切り替わります。
+  </p>
+  {% else %}
+  <p class="form-hint" style="margin-top:0.75rem; color: #b45309;">
+    ⚠️ APIキーが未設定です。NullClaw（ローカル）で動作します。
+  </p>
+  {% endif %}
 </section>
 
 {# ─── LLM詳細設定（forecast.yaml直接編集）────── #}
