@@ -13,8 +13,8 @@
 
 | # | カテゴリ | 機能 | ステータス | 優先度 | 実装場所 |
 |---|---------|------|----------|--------|---------|
-| F01 | リモート制御 | LINE Bot「開けろ/閉めろ」 | 稼働中(main) | P0 | linebot/app.py (VPS) |
-| F02 | 状況確認 | LINE Bot「今どうなってる？」 | 稼働中(main) | P0 | linebot/app.py (VPS) |
+| F01 | リモート制御 | LINE Bot「開けろ/閉めろ」 | RPi移植設計済み | P0 | chat/app.py + linebot_handler.py (RPi) |
+| F02 | 状況確認 | LINE Bot「今どうなってる？」 | RPi移植設計済み | P0 | chat/app.py + linebot_handler.py (RPi) |
 | F03 | 異常通知 | emergency_guard.sh LINE通知 | v3-rebuild実装済み | P1 | services/agriha-control/emergency_guard.sh |
 | F04 | 自動制御 | Layer1: 緊急停止 | v3-rebuild実装済み | P1 | services/agriha-control/emergency_guard.sh |
 | F05 | 自動制御 | Layer2: ルールベースPID制御 | v3-rebuild実装済み | P2 | services/agriha-control/rule_engine.py |
@@ -31,6 +31,8 @@
 | F16 | 蒸留 | 判断パターン蒸留パイプライン | 未実装(構想) | P4 | — |
 | F17 | UI | 反省会モード（週次LINE Bot） | 未実装(構想) | P4 | — |
 | F18 | 設定 | channel_map.yaml外部設定 | v3-rebuild実装済み | P1 | config/channel_map.yaml + channel_config.py |
+| F19 | ネットワーク | USB SIM / APN設定UI | 設計済み | P1 | chat/app.py (settings画面) + ModemManager |
+| F20 | ネットワーク | HTTPS証明書管理 | 設計済み | P1 | certbot + Nginx |
 
 ### 1.2 優先度定義
 
@@ -54,55 +56,59 @@
 
 ## §2 アーキテクチャ
 
-### 2.1 システム構成図（3ノード）
+### 2.1 システム構成図（2ノード + VPSオプション）
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                      VPS (cloud_server)              │
-│  ┌───────────────┐  ┌──────────────────────────┐    │
-│  │ LINE Bot      │  │ Grafana + InfluxDB       │    │
-│  │ (Docker)      │  │ + Telegraf               │    │
-│  │ :443          │  │ :3000                    │    │
-│  └───────┬───────┘  └──────────────────────────┘    │
-│          │ HTTPS (LINE Messaging API)                │
-│          │ + RPi API via WireGuard VPN               │
-└──────────┼──────────────────────────────────────────┘
-           │
-    ┌──────┴──────┐ WireGuard VPN (10.10.0.x)
-    │             │
-┌───┴─────────────┴───────────────────────────────────┐
-│                RPi (Raspberry Pi 4B)                  │
-│                                                       │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐ │
-│  │ unipi-daemon│  │ agriha-chat │  │ Mosquitto   │ │
-│  │ (systemd)   │  │ (systemd)   │  │ MQTT Broker │ │
-│  │ :8080       │  │ :8501       │  │ :1883       │ │
-│  │ REST API    │  │ FastAPI     │  │             │ │
-│  │ +MQTT pub   │  │ Chat+Dash   │  │             │ │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘ │
-│         │                │                │         │
-│         │   ┌────────────┴────────┐       │         │
-│         │   │ cron scripts        │       │         │
-│         │   │ emergency_guard.sh  │◄──────┘         │
-│         │   │ rule_engine.py      │  MQTT           │
-│         │   │ forecast_engine.py  │  subscribe      │
-│         │   │ plan_executor.py    │                  │
-│         │   └─────────────────────┘                  │
-│         │                                            │
-│  ┌──────┴──────────────────────────────────────┐    │
-│  │ Hardware Layer                                │    │
-│  │ I2C: MCP23008 → 8ch Relay (ch1-8)           │    │
-│  │ 1-Wire: DS18B20 → 内温                       │    │
-│  │ UART RS485: Misol WH65LP → 気象(温湿度/風/雨) │    │
-│  │ UART: CDM7160/K30/SCD30 → CO2               │    │
-│  │ GPIO: DI07-14 → 緊急スイッチ                  │    │
-│  └──────────────────────────────────────────────┘    │
-│                                                       │
-│  ┌──────────────────┐  ┌──────────────────┐         │
-│  │ rain_detector    │  │ uart_co2_reader  │         │
-│  │ (systemd)        │  │ (systemd)        │         │
-│  └──────────────────┘  └──────────────────┘         │
-└───────────────────────────────────────────────────────┘
+LINE Platform                    VPS (オプション)
+  │ Webhook POST                 ┌──────────────────────────┐
+  │ (HTTPS/443)                  │ Grafana + InfluxDB       │
+  │                              │ + Telegraf               │
+  │                              │ :3000 (監視用、必須ではない) │
+  │                              └──────────────────────────┘
+  │
+  │  Let's Encrypt + 固定IP (USB SIM)
+  │
+┌─┴─────────────────────────────────────────────────────────┐
+│                RPi (Raspberry Pi 4B)                        │
+│                                                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐       │
+│  │ unipi-daemon│  │ agriha-ui   │  │ Mosquitto   │       │
+│  │ (systemd)   │  │ (systemd)   │  │ MQTT Broker │       │
+│  │ :8080       │  │ :8501       │  │ :1883       │       │
+│  │ REST API    │  │ FastAPI     │  │             │       │
+│  │ +MQTT pub   │  │ Chat+Dash   │  │             │       │
+│  │             │  │ +LINE Bot   │  │             │       │
+│  │             │  │ +Settings   │  │             │       │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘       │
+│         │                │                │               │
+│         │   ┌────────────┴────────┐       │               │
+│         │   │ cron scripts        │       │               │
+│         │   │ emergency_guard.sh  │◄──────┘               │
+│         │   │ rule_engine.py      │  MQTT                 │
+│         │   │ forecast_engine.py  │  subscribe            │
+│         │   │ plan_executor.py    │                        │
+│         │   └─────────────────────┘                        │
+│         │                                                  │
+│  ┌──────┴──────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │ NullClaw    │  │ Nginx        │  │ USB SIM      │     │
+│  │ Proxy       │  │ (HTTPS/443)  │  │ ドングル     │     │
+│  │ :3001       │  │ + HTTP/80    │  │ (セルラー)   │     │
+│  └─────────────┘  └──────────────┘  └──────────────┘     │
+│                                                             │
+│  ┌──────────────────────────────────────────────────┐     │
+│  │ Hardware Layer                                     │     │
+│  │ I2C: MCP23008 → 8ch Relay (ch1-8)                │     │
+│  │ 1-Wire: DS18B20 → 内温                            │     │
+│  │ UART RS485: Misol WH65LP → 気象(温湿度/風/雨)     │     │
+│  │ UART: CDM7160/K30/SCD30 → CO2                    │     │
+│  │ GPIO: DI07-14 → 緊急スイッチ                       │     │
+│  └──────────────────────────────────────────────────┘     │
+│                                                             │
+│  ┌──────────────────┐  ┌──────────────────┐               │
+│  │ rain_detector    │  │ uart_co2_reader  │               │
+│  │ (systemd)        │  │ (systemd)        │               │
+│  └──────────────────┘  └──────────────────┘               │
+└─────────────────────────────────────────────────────────────┘
            │
     ┌──────┴──────┐
     │  ハウス内    │
@@ -206,11 +212,11 @@ unipi-agri-ha/
 | センサー→RPi | MQTT (mosquitto :1883) | Pico W → MQTT publish → unipi-daemon subscribe |
 | RPi内部 | REST API (localhost) | unipi-daemon :8080 ← 制御スクリプト群 |
 | RPi内部 | MQTT | unipi-daemon → relay/{ch}/set → MCP23008 |
-| RPi→VPS | WireGuard VPN (10.10.0.x) | LINE Bot → RPi REST API |
-| RPi→Claude | HTTPS | forecast_engine.py → Claude Haiku API |
+| RPi→Claude | HTTPS | forecast_engine.py → Claude Haiku API (オプション) |
 | RPi→天気 | HTTPS | forecast_engine.py → Visual Crossing API |
-| RPi→LINE | HTTPS | emergency_guard.sh → LINE Notify API |
-| VPS→LINE | HTTPS | linebot/app.py → LINE Messaging API |
+| RPi→LINE | HTTPS | emergency_guard.sh → LINE Notify API, linebot_handler → LINE Reply/Push API |
+| LINE→RPi | HTTPS | LINE Platform → Webhook POST → RPi (Let's Encrypt + 固定IP) |
+| RPi内部 | HTTP | agriha-ui → NullClaw Proxy (localhost:3001) |
 
 ### 2.5 MQTTトピック体系
 
@@ -472,24 +478,148 @@ agriha/
 | GPIO (/dev/gpiochip0, DI07-14) | 物理スイッチ | 緊急オーバーライド (300秒lockout) |
 | UDP multicast (224.0.0.1:16520) | UECS-CCM | レガシーセンサー受信 |
 
-### §3.7 LINE Bot（VPS、別リポジトリ連携）
+### §3.7 LINE Bot（RPi直接稼働）
 
-**概要**: VPS上のDocker コンテナで稼働。RPiへのリモート制御 + 状況確認。WireGuard VPN経由でRPi APIにアクセス。
+**概要**: RPi上のagriha-ui（FastAPI, port 8501）に統合。VPS不要。LLMはNullClaw（デフォルト）またはClaude API（APIキー設定時）。HTTPS到達はLet's Encrypt + 固定IP。
 
 | 項目 | 内容 |
 |------|------|
-| **入力** | LINE Messaging API Webhook, RPi REST API |
-| **設定** | .env (LINE_CHANNEL_SECRET, LINE_CHANNEL_ACCESS_TOKEN, ANTHROPIC_API_KEY等) |
-| **処理** | ユーザーメッセージ解析 → Claude API → tool_calls → RPi API実行 |
-| **出力** | LINE応答メッセージ, POST /api/relay/{ch} |
-| **コード行数** | 889行 (5ファイル) |
+| **入力** | LINE Messaging API Webhook (POST /callback), unipi-daemon REST API (localhost) |
+| **設定** | .env (LINE_CHANNEL_SECRET, LINE_CHANNEL_ACCESS_TOKEN, LINE_USER_ID), forecast.yaml |
+| **処理** | 署名検証 → 全テキスト→LLM tool calling→REST API実行→Reply |
+| **出力** | LINE応答メッセージ, POST /api/relay/{ch} (localhost) |
+| **LLM** | NullClawFallbackClient（APIキーなし→NullClaw直行、あり→API優先→失敗時フォールバック） |
 
 **主要ファイル**:
-- app.py (206行): FastAPI + LINE Webhook handler
-- llm_client.py (108行): Claude API呼び出し + tool_calls処理
-- tools.py (199行): get_sensors, set_relay, get_status ツール定義
-- rpi_client.py (150行): RPi REST API クライアント (WireGuard VPN経由)
-- system_prompt.py (226行): システムプロンプト構築
+- `src/agriha/chat/app.py` L733-810: /callback エンドポイント（agriha-uiに統合）
+- `src/agriha/chat/linebot_handler.py` (293行): 署名検証 + LLM tool calling + Reply/Push
+- `src/agriha/control/nullclaw_proxy.py` (155行): NullClaw OpenAI互換プロキシ (port 3001)
+
+**ツール定義** (OpenAI tools形式, linebot_handler.py):
+
+| ツール | 機能 | パラメータ |
+|--------|------|-----------|
+| get_sensors | 全センサーデータ取得（CCM+DS18B20+Misol+リレー状態） | なし |
+| get_status | デーモン状態取得（リレー状態+ロックアウト+稼働時間） | なし |
+| set_relay | リレーch ON/OFF制御 | channel(1-8), value(0/1), duration_sec(0=永続) |
+
+**LLMフォールバック設計** (NullClawFallbackClient, forecast_engine.py):
+- APIキー未設定 → NullClaw直行（tools除外、プロンプト埋め込み方式）
+- APIキーあり → check_connectivity() → オンライン → Claude API（tool calling有効）
+- API失敗 or オフライン → NullClawフォールバック（tools除外）
+- 毎回ステートレス判定、回線復帰→次メッセージから自動復帰
+- NullClawフォールバック時の制限: set_relay不可（読み取りのみ）
+
+**Webhook到達方式**:
+
+| 方式 | 条件 | URL |
+|------|------|-----|
+| Let's Encrypt + 固定IP | USB SIM（固定IP付きSIMカード）使用時 | `https://{固定IP}/callback` |
+| 自己署名証明書 | LINE Messaging APIは自己署名をサポート（証明書登録が必要） | `https://{固定IP}/callback` |
+
+- settings画面でWebhook URLを自動生成・表示（§3.9参照）
+- LINE Developers Console に Webhook URL を設定
+
+**旧VPS版との差分**:
+
+| 項目 | 旧（VPS版） | 新（RPi直接版） |
+|------|------------|----------------|
+| 実行場所 | VPS (Docker) | RPi (agriha-ui内) |
+| LLM | Anthropic SDK直接 | NullClawFallbackClient（デフォルトNullClaw） |
+| センサー取得 | WireGuard VPN経由 | localhost REST API (直接) |
+| Webhook到達 | VPS固定IP | Let's Encrypt + USB SIM固定IP |
+| 設定管理 | VPS上.env | RPi /opt/agriha/.env + settings UI |
+| system_prompt | linebot/system_prompt.py | /etc/agriha/system_prompt.txt (共用) |
+| 依存サービス | Docker, Nginx, Certbot | agriha-ui内蔵 + certbot |
+
+### §3.8 カメラ定点撮影
+
+### §3.9 USB SIM / APN設定UI
+
+**概要**: settings画面に「ネットワーク設定」セクションを追加。USB SIMドングルのAPN設定、接続状態表示、LINE Webhook URL自動生成を提供。
+
+| 項目 | 内容 |
+|------|------|
+| **入力** | ユーザーのAPN設定入力 |
+| **設定** | NetworkManager connection profile |
+| **処理** | ModemManager/NetworkManager経由でUSBドングル制御 |
+| **出力** | セルラー接続確立、固定IP取得、Webhook URL表示 |
+| **依存** | ModemManager, NetworkManager, usb-modeswitch |
+
+**settings画面「ネットワーク設定」セクション**:
+
+```
+┌─────────────────────────────────────────┐
+│ ネットワーク設定                          │
+│                                          │
+│ 接続状態: ● セルラー (SIM)  ○ WiFi  ○ 有線 │
+│ 固定IP:   xxx.xxx.xxx.xxx                │
+│ Webhook URL: https://xxx.xxx.xxx.xxx/callback │
+│ [URLをコピー]                            │
+│                                          │
+│ ── APN設定 ──                            │
+│ プリセット: [IIJmio ▼] [SORACOM] [手動入力] │
+│                                          │
+│ APN名:     [iijmio.jp                 ] │
+│ ユーザー:   [mio@iij                   ] │
+│ パスワード: [iij                        ] │
+│ 認証方式:   [CHAP ▼]                     │
+│                                          │
+│ [保存して接続]                            │
+│                                          │
+│ ── LINE Bot設定 ──                       │
+│ Channel Secret:  [********cret]          │
+│ Access Token:    [********oken]          │
+│ User ID:         [********efgh]          │
+│ [保存]                                   │
+│ 状態: 設定済み / 未設定                   │
+│                                          │
+│ ── HTTPS証明書 ──                        │
+│ 証明書状態: 有効 (有効期限: 2026-06-05)   │
+│ [証明書更新] [自己署名証明書で代替]        │
+└─────────────────────────────────────────┘
+```
+
+**既知キャリアプリセット**:
+
+| キャリア | APN | ユーザー | パスワード | 認証方式 |
+|---------|-----|---------|-----------|---------|
+| IIJmio | iijmio.jp | mio@iij | iij | CHAP |
+| SORACOM Air | soracom.io | sora | sora | CHAP |
+| さくらのセキュアモバイル | sakura | — | — | なし |
+| 手動入力 | (ユーザー入力) | — | — | — |
+
+**ModemManager/NetworkManager連携**:
+
+```bash
+# USB SIMドングル検出
+mmcli -L                              # モデム一覧
+mmcli -m 0                            # モデム詳細（SIM状態、信号強度）
+
+# APN設定 → NetworkManager connection作成
+nmcli connection add type gsm \
+  con-name "agriha-sim" \
+  ifname "*" \
+  gsm.apn "iijmio.jp" \
+  gsm.username "mio@iij" \
+  gsm.password "iij"
+
+# 接続
+nmcli connection up agriha-sim
+
+# IP確認
+nmcli device show | grep IP4.ADDRESS
+```
+
+**固定IP取得**: SIMカード契約に依存。IIJmioフルMVNO等は固定IPオプションあり。SORACOM Beamでも可能。settings画面で取得したIPをWebhook URLとして表示。
+
+**app.pyエンドポイント追加**:
+
+| メソッド | パス | 機能 |
+|---------|------|------|
+| GET | `/api/network/status` | 接続状態(SIM/WiFi/有線)、固定IP、モデム情報 |
+| POST | `/settings/network/apn` | APN設定保存+接続 |
+| POST | `/settings/network/cert` | HTTPS証明書取得/更新 |
 
 ### §3.8 カメラ定点撮影
 
@@ -598,6 +728,8 @@ agriha/
 | agriha-chat | 8501 | /opt/agriha-chat/ | root | WebUI + Chat + Dashboard API |
 | rain_detector | — | /opt/agriha/services/ | pi | 雨検知サービス |
 | uart_co2_reader | — | (リポジトリ直参照) | root | CO2センサー読取 |
+| ModemManager | — | (OS標準) | root | USB SIMドングル制御 |
+| certbot.timer | — | (OS標準) | root | Let's Encrypt HTTPS証明書自動更新 |
 
 ### 5.2 cronスケジュール (config/agriha.cron)
 
@@ -622,9 +754,28 @@ http://rpi/static/*      → agriha-chat /static/*   (JS/CSS)
 http://rpi/health        → agriha-chat /health
 ```
 
-- **SSL不要**: LAN内専用 (RPi Chromium kiosk表示)
+- **LAN内HTTP**: port 80 → ダッシュボード・Chat窓（RPi Chromium kiosk表示）
+- **LINE Webhook用HTTPS**: port 443 → /callback のみ。Let's Encrypt + 固定IP（USB SIM）
 - **WebSocket不要**: REST + 30秒ポーリング
 - **CORS不要**: Nginx統合後は同一オリジン
+
+**Nginx HTTPS設定（LINE Webhook用）**:
+```
+server {
+    listen 443 ssl;
+    server_name _;    # 固定IPでアクセス
+
+    ssl_certificate     /etc/letsencrypt/live/agriha/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/agriha/privkey.pem;
+
+    location /callback {
+        proxy_pass http://localhost:8501/callback;
+    }
+    location / {
+        proxy_pass http://localhost:8501;
+    }
+}
+```
 
 ### 5.4 RPiディレクトリ構成
 
@@ -640,12 +791,47 @@ http://rpi/health        → agriha-chat /health
 
 ### 5.5 セットアップ (setup.sh)
 
-`services/agriha-control/setup.sh` (132行) が冪等デプロイを提供:
+`setup.sh` (128行) が冪等デプロイを提供:
 
-1. Python venv作成 + pip install
+1. Python venv作成 + pip install（daemon extras）
 2. /etc/agriha/ ディレクトリ作成 + 設定ファイルコピー（既存は上書きしない）
-3. /var/lib/agriha/, /var/log/agriha/ ディレクトリ作成
-4. crontab登録 (agriha.cron をパス展開して設定)
+3. agrihaシステムユーザー作成 + /var/lib/agriha/, /var/log/agriha/ ディレクトリ作成
+4. systemdサービスインストール + enable (unipi-daemon, agriha-ui)
+5. cron設定（三層制御用）
+6. .env.example → .env コピー
+7. Nginx設定デプロイ
+
+**v4追加ステップ（実装予定）**:
+
+8. USB SIM関連パッケージインストール
+   ```bash
+   apt install -y modem-manager network-manager usb-modeswitch
+   systemctl enable ModemManager NetworkManager
+   ```
+9. HTTPS証明書セットアップ
+   ```bash
+   apt install -y certbot python3-certbot-nginx
+   # 固定IP取得後に実行（setup.sh内では案内表示のみ）:
+   # certbot --nginx -d {固定IP}.nip.io --non-interactive --agree-tos -m user@example.com
+   # または自己署名証明書:
+   # openssl req -x509 -newkey rsa:2048 -keyout /etc/agriha/ssl/key.pem -out /etc/agriha/ssl/cert.pem -days 365 -nodes
+   ```
+10. NullClawプロキシサービスインストール
+    ```bash
+    # systemd/agriha-nullclaw-proxy.service インストール + enable
+    ```
+
+**初回セットアップウィザード（構想）**:
+
+setup.sh実行後、agriha-uiの初回アクセス時にウィザードを表示:
+1. APN設定（USB SIMドングル検出→プリセット選択→接続テスト）
+2. LINE Bot設定（Channel Secret/Access Token/User ID入力）
+3. LINE Webhook URL表示（固定IP自動検出→URLコピー→LINE Developers Consoleへ案内）
+4. テスト送信（LINE Botから「設定完了」メッセージ送信で動作確認）
+5. LLMプロバイダー選択（NullClaw=デフォルト、APIキー入力でClaude等も可）
+
+ウィザードは `/setup` エンドポイントで提供。完了後は `/dashboard` にリダイレクト。
+`/var/lib/agriha/.setup_complete` フラグファイルで初回判定。
 
 ### 5.6 外部サービス依存
 
@@ -660,6 +846,38 @@ http://rpi/health        → agriha-chat /health
 
 **設計思想**: デフォルト=NullClaw（ゼロコスト・オフライン・箱出し即動作）。APIキー設定時のみクラウドAPI優先。API失敗・回線断時は自動フォールバック。LLM自然減衰モデルの最終形=デフォルト状態に回帰。
 
+### 5.7 ArSprout既存USB SIMとの互換性
+
+**概要**: ArSprout（農研機構系統の温室環境制御装置）のオプションUSB SIMドングルを引き継いで使用できるかの整理。
+
+**ArSproutのUSB SIM構成**:
+- 一般的なUSB SIMドングル（Huawei E8372, AnyDATA W600 等）を使用
+- ArSprout本体のLinux（Debian系）でNetworkManager経由で接続
+- 農研機構推奨SIM: IIJmio、SORACOM Air 等
+
+**AgriHA v4での互換性**:
+
+| 項目 | 互換性 | 備考 |
+|------|--------|------|
+| USBドングルハードウェア | ○ 互換 | RPi4のUSBポートにそのまま差し替え可能 |
+| SIMカード | ○ 互換 | APN設定が同じなら流用可能 |
+| APN設定 | ○ 移行可能 | ArSproutのNetworkManager設定を参照して手動入力、またはプリセット選択 |
+| 固定IPアドレス | △ 要確認 | SIMカードに固定IPが紐づいていれば引き継がれる。キャリア契約依存 |
+| ドライバー | ○ 互換 | Raspberry Pi OS（Debian系）はModemManager/usb-modeswitchを標準サポート |
+
+**ArSproutからの移行手順**:
+1. ArSproutからUSB SIMドングルを抜く
+2. RPi4のUSBポートに差す
+3. `mmcli -L` でモデム検出を確認
+4. settings画面「ネットワーク設定」でAPN設定（ArSproutと同じ値を入力、またはプリセット選択）
+5. 接続テスト → 固定IP確認
+6. LINE Webhook URLをLINE Developers Consoleに設定
+
+**注意事項**:
+- ArSproutの制御PCとRPiを同時に同じSIMで使うことはできない（物理的に1枚のSIM）
+- ArSproutを廃止してAgriHAに完全移行する場合にのみSIMを流用可能
+- ArSproutと並行運用する場合は別途SIMカードが必要
+
 ---
 
-<!-- §6-9: 部屋子2が執筆予定 -->
+<!-- §6-9: agriha_v4_spec_part2.md を参照 -->
