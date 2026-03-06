@@ -147,6 +147,7 @@ async def handle_message(
     http_client: Any,
     base_url: str = "http://localhost:8080",
     api_key: str = "",
+    is_nullclaw: bool = False,
 ) -> str:
     """テキスト→LLM tool calling→応答テキスト生成。
 
@@ -200,7 +201,13 @@ async def handle_message(
 
             logger.info("Tool call [round %d]: %s", round_num, tool_name)
             try:
-                result_text = call_tool(http_client, base_url, api_key, tool_name, tool_input)
+                if tool_name == "set_relay" and is_nullclaw:
+                    result_text = json.dumps(
+                        {"message": "制御操作はAPIキー設定時のみ利用可能です。設定画面でAPIキーを設定してください。"},
+                        ensure_ascii=False,
+                    )
+                else:
+                    result_text = call_tool(http_client, base_url, api_key, tool_name, tool_input)
             except Exception as exc:
                 logger.error("Tool call failed: %s: %s", tool_name, exc)
                 result_text = json.dumps({"error": str(exc)}, ensure_ascii=False)

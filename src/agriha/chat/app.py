@@ -780,14 +780,28 @@ async def line_callback(request: Request) -> dict[str, str]:
         except FileNotFoundError:
             system_prompt = "あなたは農業温室の管理アシスタントです。"
 
-        # LLM クライアント生成
+        # LLM クライアント生成 (NullClawFallbackClient)
         from openai import OpenAI  # type: ignore[import]
-        client_kwargs: dict[str, Any] = {
-            "api_key": os.environ.get(llm_cfg.get("api_key_env", "ANTHROPIC_API_KEY"), "dummy"),
-        }
-        if llm_cfg.get("base_url"):
-            client_kwargs["base_url"] = llm_cfg["base_url"]
-        llm_client = OpenAI(**client_kwargs)
+        from agriha.control.forecast_engine import NullClawFallbackClient
+
+        nullclaw_base_url = llm_cfg.get("base_url", "http://localhost:3001/v1/")
+        nullclaw_timeout = float(os.environ.get("NULLCLAW_TIMEOUT", "25"))
+        llm_api_key = os.environ.get(llm_cfg.get("api_key_env", "NULLCLAW_API_KEY"), "")
+
+        if llm_api_key:
+            primary_kwargs: dict[str, Any] = {"api_key": llm_api_key, "timeout": nullclaw_timeout}
+            if llm_cfg.get("base_url") and llm_cfg["base_url"] != nullclaw_base_url:
+                primary_kwargs["base_url"] = llm_cfg["base_url"]
+            primary = OpenAI(**primary_kwargs)
+        else:
+            primary = None  # APIキー未設定 → NullClaw直行
+
+        llm_client = NullClawFallbackClient(
+            primary_client=primary,
+            nullclaw_base_url=nullclaw_base_url,
+            timeout=nullclaw_timeout,
+        )
+        is_nullclaw = primary is None
 
         # HTTP クライアント
         unipi_cfg: dict[str, Any] = forecast_data.get("unipi", {})
@@ -803,6 +817,7 @@ async def line_callback(request: Request) -> dict[str, str]:
                 http_client=http_client,
                 base_url=base_url,
                 api_key=api_key,
+                is_nullclaw=is_nullclaw,
             )
 
         send_reply(reply_token, reply_text, LINE_CHANNEL_ACCESS_TOKEN)

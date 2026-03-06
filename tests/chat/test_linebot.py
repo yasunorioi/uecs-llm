@@ -343,3 +343,102 @@ def test_callback_ignores_non_text_events() -> None:
         mock_hm.assert_not_called()
 
     assert response.status_code == 200
+
+
+# ── NullClaw切替テスト ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_handle_message_nullclaw_get_sensors() -> None:
+    """T7: is_nullclaw=True でも get_sensors は正常に呼ばれる。"""
+    from agriha.chat.linebot_handler import handle_message
+
+    tc = MagicMock()
+    tc.id = "tc_007"
+    tc.function.name = "get_sensors"
+    tc.function.arguments = "{}"
+
+    msg1 = MagicMock()
+    msg1.tool_calls = [tc]
+    msg1.content = None
+    msg1.model_dump.return_value = {"role": "assistant", "tool_calls": []}
+    choice1 = MagicMock()
+    choice1.message = msg1
+    choice1.finish_reason = "tool_use"
+
+    msg2 = MagicMock()
+    msg2.tool_calls = None
+    msg2.content = "気温は25度です。"
+    msg2.model_dump.return_value = {"role": "assistant", "content": "気温は25度です。"}
+    choice2 = MagicMock()
+    choice2.message = msg2
+    choice2.finish_reason = "stop"
+
+    mock_llm = MagicMock()
+    mock_llm.chat.completions.create.side_effect = [
+        MagicMock(choices=[choice1]),
+        MagicMock(choices=[choice2]),
+    ]
+
+    mock_http = MagicMock()
+    mock_http.get.return_value = MagicMock(text='{"temp": 25.0}')
+
+    result = await handle_message(
+        text="今の気温は？",
+        llm_client=mock_llm,
+        llm_cfg={"model": "nullclaw-local"},
+        system_prompt="アシスタントです。",
+        http_client=mock_http,
+        is_nullclaw=True,
+    )
+    assert result == "気温は25度です。"
+    mock_http.get.assert_called_once()  # get_sensors が呼ばれた
+
+
+@pytest.mark.asyncio
+async def test_handle_message_nullclaw_set_relay_blocked() -> None:
+    """T10: is_nullclaw=True かつ set_relay 試行→unipi-daemon APIを呼ばず制御不可メッセージが返る。"""
+    from agriha.chat.linebot_handler import handle_message
+
+    # 1回目: set_relay tool call
+    tc = MagicMock()
+    tc.id = "tc_010"
+    tc.function.name = "set_relay"
+    tc.function.arguments = '{"channel": 1, "state": true}'
+
+    msg1 = MagicMock()
+    msg1.tool_calls = [tc]
+    msg1.content = None
+    msg1.model_dump.return_value = {"role": "assistant", "tool_calls": []}
+    choice1 = MagicMock()
+    choice1.message = msg1
+    choice1.finish_reason = "tool_use"
+
+    # 2回目: 最終応答
+    msg2 = MagicMock()
+    msg2.tool_calls = None
+    msg2.content = "制御操作はできません。"
+    msg2.model_dump.return_value = {"role": "assistant", "content": "制御操作はできません。"}
+    choice2 = MagicMock()
+    choice2.message = msg2
+    choice2.finish_reason = "stop"
+
+    mock_llm = MagicMock()
+    mock_llm.chat.completions.create.side_effect = [
+        MagicMock(choices=[choice1]),
+        MagicMock(choices=[choice2]),
+    ]
+
+    mock_http = MagicMock()
+
+    result = await handle_message(
+        text="開けろ",
+        llm_client=mock_llm,
+        llm_cfg={"model": "nullclaw-local"},
+        system_prompt="アシスタントです。",
+        http_client=mock_http,
+        is_nullclaw=True,
+    )
+    # set_relayが実際のAPIを呼ばずに制御不可メッセージが返った
+    mock_http.post.assert_not_called()
+    assert "APIキー" in result or "制御" in result
