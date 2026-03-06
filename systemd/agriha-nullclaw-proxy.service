@@ -5,7 +5,8 @@ After=network.target
 [Service]
 Type=simple
 User=agriha
-ExecStart=/opt/agriha/venv/bin/uvicorn agriha.control.nullclaw_proxy:app --host 127.0.0.1 --port 3001
+ExecStart=/usr/local/bin/uvicorn agriha.control.nullclaw_proxy:app --host 127.0.0.1 --port 3001
+WorkingDirectory=/opt/agriha
 Restart=always
 RestartSec=5
 EnvironmentFile=/opt/agriha/.env
