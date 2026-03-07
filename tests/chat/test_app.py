@@ -29,15 +29,19 @@ import yaml
 
 import agriha.chat.app as app_module
 from agriha.chat.app import (
+    APN_PRESETS,
     _build_plan_timeline,
     _load_channel_map_text,
     _load_forecast_config_text,
     _load_rules_text,
     app,
+    get_network_status,
+    load_network_config,
     mask_api_key,
     read_env_file,
     save_channel_map,
     save_forecast_config,
+    save_network_config,
     save_rules,
     write_env_key,
 )
@@ -894,4 +898,164 @@ async def test_settings_page_renders_provider_select_and_api_key_status(
     assert "forecast_config_text" in html
     # NullClawがデフォルト（APIキー未設定でも動作するバナーが表示される）
     assert "ローカル" in html
+
+
+# ─────────────────────────────────────────────────────────────
+# ネットワーク設定テスト
+# ─────────────────────────────────────────────────────────────
+
+def test_load_network_config_returns_defaults_when_missing(tmp_path: Path) -> None:
+    """network.yaml が存在しない場合 SORACOM デフォルト値が返る。"""
+    cfg = load_network_config(str(tmp_path / "nonexistent.yaml"))
+    assert cfg["apn"] == "soracom.io"
+    assert cfg["user"] == "sora"
+    assert cfg["auth"] == "chap"
+
+
+def test_save_and_load_network_config(tmp_path: Path) -> None:
+    """network.yaml の保存と読み込みが正常に動作する。"""
+    path = str(tmp_path / "network.yaml")
+    data = {"apn": "iijmio.jp", "user": "mio@iij", "password": "iij", "auth": "chap"}
+    save_network_config(path, data)
+    loaded = load_network_config(path)
+    assert loaded["apn"] == "iijmio.jp"
+    assert loaded["user"] == "mio@iij"
+
+
+def test_get_network_status_no_mmcli(monkeypatch: pytest.MonkeyPatch) -> None:
+    """mmcli が存在しない環境でもエラーにならず modem_detected=False を返す。"""
+    import subprocess as sp
+
+    def _raise(*args: object, **kwargs: object) -> None:
+        raise FileNotFoundError("mmcli not found")
+
+    monkeypatch.setattr(sp, "run", _raise)
+    status = get_network_status()
+    assert status["modem_detected"] is False
+    assert status["ip_address"] is None
+    assert status["webhook_url"] is None
+
+
+def test_get_network_status_no_modem_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    """mmcli が存在するがドングル未検出 → modem_detected=False。"""
+    import subprocess as sp
+    from types import SimpleNamespace
+
+    def _mock_run(args: list, **kwargs: object) -> object:
+        if args[0] == "mmcli":
+            return SimpleNamespace(stdout="No modems were found", stderr="", returncode=0)
+        return SimpleNamespace(stdout="", stderr="", returncode=1)
+
+    monkeypatch.setattr(sp, "run", _mock_run)
+    status = get_network_status()
+    assert status["modem_detected"] is False
+    assert "見つかりません" in status["modem_info"]
+
+
+def test_get_network_status_modem_detected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """mmcli でモデム検出 + nmcli でIP取得 → modem_detected=True, ip_address が設定される。"""
+    import subprocess as sp
+    from types import SimpleNamespace
+
+    def _mock_run(args: list, **kwargs: object) -> object:
+        if args[0] == "mmcli":
+            return SimpleNamespace(stdout="/org/freedesktop/ModemManager1/Modem/0 [Huawei] E8372", stderr="", returncode=0)
+        if args[0] == "nmcli":
+            return SimpleNamespace(stdout="IP4.ADDRESS[1]:10.128.0.1/32\n", stderr="", returncode=0)
+        return SimpleNamespace(stdout="", stderr="", returncode=1)
+
+    monkeypatch.setattr(sp, "run", _mock_run)
+    status = get_network_status()
+    assert status["modem_detected"] is True
+    assert status["connection_type"] == "cellular"
+    assert status["ip_address"] == "10.128.0.1"
+    assert status["webhook_url"] == "https://10.128.0.1/callback"
+
+
+def test_apn_presets_contains_soracom() -> None:
+    """APN_PRESETS に SORACOM Air（デフォルト）が含まれる。"""
+    assert "soracom" in APN_PRESETS
+    assert APN_PRESETS["soracom"]["apn"] == "soracom.io"
+
+
+@pytest.mark.anyio
+async def test_api_network_status_no_modem(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GET /api/network/status がドングル未検出時も 200 を返す。"""
+    import subprocess as sp
+    from types import SimpleNamespace
+
+    def _no_modem(args: list, **kwargs: object) -> object:
+        return SimpleNamespace(stdout="No modems were found", stderr="", returncode=0)
+
+    monkeypatch.setattr(sp, "run", _no_modem)
+    r = await client.get("/api/network/status", headers=_basic_auth())
+    assert r.status_code == 200
+    data = r.json()
+    assert data["modem_detected"] is False
+
+
+@pytest.mark.anyio
+async def test_post_network_apn_saves_config(
+    client: AsyncClient, tmp_path: Path
+) -> None:
+    """POST /settings/network/apn で network.yaml が保存される。"""
+    net_path = tmp_path / "network.yaml"
+    with patch.object(app_module, "NETWORK_CONFIG_PATH", str(net_path)):
+        r = await client.post(
+            "/settings/network/apn",
+            data={"preset": "manual", "apn": "test.apn", "user": "testuser", "password": "testpass", "auth": "pap"},
+            headers=_basic_auth(),
+            follow_redirects=True,
+        )
+    assert r.status_code == 200
+    assert "saved=1" in str(r.url)
+    cfg = load_network_config(str(net_path))
+    assert cfg["apn"] == "test.apn"
+    assert cfg["user"] == "testuser"
+    assert cfg["auth"] == "pap"
+
+
+@pytest.mark.anyio
+async def test_post_network_apn_preset_soracom(
+    client: AsyncClient, tmp_path: Path
+) -> None:
+    """POST /settings/network/apn でプリセット soracom を選択するとデフォルト値が保存される。"""
+    net_path = tmp_path / "network.yaml"
+    with patch.object(app_module, "NETWORK_CONFIG_PATH", str(net_path)):
+        r = await client.post(
+            "/settings/network/apn",
+            data={"preset": "soracom", "apn": "", "user": "", "password": "", "auth": "chap"},
+            headers=_basic_auth(),
+            follow_redirects=True,
+        )
+    assert r.status_code == 200
+    cfg = load_network_config(str(net_path))
+    assert cfg["apn"] == "soracom.io"
+
+
+@pytest.mark.anyio
+async def test_settings_page_shows_network_section(
+    settings_client_with_forecast: AsyncClient,
+) -> None:
+    """GET /settings にネットワーク設定セクションが含まれる。"""
+    import subprocess as sp
+    from types import SimpleNamespace
+
+    def _no_modem(args: list, **kwargs: object) -> object:
+        return SimpleNamespace(stdout="No modems were found", stderr="", returncode=0)
+
+    with (
+        patch("agriha.chat.app.fetch_sensors", return_value={}),
+        patch("agriha.chat.app.get_relay_labels", return_value={}),
+        patch("subprocess.run", _no_modem),
+    ):
+        r = await settings_client_with_forecast.get("/settings")
+    assert r.status_code == 200
+    html = r.text
+    assert "ネットワーク設定" in html
+    assert "APN" in html
+    assert "soracom.io" in html
+    assert "USB SIM" in html
 

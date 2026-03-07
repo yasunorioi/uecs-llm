@@ -15,6 +15,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import subprocess
+
 import httpx
 import yaml
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
@@ -45,6 +47,7 @@ RULE_ENGINE_STATE_PATH = os.getenv("RULE_ENGINE_STATE_PATH", "/var/lib/agriha/ru
 CURRENT_PLAN_PATH = os.getenv("CURRENT_PLAN_PATH", "/var/lib/agriha/current_plan.json")
 AGRIHA_FLAG_DIR = os.getenv("AGRIHA_FLAG_DIR", "/var/lib/agriha")
 AGRIHA_LOG_DIR = os.getenv("AGRIHA_LOG_DIR", "/var/log/agriha")
+NETWORK_CONFIG_PATH = os.getenv("NETWORK_CONFIG_PATH", "/etc/agriha/network.yaml")
 
 # ── FastAPI / テンプレート設定 ─────────────────────────────────────────────
 _HERE = Path(__file__).parent
@@ -200,6 +203,122 @@ def mask_api_key(value: str) -> str:
     if len(value) <= 4:
         return "****"
     return "****" + value[-4:]
+
+
+# ── APN プリセット定義 ──────────────────────────────────────────────────────
+APN_PRESETS: dict[str, dict[str, str]] = {
+    "soracom": {
+        "label": "SORACOM Air（デフォルト）",
+        "apn": "soracom.io",
+        "user": "sora",
+        "password": "sora",
+        "auth": "chap",
+    },
+    "iijmio": {
+        "label": "IIJmio",
+        "apn": "iijmio.jp",
+        "user": "mio@iij",
+        "password": "iij",
+        "auth": "chap",
+    },
+    "manual": {
+        "label": "手動入力",
+        "apn": "",
+        "user": "",
+        "password": "",
+        "auth": "chap",
+    },
+}
+
+
+def load_network_config(path: str = NETWORK_CONFIG_PATH) -> dict[str, str]:
+    """network.yaml を読み込む。ファイルがなければSORACOMデフォルト値を返す。"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return {
+            "apn": str(data.get("apn", "soracom.io")),
+            "user": str(data.get("user", "sora")),
+            "password": str(data.get("password", "sora")),
+            "auth": str(data.get("auth", "chap")),
+        }
+    except FileNotFoundError:
+        return {"apn": "soracom.io", "user": "sora", "password": "sora", "auth": "chap"}
+
+
+def save_network_config(path: str, data: dict[str, str]) -> None:
+    """network.yaml に書き込む。"""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        yaml.dump(data, allow_unicode=True, default_flow_style=False),
+        encoding="utf-8",
+    )
+
+
+def get_network_status() -> dict[str, Any]:
+    """USB SIMドングルの接続状態を取得する。
+
+    ModemManager/nmcli が無い環境（開発PC等）でもエラーにならない。
+    Returns:
+        {
+          "connection_type": "cellular" | "wifi" | "ethernet" | "unknown",
+          "modem_detected": bool,
+          "ip_address": str | None,
+          "webhook_url": str | None,
+          "modem_info": str,
+        }
+    """
+    result: dict[str, Any] = {
+        "connection_type": "unknown",
+        "modem_detected": False,
+        "ip_address": None,
+        "webhook_url": None,
+        "modem_info": "",
+    }
+
+    # mmcli でモデム検出（ModemManager未インストール時は graceful skip）
+    try:
+        proc = subprocess.run(
+            ["mmcli", "-L"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        output = proc.stdout.strip()
+        if "No modems were found" in output or output == "":
+            result["modem_info"] = "USB SIMドングルが見つかりません"
+        else:
+            result["modem_detected"] = True
+            result["connection_type"] = "cellular"
+            result["modem_info"] = output.splitlines()[0] if output else ""
+    except FileNotFoundError:
+        # mmcli コマンド自体がインストールされていない
+        result["modem_info"] = "ModemManager未インストール"
+    except Exception:
+        result["modem_info"] = "モデム情報取得エラー"
+
+    # nmcli でセルラーIPアドレス取得（nmcli未インストール時は graceful skip）
+    if result["modem_detected"]:
+        try:
+            proc = subprocess.run(
+                ["nmcli", "-t", "-f", "IP4.ADDRESS", "device", "show"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            for line in proc.stdout.splitlines():
+                if line.startswith("IP4.ADDRESS"):
+                    # IP4.ADDRESS[1]:10.xxx.xxx.xxx/xx → IPアドレス部分を取得
+                    addr = line.split(":", 1)[-1].strip().split("/")[0]
+                    if addr:
+                        result["ip_address"] = addr
+                        result["webhook_url"] = f"https://{addr}/callback"
+                        break
+        except (FileNotFoundError, Exception):
+            pass
+
+    return result
 
 
 # プロバイダー定義（プルダウン用）
@@ -573,6 +692,9 @@ async def settings(
     provider_def = _get_provider_by_id(current_provider) or LLM_PROVIDERS[0]
     current_api_key_raw = env_vars.get(provider_def["api_key_env"], "")
     current_api_key_masked = mask_api_key(current_api_key_raw) if current_api_key_raw else None
+    # ネットワーク設定
+    network_config = load_network_config(NETWORK_CONFIG_PATH)
+    network_status = get_network_status()
     flash: str | None = None
     if saved:
         flash = "設定を保存しました"
@@ -588,6 +710,9 @@ async def settings(
         "llm_providers": LLM_PROVIDERS,
         "current_provider": current_provider,
         "current_api_key_masked": current_api_key_masked,
+        "network_config": network_config,
+        "network_status": network_status,
+        "apn_presets": APN_PRESETS,
         "flash": flash,
     }
     return templates.TemplateResponse("settings.html", ctx)
@@ -675,6 +800,40 @@ async def save_forecast_config_route(
         return RedirectResponse(url="/settings?error=1", status_code=303)
     try:
         save_forecast_config(FORECAST_CONFIG_PATH, forecast_config_text)
+        return RedirectResponse(url="/settings?saved=1", status_code=303)
+    except Exception:
+        return RedirectResponse(url="/settings?error=1", status_code=303)
+
+
+@app.get("/api/network/status")
+async def api_network_status(_: None = Depends(verify_auth)) -> dict[str, Any]:
+    """USB SIMドングルの接続状態を返す。ドングル未検出でもエラーにならない。"""
+    return get_network_status()
+
+
+@app.post("/settings/network/apn")
+async def save_network_apn(
+    preset: str = Form(default="manual"),
+    apn: str = Form(default=""),
+    user: str = Form(default=""),
+    password: str = Form(default=""),
+    auth: str = Form(default="chap"),
+    _: None = Depends(verify_auth),
+) -> RedirectResponse:
+    """APN設定をnetwork.yamlに保存する。"""
+    try:
+        # プリセット選択時はプリセット値を使う（手動入力以外）
+        if preset in APN_PRESETS and preset != "manual":
+            cfg = dict(APN_PRESETS[preset])
+            cfg.pop("label", None)
+        else:
+            cfg = {
+                "apn": apn.strip(),
+                "user": user.strip(),
+                "password": password.strip(),
+                "auth": auth.strip() or "chap",
+            }
+        save_network_config(NETWORK_CONFIG_PATH, cfg)
         return RedirectResponse(url="/settings?saved=1", status_code=303)
     except Exception:
         return RedirectResponse(url="/settings?error=1", status_code=303)
