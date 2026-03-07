@@ -32,7 +32,7 @@ echo "  → pip install 完了"
 echo "[2/6] 設定ディレクトリ作成..."
 sudo mkdir -p "$CONFIG_DIR"
 # 既存ファイルは上書きしない（農家が手動編集した設定を守る）
-for f in config/emergency.conf config/rules.yaml config/forecast.yaml config/channel_map.yaml config/crop_irrigation.yaml; do
+for f in config/emergency.conf config/rules.yaml config/forecast.yaml config/channel_map.yaml config/crop_irrigation.yaml config/thresholds.yaml; do
     fname=$(basename "$f")
     if [ ! -f "${CONFIG_DIR}/${fname}" ]; then
         sudo cp "${SCRIPT_DIR}/${f}" "${CONFIG_DIR}/${fname}"
@@ -73,7 +73,7 @@ echo "  → /var/log/agriha 作成完了"
 sudo chown -R "${AGRIHA_USER}:${AGRIHA_USER}" "${SCRIPT_DIR}"
 echo "  → ${SCRIPT_DIR} 所有権を ${AGRIHA_USER} に変更"
 # ダッシュボードから編集するファイルはagrihaユーザーに書き込み権限を付与
-for f in rules.yaml channel_map.yaml system_prompt.txt crop_irrigation.yaml forecast.yaml; do
+for f in rules.yaml channel_map.yaml system_prompt.txt crop_irrigation.yaml forecast.yaml thresholds.yaml network.yaml; do
     if [ -f "${CONFIG_DIR}/${f}" ]; then
         sudo chown "${AGRIHA_USER}:${AGRIHA_USER}" "${CONFIG_DIR}/${f}"
         sudo chmod 664 "${CONFIG_DIR}/${f}"
