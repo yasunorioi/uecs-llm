@@ -651,6 +651,51 @@ def _tail_log(path: str, lines: int) -> list[str]:
 
 # ── ルート定義 ─────────────────────────────────────────────────────────────
 
+@app.get("/health")
+async def health_check() -> dict[str, Any]:
+    """ヘルスチェックエンドポイント（認証不要）。"""
+    result: dict[str, Any] = {"status": "ok", "version": "4.0"}
+
+    # rule_engine_last_run
+    try:
+        state = json.loads(Path(RULE_ENGINE_STATE_PATH).read_text(encoding="utf-8"))
+        result["rule_engine_last_run"] = state.get("last_run_at")
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        result["rule_engine_last_run"] = None
+
+    # forecast_last_run
+    try:
+        plan = json.loads(Path(CURRENT_PLAN_PATH).read_text(encoding="utf-8"))
+        result["forecast_last_run"] = plan.get("generated_at")
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        result["forecast_last_run"] = None
+
+    # sensor_reachable
+    try:
+        r = httpx.get(f"{UNIPI_API_URL}/api/sensors", timeout=3.0)
+        result["sensor_reachable"] = r.status_code == 200
+    except Exception:
+        result["sensor_reachable"] = False
+
+    # lockout_active
+    try:
+        lockout_path = Path(AGRIHA_FLAG_DIR) / "lockout_state.json"
+        if lockout_path.exists():
+            lockout_data = json.loads(lockout_path.read_text(encoding="utf-8"))
+            until_str = lockout_data.get("layer1_lockout_until", "")
+            if until_str:
+                until = datetime.fromisoformat(until_str)
+                result["lockout_active"] = datetime.now(tz=until.tzinfo) < until
+            else:
+                result["lockout_active"] = False
+        else:
+            result["lockout_active"] = False
+    except (json.JSONDecodeError, ValueError, OSError):
+        result["lockout_active"] = False
+
+    return result
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(
     request: Request,

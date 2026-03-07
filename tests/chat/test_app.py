@@ -1059,3 +1059,17 @@ async def test_settings_page_shows_network_section(
     assert "soracom.io" in html
     assert "USB SIM" in html
 
+
+# ---------- cmd_355/subtask_794: /health エンドポイントテスト ----------
+
+
+@pytest.mark.anyio
+async def test_health_endpoint_returns_ok() -> None:
+    """GET /health は認証なしで 200 + status=ok を返す。"""
+    transport = ASGITransport(app=app_module.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        r = await ac.get("/health")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "ok"
+    assert "version" in data

@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from agriha.control.forecast_engine import (
+    ALLOWED_TOOL_NAMES,
     TOOLS,
     VC_CACHE_TTL,
     build_plan_from_search_results,
@@ -1222,7 +1223,7 @@ class TestLoadThresholdHint:
 
 
 @patch("agriha.control.forecast_engine.get_sun_times")
-def test_backward_compat_claude_config_key(mock_sun, tmp_path):
+def test_backward_compat_claude_config_key(mock_sun, tmp_path):  # noqa: C901
     """後方互換性: "claude" キーが設定されても正常に動作する。"""
     now = datetime.now(_JST)
     mock_sun.return_value = {
@@ -1269,3 +1270,67 @@ def test_backward_compat_claude_config_key(mock_sun, tmp_path):
         )
 
     assert result["status"] == "ok"
+
+
+# ---------- cmd_355/subtask_794: ホワイトリスト & dry_run テスト ----------
+
+
+class TestAllowedToolNames:
+    """ALLOWED_TOOL_NAMES ホワイトリスト検証。"""
+
+    def test_allowed_tools_contains_expected(self) -> None:
+        """ホワイトリストに想定ツールが含まれる。"""
+        assert "get_sensors" in ALLOWED_TOOL_NAMES
+        assert "get_status" in ALLOWED_TOOL_NAMES
+        assert "set_relay" in ALLOWED_TOOL_NAMES
+
+    def test_call_tool_unknown_returns_error(self) -> None:
+        """未知ツール名は error 応答を返す。"""
+        result = call_tool(MagicMock(), "http://localhost:8080", "", "unknown_tool_xyz", {})
+        data = json.loads(result)
+        assert "error" in data
+
+    def test_call_tool_allowed_get_sensors(self) -> None:
+        """get_sensors はホワイトリストに含まれ call_tool が実行される。"""
+        mock_http = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.text = json.dumps({"temp": 25.0})
+        mock_resp.raise_for_status = MagicMock()
+        mock_http.get.return_value = mock_resp
+        result = call_tool(mock_http, "http://localhost:8080", "", "get_sensors", {})
+        data = json.loads(result)
+        assert "error" not in data
+
+
+@patch("agriha.control.forecast_engine.get_sun_times")
+def test_dry_run_does_not_write_plan_file(mock_sun, tmp_path):
+    """dry_run=True → current_plan.json が生成されない。"""
+    now = datetime.now(_JST)
+    mock_sun.return_value = {
+        "sunrise": now.replace(hour=5, minute=30),
+        "sunset": now.replace(hour=17, minute=30),
+        "elevation": 21,
+    }
+
+    cfg = _base_config(tmp_path)
+    plan_path = Path(cfg["state"]["plan_path"])
+
+    with (
+        patch(
+            "agriha.control.forecast_engine.SEARCH_LOG_PATH",
+            str(tmp_path / "search_log.jsonl"),
+        ),
+        patch(
+            "agriha.control.forecast_engine.PID_OVERRIDE_PATH",
+            str(tmp_path / "pid_override.json"),
+        ),
+    ):
+        result = run_forecast(
+            cfg,
+            llm_client=_mock_openai_normal(),
+            http_client=_mock_http_client(),
+            dry_run=True,
+        )
+
+    assert result["status"] == "ok"
+    assert not plan_path.exists(), "dry_run=True なのに current_plan.json が書き込まれた"
