@@ -88,6 +88,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
 # ツール定義 (OpenAI tools 形式) — set_relay は除外
 # ---------------------------------------------------------------------------
 
+ALLOWED_TOOL_NAMES: set[str] = {"get_sensors", "get_status", "set_relay"}
+
 TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -789,6 +791,7 @@ def run_forecast(
     llm_client: Any = None,
     anthropic_client: Any = None,  # 後方互換性エイリアス
     http_client: Any = None,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     """メイン予報生成ループ（1回実行、cron から呼ばれる）。
 
@@ -797,6 +800,7 @@ def run_forecast(
         llm_client: OpenAI互換クライアント（テスト用 DI）。
         anthropic_client: 後方互換性のためのエイリアス。llm_client が None の場合に使用。
         http_client: unipi-daemon REST API 用 HTTP クライアント（テスト用 DI）。
+        dry_run: True の場合、current_plan.json 書き込みをスキップ。結果のみ返す。
 
     Returns:
         結果辞書。lockout中は {"status": "skipped", "reason": ...}。
@@ -990,8 +994,24 @@ def run_forecast(
                         _final_text = msg.content or ""
                         break
 
+                    blocked_tool_calls: list[str] = []
                     for tc in msg.tool_calls:
                         tool_name = tc.function.name
+                        if tool_name not in ALLOWED_TOOL_NAMES:
+                            logger.warning(
+                                "Blocked tool call [round %d]: %s (not in ALLOWED_TOOL_NAMES)",
+                                round_num, tool_name,
+                            )
+                            blocked_tool_calls.append(tool_name)
+                            _messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": json.dumps(
+                                    {"error": f"tool '{tool_name}' is not allowed"},
+                                    ensure_ascii=False,
+                                ),
+                            })
+                            continue
                         try:
                             tool_input = json.loads(tc.function.arguments or "{}")
                         except json.JSONDecodeError:
@@ -1062,49 +1082,66 @@ def run_forecast(
                     "next_check_note": "",
                 }
 
+        # Step 6.5: 天気情報フィールドを plan_output に追加（rule_engine 連携用）
+        if _weather_data:
+            cc = _weather_data.get("currentConditions") or {}
+            plan_output["weather_summary"] = cc.get("conditions", "不明")
+            _ot = cc.get("temp")
+            plan_output["outdoor_temp_forecast_c"] = float(_ot) if _ot is not None else None
+            _rp = cc.get("precipprob")
+            plan_output["rain_probability"] = float(_rp) if _rp is not None else None
+        else:
+            plan_output["weather_summary"] = None
+            plan_output["outdoor_temp_forecast_c"] = None
+            plan_output["rain_probability"] = None
+
         # Step 7: current_plan.json 書き込み
         plan_path = Path(state_cfg["plan_path"])
-        plan_path.parent.mkdir(parents=True, exist_ok=True)
-        plan_path.write_text(
-            json.dumps(plan_output, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        logger.info("Plan written to %s (%d actions)", plan_path, len(plan_output["actions"]))
+        if dry_run:
+            logger.info("DRY-RUN: current_plan.json 書き込みスキップ (%d actions)", len(plan_output["actions"]))
+        else:
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            plan_path.write_text(
+                json.dumps(plan_output, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            logger.info("Plan written to %s (%d actions)", plan_path, len(plan_output["actions"]))
 
-        # Step 7.5: 検索ログ + PIDオーバーライド更新
-        log_search(
-            query=search_query,
-            hits=search_results.get("total_hits", 0),
-            skipped_llm=skip_llm,
-            plan_source=plan_source,
-        )
-        convert_llm_to_pid_override(plan_output)
+        if not dry_run:
+            # Step 7.5: 検索ログ + PIDオーバーライド更新
+            log_search(
+                query=search_query,
+                hits=search_results.get("total_hits", 0),
+                skipped_llm=skip_llm,
+                plan_source=plan_source,
+            )
+            convert_llm_to_pid_override(plan_output)
 
-        # Step 8: 判断ログ保存
-        actions_summary = "; ".join(
-            f"ch{a['relay_ch']}={'ON' if a['value'] else 'OFF'} @{a['execute_at']}"
-            for a in plan_output["actions"]
-        ) or "現状維持"
+            # Step 8: 判断ログ保存
+            actions_summary = "; ".join(
+                f"ch{a['relay_ch']}={'ON' if a['value'] else 'OFF'} @{a['execute_at']}"
+                for a in plan_output["actions"]
+            ) or "現状維持"
 
-        save_decision(
-            db,
-            summary=plan_output["summary"][:500],
-            actions=actions_summary,
-            raw_response=final_text[:2000] if final_text else "",
-            sensor_snapshot=sensor_snapshot[:2000],
-        )
+            save_decision(
+                db,
+                summary=plan_output["summary"][:500],
+                actions=actions_summary,
+                raw_response=final_text[:2000] if final_text else "",
+                sensor_snapshot=sensor_snapshot[:2000],
+            )
 
-        # last_decision.json 更新
-        last_decision_path = Path(state_cfg["last_decision_path"])
-        last_decision_path.parent.mkdir(parents=True, exist_ok=True)
-        last_decision_path.write_text(
-            json.dumps({
-                "timestamp": now.isoformat(),
-                "summary": plan_output["summary"],
-                "actions_count": len(plan_output["actions"]),
-            }, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+            # last_decision.json 更新
+            last_decision_path = Path(state_cfg["last_decision_path"])
+            last_decision_path.parent.mkdir(parents=True, exist_ok=True)
+            last_decision_path.write_text(
+                json.dumps({
+                    "timestamp": now.isoformat(),
+                    "summary": plan_output["summary"],
+                    "actions_count": len(plan_output["actions"]),
+                }, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
 
         db.close()
 
@@ -1136,22 +1173,30 @@ def _merge_config(base: dict, override: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    """CLI エントリポイント。cron から呼ばれる。"""
+    """CLI エントリポイント。argparse でオプションを処理する。"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Layer 3: LLM 1時間予報エンジン")
+    parser.add_argument("--dry-run", action="store_true", help="LLM呼び出し+計画生成のみ。current_plan.json書き込みしない")
+    parser.add_argument("-v", "--verbose", action="store_true", help="DEBUG レベルログ有効化")
+    parser.add_argument("--config", type=str, default=None, help="forecast.yaml パス")
+    args = parser.parse_args()
+
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
 
     config = dict(DEFAULT_CONFIG)
-    if len(sys.argv) > 2 and sys.argv[1] == "--config":
-        config_path = Path(sys.argv[2])
+    if args.config:
+        config_path = Path(args.config)
         if config_path.exists():
             with open(config_path, encoding="utf-8") as f:
                 user_config = yaml.safe_load(f) or {}
             config = _merge_config(config, user_config)
 
-    result = run_forecast(config)
-    print(f"Result: {result}")
+    result = run_forecast(config, dry_run=args.dry_run)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

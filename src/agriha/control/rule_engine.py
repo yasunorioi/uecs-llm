@@ -304,20 +304,28 @@ def evaluate_rules(
     current_plan: dict[str, Any] | None,
     now: datetime | None = None,
     channel_map_path: str | Path | None = None,
+    prev_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     ルール評価。各ルールの適用結果と更新後の solar_acc を返す。
+
+    Args:
+        prev_state: load_state() の戻り値。cron再起動後の状態引き継ぎに使用。
 
     Returns:
         {
             "relay_actions": [(ch, value, duration_sec_or_None), ...],
             "solar_acc": updated accumulator dict,
             "triggered_rules": [str, ...],
+            "window_state": "open" | "closed" | "unknown",
+            "temperature_stage": "low" | "normal" | "high" | "critical",
+            "last_irrigation_at": ISO8601 str | None,
         }
     """
     now = now or datetime.now(tz=_JST)
     relay_actions: list[tuple[int, int, int | None]] = []
     triggered_rules: list[str] = []
+    _prev_state = prev_state or {}
 
     temp_cfg = cfg["temperature"]
     wind_cfg = cfg["wind"]
@@ -335,8 +343,16 @@ def evaluate_rules(
     nighttime = is_nighttime(cfg, now)
     target_temp = temp_cfg["target_night"] if nighttime else temp_cfg["target_day"]
 
-    # Layer 3 計画が有効かどうか
+    # Layer 3 計画が有効かどうか + 天気予報フィールド取得
     layer3_active = current_plan is not None
+    plan_rain_probability: float | None = None
+    if current_plan is not None:
+        _rp = current_plan.get("rain_probability")
+        if _rp is not None:
+            try:
+                plan_rain_probability = float(_rp)
+            except (TypeError, ValueError):
+                pass
 
     def _acted_chs() -> set[int]:
         return {a[0] for a in relay_actions}
@@ -355,7 +371,11 @@ def evaluate_rules(
         chs = _acted_chs()
         return g["open_channel"] in chs or g["close_channel"] in chs
 
-    # ── Rule 6a: 降雨チェック ───────────────────────────
+    # ── Rule 6a: 降雨チェック（実測 + 予報確率）────────
+    _forecast_rain = (
+        plan_rain_probability is not None and plan_rain_probability >= 70
+        and rainfall <= rain_cfg["threshold_mm_h"]
+    )
     if rainfall > rain_cfg["threshold_mm_h"]:
         triggered_rules.append("rain_close_all")
         for g in groups:
@@ -369,6 +389,28 @@ def evaluate_rules(
             "relay_actions": relay_actions,
             "solar_acc": solar_acc,
             "triggered_rules": triggered_rules,
+            "window_state": "closed",
+            "temperature_stage": _get_temperature_stage(indoor_temp),
+            "last_irrigation_at": solar_acc.get("last_irrigation_at"),
+        }
+    if _forecast_rain:
+        triggered_rules.append("forecast_rain_close_all")
+        for g in groups:
+            _close_group(g)
+        logger.info(
+            "Rule 6a(予報): rain_probability=%.0f%% >= 70 → 予防的全窓閉",
+            plan_rain_probability,
+        )
+        _eval_irrigation(
+            cfg, crop_cfg, insolar, solar_acc, relay_actions, triggered_rules
+        )
+        return {
+            "relay_actions": relay_actions,
+            "solar_acc": solar_acc,
+            "triggered_rules": triggered_rules,
+            "window_state": "closed",
+            "temperature_stage": _get_temperature_stage(indoor_temp),
+            "last_irrigation_at": solar_acc.get("last_irrigation_at"),
         }
 
     # ── Rule 6b: 強風チェック ──────────────────────────
@@ -430,6 +472,11 @@ def evaluate_rules(
         "relay_actions": relay_actions,
         "solar_acc": solar_acc,
         "triggered_rules": triggered_rules,
+        "window_state": _compute_window_state(
+            relay_actions, groups, _prev_state.get("window_state", "unknown")
+        ),
+        "temperature_stage": _get_temperature_stage(indoor_temp),
+        "last_irrigation_at": solar_acc.get("last_irrigation_at"),
     }
 
 
@@ -470,8 +517,77 @@ def _eval_irrigation(
 
 
 # ──────────────────────────────────────────────
-# 状態保存
+# 温度段階判定・窓状態導出ヘルパー
 # ──────────────────────────────────────────────
+
+def _get_temperature_stage(temp: float | None) -> str:
+    """現在の室内温度からピタゴラスイッチの段階を返す。
+
+    Returns:
+        "critical": 閾値超過（≥27℃ または <16℃）
+        "high":     高温注意（≥26℃）
+        "low":      低温注意（<16.5℃）
+        "normal":   正常範囲
+    """
+    if temp is None:
+        return "normal"
+    if temp >= TEMP_THRESHOLD_HIGH or temp < TEMP_THRESHOLD_LOW:
+        return "critical"
+    if temp >= 26.0:
+        return "high"
+    if temp < 16.5:
+        return "low"
+    return "normal"
+
+
+def _compute_window_state(
+    relay_actions: list[tuple[int, int, int | None]],
+    groups: list[dict],
+    prev_window_state: str,
+) -> str:
+    """relay_actions から現在の窓状態を導出する。
+
+    アクションがない場合は prev_window_state を引き継ぐ。
+    """
+    action_map = {ch: val for ch, val, _ in relay_actions}
+    if any(action_map.get(g["open_channel"]) == 1 for g in groups):
+        return "open"
+    if any(action_map.get(g["close_channel"]) == 1 for g in groups):
+        return "closed"
+    return prev_window_state
+
+
+# ──────────────────────────────────────────────
+# 状態保存・読み込み
+# ──────────────────────────────────────────────
+
+def load_state(state_path: str = DEFAULT_STATE_PATH) -> dict[str, Any]:
+    """rule_engine_state.json を読み込む。
+
+    ファイルなし・パースエラー時はデフォルト値を返す。
+
+    Returns:
+        {
+            "window_state": "open" | "closed" | "unknown",
+            "last_irrigation_at": ISO8601 str | None,
+            "temperature_stage": "low" | "normal" | "high" | "critical",
+        }
+    """
+    defaults: dict[str, Any] = {
+        "window_state": "unknown",
+        "last_irrigation_at": None,
+        "temperature_stage": "normal",
+    }
+    try:
+        data = json.loads(Path(state_path).read_text())
+        return {
+            "window_state": data.get("window_state", defaults["window_state"]),
+            "last_irrigation_at": data.get("last_irrigation_at"),
+            "temperature_stage": data.get("temperature_stage", defaults["temperature_stage"]),
+        }
+    except (FileNotFoundError, json.JSONDecodeError):
+        return dict(defaults)
+
 
 def save_state(state_path: str, result: dict[str, Any]) -> None:
     state = {
@@ -481,6 +597,9 @@ def save_state(state_path: str, result: dict[str, Any]) -> None:
             {"channel": a[0], "value": a[1], "duration_sec": a[2]}
             for a in result.get("relay_actions", [])
         ],
+        "window_state": result.get("window_state", "unknown"),
+        "last_irrigation_at": result.get("last_irrigation_at"),
+        "temperature_stage": result.get("temperature_stage", "normal"),
     }
     Path(state_path).parent.mkdir(parents=True, exist_ok=True)
     Path(state_path).write_text(json.dumps(state, ensure_ascii=False, indent=2))
@@ -709,9 +828,12 @@ def run(
     flag_dir: str = FLAG_DIR,
     temp_history_path: str = DEFAULT_TEMP_HISTORY_PATH,
     threshold_hint_path: str = DEFAULT_THRESHOLD_HINT_PATH,
+    dry_run: bool = False,
 ) -> int:
     """
     rule_engine のメイン処理。
+    Args:
+        dry_run: True の場合、センサー取得+ルール評価のみ。リレー操作しない。
     Returns: 0=正常終了, 1=スキップ/エラー
     """
     _setup_logging()
@@ -733,6 +855,14 @@ def run(
     api_cfg = cfg.get("unipi_api", {})
     api_base = api_cfg.get("base_url", api_base)
     timeout = api_cfg.get("timeout_sec", 10)
+
+    # Step 2.5: 前回状態読み込み + Layer 3 計画（早期ロード: threshold_hint計算に活用）
+    prev_state = load_state(state_path)
+    current_plan = load_current_plan(plan_path)
+    logger.info(
+        "前回状態: window=%s stage=%s",
+        prev_state["window_state"], prev_state["temperature_stage"],
+    )
 
     # Step 3: センサーデータ取得 + CommandGate ロックアウト確認（リトライ付き）
     try:
@@ -760,14 +890,22 @@ def run(
                 temp_history = append_temp_history(
                     temp_history, indoor_temp_for_hint, path=temp_history_path
                 )
-                # 天気予報外気温（あれば）を取得して精度向上
+                # forecast_engine が計画に書いた予報外気温を優先、なければ Misol 現在値を使用
                 outdoor_temp_for_hint: float | None = None
-                try:
-                    outdoor_temp_for_hint = float(
-                        get_misol(sensors).get("temperature_c") or 0.0
-                    ) or None
-                except (TypeError, ValueError):
-                    pass
+                if current_plan is not None:
+                    _ot = current_plan.get("outdoor_temp_forecast_c")
+                    if _ot is not None:
+                        try:
+                            outdoor_temp_for_hint = float(_ot)
+                        except (TypeError, ValueError):
+                            pass
+                if outdoor_temp_for_hint is None:
+                    try:
+                        outdoor_temp_for_hint = float(
+                            get_misol(sensors).get("temperature_c") or 0.0
+                        ) or None
+                    except (TypeError, ValueError):
+                        pass
                 hint = compute_threshold_hint(temp_history, outdoor_temp_for_hint)
                 save_threshold_hint(hint, threshold_hint_path)
                 logger.info(
@@ -782,14 +920,12 @@ def run(
 
             # Step 4: 日の出/日没計算は evaluate_rules 内で行う
 
-            # Step 5: Layer 3 計画確認
-            current_plan = load_current_plan(plan_path)
-
-            # Step 6: ルール評価
+            # Step 6: ルール評価（prev_state + current_plan を渡す）
             solar_acc = load_solar_accumulator(solar_acc_path)
             result = evaluate_rules(
                 cfg, crop_cfg, sensors, status, solar_acc, current_plan,
                 channel_map_path=channel_map_path,
+                prev_state=prev_state,
             )
 
             # Step 7: アクション実行（変更がある場合のみ）
@@ -799,17 +935,34 @@ def run(
                 seen: dict[int, tuple[int, int | None]] = {}
                 for ch, val, dur in relay_actions:
                     seen[ch] = (val, dur)
-                for ch, (val, dur) in seen.items():
-                    retry_with_backoff(
-                        lambda _ch=ch, _val=val, _dur=dur: post_relay(
-                            client, api_base, _ch, _val, _dur
-                        ),
-                        delays=RETRY_DELAYS_LOCAL_SEC,
-                        error_label=f"リレー制御(ch{ch})",
-                        notify_on_exceeded=False,
-                    )
+                if dry_run:
+                    logger.info("DRY-RUN: リレー操作スキップ (%d アクション)", len(seen))
+                    print(json.dumps({
+                        "dry_run": True,
+                        "triggered_rules": result["triggered_rules"],
+                        "relay_actions": [
+                            {"channel": ch, "value": val, "duration_sec": dur}
+                            for ch, (val, dur) in seen.items()
+                        ],
+                    }, ensure_ascii=False, indent=2))
+                else:
+                    for ch, (val, dur) in seen.items():
+                        retry_with_backoff(
+                            lambda _ch=ch, _val=val, _dur=dur: post_relay(
+                                client, api_base, _ch, _val, _dur
+                            ),
+                            delays=RETRY_DELAYS_LOCAL_SEC,
+                            error_label=f"リレー制御(ch{ch})",
+                            notify_on_exceeded=False,
+                        )
             else:
                 logger.info("アクションなし")
+                if dry_run:
+                    print(json.dumps({
+                        "dry_run": True,
+                        "triggered_rules": result["triggered_rules"],
+                        "relay_actions": [],
+                    }, ensure_ascii=False, indent=2))
 
         # Step 8: 状態保存
         save_solar_accumulator(result["solar_acc"], solar_acc_path)
@@ -829,5 +982,30 @@ def run(
         return 1
 
 
+def main() -> None:
+    """CLI エントリポイント。argparse でオプションを処理する。"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Layer 2: ガムテ制御 rule_engine")
+    parser.add_argument("--dry-run", action="store_true", help="センサー取得+ルール評価のみ。リレー操作しない")
+    parser.add_argument("-v", "--verbose", action="store_true", help="DEBUG レベルログ有効化")
+    parser.add_argument("--config", type=str, default=DEFAULT_CONFIG_PATH, help="rules.yaml パス")
+    parser.add_argument("--show-state", action="store_true", help="現在の rule_engine_state.json を表示して終了")
+    args = parser.parse_args()
+
+    if args.show_state:
+        try:
+            data = json.loads(Path(DEFAULT_STATE_PATH).read_text())
+            print(json.dumps(data, ensure_ascii=False, indent=2))
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"State file not found or invalid: {e}")
+        sys.exit(0)
+
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s")
+
+    sys.exit(run(config_path=args.config, dry_run=args.dry_run))
+
+
 if __name__ == "__main__":
-    sys.exit(run())
+    main()

@@ -20,6 +20,8 @@ import pytest
 import yaml
 
 from agriha.control.rule_engine import (
+    _compute_window_state,
+    _get_temperature_stage,
     append_temp_history,
     compute_temperature_trend,
     compute_threshold_hint,
@@ -30,10 +32,12 @@ from agriha.control.rule_engine import (
     is_nighttime,
     load_current_plan,
     load_solar_accumulator,
+    load_state,
     load_temp_history,
     post_relay,
     run,
     save_solar_accumulator,
+    save_state,
     save_threshold_hint,
 )
 
@@ -821,3 +825,249 @@ class TestComputeThresholdHint:
         data = json.loads(Path(path).read_text())
         assert data["temperature_trend"] == "+1.5℃/h"
         assert "generated_at" in data
+
+
+# ---------- cmd_355/subtask_794: dry_run テスト ----------
+
+
+def test_dry_run_skips_relay(tmp_path, base_cfg, base_crop_cfg):
+    """dry_run=True → run() が 0 を返し、リレー POST が呼ばれない。"""
+    config_path = tmp_path / "rules.yaml"
+    config_path.write_text(yaml.dump(base_cfg))
+    crop_path = tmp_path / "crop_irrigation.yaml"
+    crop_path.write_text(yaml.dump(base_crop_cfg))
+    lockout_path = tmp_path / "lockout_state.json"
+    lockout_path.write_text(json.dumps({}))
+    state_path = tmp_path / "rule_engine_state.json"
+    solar_acc_path = tmp_path / "solar_accumulator.json"
+
+    with patch("agriha.control.rule_engine.httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+
+        sensors_resp = MagicMock()
+        sensors_resp.json.return_value = {
+            "sensors": {
+                "agriha/h01/ccm/InAirTemp": {"value": 25.0},
+                "agriha/h01/ccm/InSolar": {"value": 100.0},
+                "agriha/farm/weather/misol": {
+                    "rainfall": 0.0, "wind_speed_ms": 1.0, "wind_direction": 5,
+                },
+            }
+        }
+        status_resp = MagicMock()
+        status_resp.json.return_value = {"locked_out": False}
+        mock_client.get.side_effect = [sensors_resp, status_resp]
+
+        result = run(
+            config_path=str(config_path),
+            crop_config_path=str(crop_path),
+            lockout_path=str(lockout_path),
+            plan_path=str(tmp_path / "current_plan.json"),
+            solar_acc_path=str(solar_acc_path),
+            state_path=str(state_path),
+            flag_dir=str(tmp_path / "flags"),
+            dry_run=True,
+        )
+
+    assert result == 0
+    # dry_run=True なのでリレー操作(POST)は呼ばれない
+    mock_client.post.assert_not_called()
+
+
+# ──────────────────────────────────────────────
+# cmd_355/subtask_793: 状態永続化 + forecast連携テスト
+# ──────────────────────────────────────────────
+
+class TestLoadSaveState:
+    def test_load_state_file_not_found_returns_defaults(self, tmp_path: Path) -> None:
+        state = load_state(str(tmp_path / "no_such_file.json"))
+        assert state["window_state"] == "unknown"
+        assert state["last_irrigation_at"] is None
+        assert state["temperature_stage"] == "normal"
+
+    def test_load_state_normal(self, tmp_path: Path) -> None:
+        path = tmp_path / "state.json"
+        path.write_text(json.dumps({
+            "window_state": "open",
+            "last_irrigation_at": "2026-03-07T10:00:00+09:00",
+            "temperature_stage": "high",
+        }))
+        state = load_state(str(path))
+        assert state["window_state"] == "open"
+        assert state["last_irrigation_at"] == "2026-03-07T10:00:00+09:00"
+        assert state["temperature_stage"] == "high"
+
+    def test_load_state_broken_json_returns_defaults(self, tmp_path: Path) -> None:
+        path = tmp_path / "state.json"
+        path.write_text("{broken json")
+        state = load_state(str(path))
+        assert state["window_state"] == "unknown"
+        assert state["temperature_stage"] == "normal"
+
+    def test_load_state_partial_fields_uses_defaults(self, tmp_path: Path) -> None:
+        path = tmp_path / "state.json"
+        path.write_text(json.dumps({"window_state": "closed"}))
+        state = load_state(str(path))
+        assert state["window_state"] == "closed"
+        assert state["temperature_stage"] == "normal"
+
+    def test_save_state_includes_new_fields(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "state.json")
+        result = {
+            "triggered_rules": ["rain_close_all"],
+            "relay_actions": [(6, 1, None)],
+            "window_state": "closed",
+            "temperature_stage": "high",
+            "last_irrigation_at": "2026-03-07T09:30:00+09:00",
+        }
+        save_state(path, result)
+        data = json.loads(Path(path).read_text())
+        assert data["window_state"] == "closed"
+        assert data["temperature_stage"] == "high"
+        assert data["last_irrigation_at"] == "2026-03-07T09:30:00+09:00"
+        assert "last_run_at" in data
+
+    def test_save_state_defaults_when_fields_missing(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "state.json")
+        save_state(path, {"triggered_rules": [], "relay_actions": []})
+        data = json.loads(Path(path).read_text())
+        assert data["window_state"] == "unknown"
+        assert data["temperature_stage"] == "normal"
+        assert data["last_irrigation_at"] is None
+
+
+class TestGetTemperatureStage:
+    def test_none_returns_normal(self) -> None:
+        assert _get_temperature_stage(None) == "normal"
+
+    def test_at_high_threshold_is_critical(self) -> None:
+        assert _get_temperature_stage(27.0) == "critical"
+
+    def test_below_low_threshold_is_critical(self) -> None:
+        assert _get_temperature_stage(15.9) == "critical"
+
+    def test_high_stage(self) -> None:
+        assert _get_temperature_stage(26.0) == "high"
+        assert _get_temperature_stage(26.8) == "high"
+
+    def test_low_stage(self) -> None:
+        assert _get_temperature_stage(16.0) == "low"
+        assert _get_temperature_stage(16.4) == "low"
+
+    def test_normal_stage(self) -> None:
+        assert _get_temperature_stage(22.0) == "normal"
+        assert _get_temperature_stage(16.5) == "normal"
+
+
+class TestComputeWindowState:
+    GROUPS = [
+        {"name": "北側", "open_channel": 5, "close_channel": 6, "wind_close_directions": []},
+        {"name": "南側", "open_channel": 8, "close_channel": 7, "wind_close_directions": []},
+    ]
+
+    def test_open_action_returns_open(self) -> None:
+        assert _compute_window_state([(5, 1, None)], self.GROUPS, "unknown") == "open"
+
+    def test_close_action_returns_closed(self) -> None:
+        assert _compute_window_state([(6, 1, None)], self.GROUPS, "unknown") == "closed"
+
+    def test_no_window_action_inherits_prev(self) -> None:
+        assert _compute_window_state([(4, 1, 60)], self.GROUPS, "open") == "open"
+
+    def test_empty_actions_inherits_prev(self) -> None:
+        assert _compute_window_state([], self.GROUPS, "closed") == "closed"
+
+
+class TestEvaluateRulesState:
+    """evaluate_rules の新フィールド + 状態引き継ぎテスト。"""
+
+    def _sensors(self, temp: float = 25.0, rainfall: float = 0.0) -> dict:
+        return {
+            "sensors": {
+                "agriha/h01/ccm/InAirTemp": {"value": temp},
+                "agriha/h01/ccm/InSolar": {"value": 200.0},
+                "agriha/farm/weather/misol": {
+                    "temperature_c": 18.0,
+                    "wind_speed_ms": 2.0,
+                    "wind_direction": 5,
+                    "rainfall": rainfall,
+                },
+            }
+        }
+
+    def test_result_includes_new_fields(self, base_cfg, base_crop_cfg, channel_map_file) -> None:
+        result = evaluate_rules(
+            base_cfg, base_crop_cfg, self._sensors(), {"locked_out": False},
+            {"accumulated_mj": 0.0, "irrigations_today": 0},
+            current_plan=None, now=DAYTIME, channel_map_path=channel_map_file,
+        )
+        assert "window_state" in result
+        assert "temperature_stage" in result
+        assert "last_irrigation_at" in result
+        assert result["temperature_stage"] == "normal"
+
+    def test_prev_state_window_inherited(self, base_cfg, base_crop_cfg, channel_map_file) -> None:
+        """Layer 3 計画有効 → 窓操作なし → prev_state のwindow_state引き継ぎ。"""
+        plan = {
+            "valid_until": (DAYTIME + timedelta(hours=1)).isoformat(),
+            "actions": [],
+        }
+        result = evaluate_rules(
+            base_cfg, base_crop_cfg, self._sensors(), {"locked_out": False},
+            {"accumulated_mj": 0.0, "irrigations_today": 0},
+            current_plan=plan, now=DAYTIME, channel_map_path=channel_map_file,
+            prev_state={"window_state": "open", "temperature_stage": "normal", "last_irrigation_at": None},
+        )
+        assert result["window_state"] == "open"
+
+    def test_rain_early_return_window_closed(self, base_cfg, base_crop_cfg, channel_map_file) -> None:
+        result = evaluate_rules(
+            base_cfg, base_crop_cfg, self._sensors(rainfall=1.0), {"locked_out": False},
+            {"accumulated_mj": 0.0, "irrigations_today": 0},
+            current_plan=None, now=DAYTIME, channel_map_path=channel_map_file,
+        )
+        assert "rain_close_all" in result["triggered_rules"]
+        assert result["window_state"] == "closed"
+
+    def test_forecast_rain_probability_closes_windows(self, base_cfg, base_crop_cfg, channel_map_file) -> None:
+        """予報降水確率>=70 → forecast_rain_close_all + window_state='closed'。"""
+        plan = {
+            "valid_until": (DAYTIME + timedelta(hours=1)).isoformat(),
+            "actions": [],
+            "rain_probability": 80.0,
+        }
+        result = evaluate_rules(
+            base_cfg, base_crop_cfg, self._sensors(rainfall=0.0), {"locked_out": False},
+            {"accumulated_mj": 0.0, "irrigations_today": 0},
+            current_plan=plan, now=DAYTIME, channel_map_path=channel_map_file,
+        )
+        assert "forecast_rain_close_all" in result["triggered_rules"]
+        assert result["window_state"] == "closed"
+
+    def test_forecast_rain_below_threshold_no_close(self, base_cfg, base_crop_cfg, channel_map_file) -> None:
+        """予報降水確率<70 → 通常制御。"""
+        plan = {
+            "valid_until": (DAYTIME + timedelta(hours=1)).isoformat(),
+            "actions": [],
+            "rain_probability": 50.0,
+        }
+        result = evaluate_rules(
+            base_cfg, base_crop_cfg, self._sensors(rainfall=0.0), {"locked_out": False},
+            {"accumulated_mj": 0.0, "irrigations_today": 0},
+            current_plan=plan, now=DAYTIME, channel_map_path=channel_map_file,
+        )
+        assert "forecast_rain_close_all" not in result["triggered_rules"]
+
+    def test_forecast_rain_no_field_no_close(self, base_cfg, base_crop_cfg, channel_map_file) -> None:
+        """rain_probability フィールドなし → 従来通り動作。"""
+        plan = {
+            "valid_until": (DAYTIME + timedelta(hours=1)).isoformat(),
+            "actions": [],
+        }
+        result = evaluate_rules(
+            base_cfg, base_crop_cfg, self._sensors(rainfall=0.0), {"locked_out": False},
+            {"accumulated_mj": 0.0, "irrigations_today": 0},
+            current_plan=plan, now=DAYTIME, channel_map_path=channel_map_file,
+        )
+        assert "forecast_rain_close_all" not in result["triggered_rules"]
