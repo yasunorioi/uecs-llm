@@ -37,6 +37,8 @@ from zoneinfo import ZoneInfo
 import httpx
 import yaml
 
+from agriha.control.retry_helper import RETRY_DELAYS_SEC, retry_with_backoff
+
 logger = logging.getLogger("forecast_engine")
 
 _JST = ZoneInfo("Asia/Tokyo")
@@ -962,38 +964,39 @@ def run_forecast(
 
             max_rounds = llm_cfg.get("max_tool_rounds", 5)
 
-            try:
+            # 初回メッセージ（リトライ時にリセット）
+            initial_messages = list(messages)
+
+            def _run_llm_call() -> tuple[str, str]:
+                """LLMツールコールループを1回実行する（リトライ対象の単位）。"""
+                _messages = list(initial_messages)
+                _final_text = ""
+                _sensor_snapshot = ""
+
                 for round_num in range(max_rounds):
                     response = llm_client.chat.completions.create(
                         model=llm_cfg["model"],
                         max_tokens=llm_cfg.get("max_tokens", 1024),
                         tools=TOOLS,
-                        messages=messages,
+                        messages=_messages,
                     )
 
-                    # レスポンス解析
                     choice = response.choices[0]
                     msg = choice.message
                     has_tool_calls = bool(msg.tool_calls)
-
-                    # アシスタントメッセージを追加
-                    messages.append(msg.model_dump(exclude_unset=False))
+                    _messages.append(msg.model_dump(exclude_unset=False))
 
                     if not has_tool_calls:
-                        # 最終テキスト応答
-                        final_text = msg.content or ""
+                        _final_text = msg.content or ""
                         break
 
-                    # ツール呼び出し処理
                     for tc in msg.tool_calls:
                         tool_name = tc.function.name
                         try:
                             tool_input = json.loads(tc.function.arguments or "{}")
                         except json.JSONDecodeError:
                             tool_input = {}
-                        logger.info(
-                            "Tool call [round %d]: %s", round_num, tool_name
-                        )
+                        logger.info("Tool call [round %d]: %s", round_num, tool_name)
                         try:
                             result_text = call_tool(
                                 http_client, base_url, api_key,
@@ -1006,21 +1009,28 @@ def run_forecast(
                             )
 
                         if tool_name in ("get_sensors", "get_status"):
-                            sensor_snapshot += f"\n--- {tool_name} ---\n{result_text}"
+                            _sensor_snapshot += f"\n--- {tool_name} ---\n{result_text}"
 
-                        messages.append({
+                        _messages.append({
                             "role": "tool",
                             "tool_call_id": tc.id,
                             "content": result_text,
                         })
 
-                    # stop チェック
                     if choice.finish_reason == "stop":
-                        final_text = msg.content or ""
+                        _final_text = msg.content or ""
                         break
 
+                return _final_text, _sensor_snapshot
+
+            try:
+                final_text, sensor_snapshot = retry_with_backoff(
+                    _run_llm_call,
+                    delays=RETRY_DELAYS_SEC,
+                    error_label="LLM API呼び出し",
+                )
             except Exception as exc:
-                logger.error("LLM API error: %s", exc)
+                logger.error("LLM API error after retries: %s", exc)
                 return {
                     "status": "error",
                     "reason": f"api_error: {exc}",

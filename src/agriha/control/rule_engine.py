@@ -24,6 +24,7 @@ from astral import LocationInfo
 from astral.sun import sun
 
 from agriha.control.channel_config import load_channel_map, load_window_groups, get_window_channels
+from agriha.control.retry_helper import RETRY_DELAYS_LOCAL_SEC, retry_with_backoff
 
 # ──────────────────────────────────────────────
 # 定数・デフォルトパス（環境変数で上書き可能）
@@ -733,11 +734,21 @@ def run(
     api_base = api_cfg.get("base_url", api_base)
     timeout = api_cfg.get("timeout_sec", 10)
 
-    # Step 3: センサーデータ取得 + CommandGate ロックアウト確認
+    # Step 3: センサーデータ取得 + CommandGate ロックアウト確認（リトライ付き）
     try:
         with httpx.Client(timeout=timeout) as client:
-            sensors = fetch_sensors(client, api_base)
-            status = fetch_status(client, api_base)
+            sensors = retry_with_backoff(
+                lambda: fetch_sensors(client, api_base),
+                delays=RETRY_DELAYS_LOCAL_SEC,
+                error_label="センサーデータ取得",
+                notify_on_exceeded=False,
+            )
+            status = retry_with_backoff(
+                lambda: fetch_status(client, api_base),
+                delays=RETRY_DELAYS_LOCAL_SEC,
+                error_label="ステータス取得",
+                notify_on_exceeded=False,
+            )
 
             # Step 3.5: weather flag 更新（ロックアウト状態によらず実行）
             update_weather_flags(cfg, sensors, flag_dir=flag_dir)
@@ -789,7 +800,14 @@ def run(
                 for ch, val, dur in relay_actions:
                     seen[ch] = (val, dur)
                 for ch, (val, dur) in seen.items():
-                    post_relay(client, api_base, ch, val, dur)
+                    retry_with_backoff(
+                        lambda _ch=ch, _val=val, _dur=dur: post_relay(
+                            client, api_base, _ch, _val, _dur
+                        ),
+                        delays=RETRY_DELAYS_LOCAL_SEC,
+                        error_label=f"リレー制御(ch{ch})",
+                        notify_on_exceeded=False,
+                    )
             else:
                 logger.info("アクションなし")
 
