@@ -1,0 +1,7 @@
+# AgriHA ネットワーク設定（APN設定）
+# setup.sh により /etc/agriha/network.yaml にコピーされる
+# 使用するSIMに合わせて設定画面から編集してください
+apn: soracom.io
+user: sora
+password: sora
+auth: chap

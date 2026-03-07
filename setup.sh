@@ -31,8 +31,9 @@ echo "  → pip install 完了"
 # Step 2: /etc/agriha/ ディレクトリ作成 + 設定ファイルコピー
 echo "[2/6] 設定ディレクトリ作成..."
 sudo mkdir -p "$CONFIG_DIR"
+sudo chown "${AGRIHA_USER}:${AGRIHA_USER}" "$CONFIG_DIR"
 # 既存ファイルは上書きしない（農家が手動編集した設定を守る）
-for f in config/emergency.conf config/rules.yaml config/forecast.yaml config/channel_map.yaml config/crop_irrigation.yaml config/thresholds.yaml; do
+for f in config/emergency.conf config/rules.yaml config/forecast.yaml config/channel_map.yaml config/crop_irrigation.yaml config/thresholds.yaml config/network.yaml; do
     fname=$(basename "$f")
     if [ ! -f "${CONFIG_DIR}/${fname}" ]; then
         sudo cp "${SCRIPT_DIR}/${f}" "${CONFIG_DIR}/${fname}"
