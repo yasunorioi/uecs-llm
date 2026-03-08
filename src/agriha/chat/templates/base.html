@@ -8,10 +8,11 @@
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 </head>
 <body>
+  <a href="#main-content" class="skip-link">メインコンテンツへスキップ</a>
   <header class="site-header">
     <div class="site-header__inner">
       <span class="site-header__logo">🌿 AgriHA</span>
-      <nav class="nav">
+      <nav class="nav" aria-label="メインナビゲーション">
         <a class="nav__link" href="/">ダッシュボード</a>
         <a class="nav__link" href="/settings">設定</a>
         <a class="nav__link" href="/history">制御履歴</a>
@@ -19,7 +20,7 @@
     </div>
   </header>
 
-  <main class="main-content">
+  <main class="main-content" id="main-content">
     {% block content %}{% endblock %}
   </main>
 

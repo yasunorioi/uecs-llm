@@ -12,20 +12,20 @@
   --color-surface:    #ffffff;
   --color-border:     #d8e8e2;
   --color-text:       #1b3a2d;
-  --color-muted:      #6b8f7e;
+  --color-muted:      #4a7062;  /* contrast with white: 5.07:1 (was #6b8f7e 3.59:1) */
 
-  --color-danger:     #c0392b;
+  --color-danger:     #a93226;  /* contrast with danger-lt: 4.5:1+ (was #c0392b) */
   --color-danger-lt:  #fadbd8;
   --color-warning:    #d68910;
   --color-warning-lt: #fef9e7;
   --color-info:       #1a5276;
   --color-info-lt:    #d6eaf8;
-  --color-success:    #1e8449;
+  --color-success:    #166b3a;  /* contrast with success-lt: 4.5:1+ (was #1e8449) */
   --color-success-lt: #d5f5e3;
 
   --layer1-color:     #c0392b;
   --layer1-bg:        #fadbd8;
-  --layer2-color:     #b7950b;
+  --layer2-color:     #8a7008;  /* contrast with layer2-bg: 4.5:1+ (was #b7950b) */
   --layer2-bg:        #fef9e7;
   --layer3-color:     #1a5276;
   --layer3-bg:        #d6eaf8;
@@ -89,6 +89,7 @@ body {
   background: rgba(255,255,255,0.2);
   color: #fff;
 }
+.nav__link:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 
 /* ── メインコンテンツ ─────────────────────────────────── */
 .main-content {
@@ -434,7 +435,7 @@ body {
 }
 .plan-bar--pending      { background: var(--color-info); }
 .plan-bar--executed     { background: var(--color-success); }
-.plan-bar--skipped_rain { background: var(--color-warning); }
+.plan-bar--skipped_rain { background: var(--color-warning); color: var(--color-text); }
 .plan-bar--skipped_wind { background: #f1c40f; color: var(--color-text); }
 .plan-bar--overdue      { background: var(--color-danger); }
 
@@ -498,4 +499,25 @@ body {
   .plan-timeline__axis { padding-left: 60px; }
   .plan-legend { padding-left: 60px; }
   .plan-track-now { margin-left: 60px; }
+}
+
+/* ── アクセシビリティ: focus-visible ─────────────────── */
+.btn:focus-visible { outline: 2px solid var(--color-primary-xl); outline-offset: 2px; }
+summary:focus-visible { outline: 2px solid var(--color-primary-xl); outline-offset: 2px; }
+
+/* ── アクセシビリティ: スキップリンク ────────────────── */
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: 0;
+  background: var(--color-primary);
+  color: #fff;
+  padding: 0.5rem 1rem;
+  z-index: 9999;
+  text-decoration: none;
+  font-size: 0.9rem;
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+.skip-link:focus {
+  top: 0;
 }
