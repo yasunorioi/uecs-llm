@@ -6,7 +6,8 @@
 <div id="dashboard-main"
      hx-get="/api/dashboard-partial"
      hx-trigger="every 10s"
-     hx-swap="innerHTML">
+     hx-swap="innerHTML"
+     aria-live="polite">
 
   {# ─── ヘッダー行 ─────────────────────────────────── #}
   <div class="dashboard-header">
@@ -17,12 +18,12 @@
   {# ─── ロックアウト状態 ────────────────────────────── #}
   {% if lockout and lockout.active %}
   <div class="alert alert--danger lockout-banner">
-    🚨 <strong>ロックアウト中</strong> — {{ lockout.reason }}
+    <span aria-hidden="true">🚨</span> <strong>ロックアウト中</strong> — {{ lockout.reason }}
     （残り {{ lockout.remaining_sec }} 秒）
   </div>
   {% else %}
   <div class="alert alert--success">
-    ✅ <strong>正常</strong> — ロックアウトなし
+    <span aria-hidden="true">✅</span> <strong>正常</strong> — ロックアウトなし
   </div>
   {% endif %}
 
@@ -34,7 +35,7 @@
 
       {# 気温: CCM InAirTemp → DS18B20 → Misol の優先順 #}
       <div class="card card--sensor">
-        <div class="card__label">🌡 気温（室内）</div>
+        <div class="card__label"><span aria-hidden="true">🌡</span> 気温（室内）</div>
         <div class="card__value">
           {% if sensors.get('agriha/1/ccm/sensor/InAirTemp') %}
             {{ "%.1f"|format(sensors['agriha/1/ccm/sensor/InAirTemp']['value']) }} ℃
@@ -48,7 +49,7 @@
 
       {# 湿度: CCM InAirHumid → Misol #}
       <div class="card card--sensor">
-        <div class="card__label">💧 湿度（室内）</div>
+        <div class="card__label"><span aria-hidden="true">💧</span> 湿度（室内）</div>
         <div class="card__value">
           {% if sensors.get('agriha/1/ccm/sensor/InAirHumid') %}
             {{ "%.1f"|format(sensors['agriha/1/ccm/sensor/InAirHumid']['value']) }} %
@@ -62,7 +63,7 @@
 
       {# CO2: CCM InAirCO2 #}
       <div class="card card--sensor">
-        <div class="card__label">🌫 CO2濃度</div>
+        <div class="card__label"><span aria-hidden="true">🌫</span> CO2濃度</div>
         <div class="card__value">
           {% if sensors.get('agriha/1/ccm/sensor/InAirCO2') %}
             {{ sensors['agriha/1/ccm/sensor/InAirCO2']['value']|int }} ppm
@@ -74,7 +75,7 @@
 
       {# 日射: CCM InRadiation #}
       <div class="card card--sensor">
-        <div class="card__label">☀ 日射量</div>
+        <div class="card__label"><span aria-hidden="true">☀</span> 日射量</div>
         <div class="card__value">
           {% if sensors.get('agriha/1/ccm/sensor/InRadiation') %}
             {{ sensors['agriha/1/ccm/sensor/InRadiation']['value']|int }} W/m²
@@ -88,7 +89,7 @@
 
       {# 外気温: Misol #}
       <div class="card card--sensor">
-        <div class="card__label">🌤 外気温</div>
+        <div class="card__label"><span aria-hidden="true">🌤</span> 外気温</div>
         <div class="card__value">
           {% if sensors.get('agriha/farm/weather/misol') %}
             {{ "%.1f"|format(sensors['agriha/farm/weather/misol']['temperature_c']) }} ℃
@@ -100,7 +101,7 @@
 
       {# 風速: Misol #}
       <div class="card card--sensor">
-        <div class="card__label">💨 風速</div>
+        <div class="card__label"><span aria-hidden="true">💨</span> 風速</div>
         <div class="card__value">
           {% if sensors.get('agriha/farm/weather/misol') %}
             {{ "%.1f"|format(sensors['agriha/farm/weather/misol']['wind_speed_ms']) }} m/s
@@ -113,7 +114,7 @@
 
       {# 露点: CCM InAirDP #}
       <div class="card card--sensor">
-        <div class="card__label">💧 露点温度</div>
+        <div class="card__label"><span aria-hidden="true">💧</span> 露点温度</div>
         <div class="card__value">
           {% if sensors.get('agriha/1/ccm/sensor/InAirDP') %}
             {{ "%.1f"|format(sensors['agriha/1/ccm/sensor/InAirDP']['value']) }} ℃
@@ -125,7 +126,7 @@
 
       {# 積算日射: CCM IntgRadiation #}
       <div class="card card--sensor">
-        <div class="card__label">📊 積算日射</div>
+        <div class="card__label"><span aria-hidden="true">📊</span> 積算日射</div>
         <div class="card__value">
           {% if sensors.get('agriha/1/ccm/sensor/IntgRadiation') %}
             {{ "%.2f"|format(sensors['agriha/1/ccm/sensor/IntgRadiation']['value']) }} MJ/m²
@@ -156,6 +157,7 @@
       <details class="other-sensors">
         <summary>その他のセンサー（{{ other_sensors | length }} 件）</summary>
         <table class="table">
+          <caption class="sr-only">その他のセンサー一覧</caption>
           <thead>
             <tr><th>センサーキー</th><th>値</th></tr>
           </thead>
@@ -307,7 +309,7 @@
   <section class="section">
     <h2 class="section__title">ハウス定点カメラ</h2>
     <div id="camera">
-      <img src="/picture/latest.jpg" id="camera-img" style="max-width:100%"
+      <img src="/picture/latest.jpg" id="camera-img" alt="ハウス定点カメラ画像" style="max-width:100%"
            onerror="this.style.display='none';document.getElementById('camera-unavail').style.display='block'">
       <p id="camera-unavail" style="display:none;color:#888;">カメラ画像未取得</p>
       <script>

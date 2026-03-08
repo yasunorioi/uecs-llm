@@ -7,8 +7,9 @@
 
 {# ─── フラッシュメッセージ ────────────────────────── #}
 {% if flash %}
-<div class="alert alert--success flash-message" id="flash-msg">
-  ✓ {{ flash }}
+<div class="alert alert--success flash-message" id="flash-msg"
+     role="alert" aria-live="polite">
+  <span aria-hidden="true">✓</span> {{ flash }}
 </div>
 {% endif %}
 
@@ -20,6 +21,7 @@
     <div class="form-group">
       <textarea
         name="prompt_text"
+        aria-label="システムプロンプト"
         rows="20"
         cols="80"
         wrap="soft"
@@ -98,6 +100,7 @@
     <div class="form-group">
       <textarea
         name="rules_text"
+        aria-label="制御ルール"
         rows="30"
         cols="80"
         wrap="off"
@@ -116,6 +119,7 @@
     <div class="form-group">
       <textarea
         name="channel_map_text"
+        aria-label="チャンネルマップ"
         rows="30"
         cols="80"
         wrap="off"
@@ -318,6 +322,7 @@
       <div class="form-group">
         <textarea
           name="forecast_config_text"
+          aria-label="LLM設定"
           rows="25"
           cols="80"
           wrap="off"
@@ -335,7 +340,7 @@
   // フラッシュメッセージを3秒後にフェードアウト
   const flash = document.getElementById('flash-msg');
   if (flash) {
-    setTimeout(() => flash.classList.add('fade-out'), 3000);
+    setTimeout(() => flash.classList.add('fade-out'), 5000);
   }
 
   // APNプリセット選択でフォームフィールドを自動入力

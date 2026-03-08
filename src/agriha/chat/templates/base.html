@@ -13,9 +13,9 @@
     <div class="site-header__inner">
       <span class="site-header__logo">🌿 AgriHA</span>
       <nav class="nav" aria-label="メインナビゲーション">
-        <a class="nav__link" href="/">ダッシュボード</a>
-        <a class="nav__link" href="/settings">設定</a>
-        <a class="nav__link" href="/history">制御履歴</a>
+        <a class="nav__link" href="/"{% if request.url.path == '/' %} aria-current="page"{% endif %}>ダッシュボード</a>
+        <a class="nav__link" href="/settings"{% if request.url.path.startswith('/settings') %} aria-current="page"{% endif %}>設定</a>
+        <a class="nav__link" href="/history"{% if request.url.path == '/history' %} aria-current="page"{% endif %}>制御履歴</a>
       </nav>
     </div>
   </header>

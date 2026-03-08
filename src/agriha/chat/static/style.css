@@ -521,3 +521,16 @@ summary:focus-visible { outline: 2px solid var(--color-primary-xl); outline-offs
 .skip-link:focus {
   top: 0;
 }
+
+/* ── アクセシビリティ: sr-only（スクリーンリーダー専用）─── */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
