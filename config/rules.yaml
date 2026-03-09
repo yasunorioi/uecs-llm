@@ -4,6 +4,9 @@ temperature:
   target_night: 17.0           # 夜間目標温度 (℃) ※LOW_TEMP_THRESHOLD(16℃)+1℃以上を推奨
   margin_open: 2.0             # 目標+Nで窓開 (℃)
   margin_close: 1.0            # 目標-Nで窓閉 (℃)
+  attention_temp: 30.0         # 注意ライン (℃) P90相当: 全窓70-100%開放
+  emergency_temp: 32.0         # 緊急ライン (℃) P95相当: 全窓全開
+  early_morning_offset: -1.0   # 早朝5-8h換気先行オフセット (℃): 通常閾値より1℃早く換気開始
   # window_channels は channel_map.yaml の side_window.groups に集約（open/close分離）
 
 wind:

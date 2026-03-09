@@ -63,7 +63,7 @@ DEFAULT_THRESHOLD_HINT_PATH = os.environ.get(
 TEMP_HISTORY_MAX_POINTS = 12
 
 # 閾値（上限/下限）
-TEMP_THRESHOLD_HIGH = 27.0
+TEMP_THRESHOLD_HIGH = 32.0   # W3-A改善: 27℃→32℃ (P95相当、実データ日中48.4%超過のため)
 TEMP_THRESHOLD_LOW = 16.0
 
 # ──────────────────────────────────────────────
@@ -524,7 +524,7 @@ def _get_temperature_stage(temp: float | None) -> str:
     """現在の室内温度からピタゴラスイッチの段階を返す。
 
     Returns:
-        "critical": 閾値超過（≥27℃ または <16℃）
+        "critical": 閾値超過（≥32℃ または <16℃）
         "high":     高温注意（≥26℃）
         "low":      低温注意（<16.5℃）
         "normal":   正常範囲
