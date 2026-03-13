@@ -1,10 +1,10 @@
 # /etc/nginx/sites-available/__DOMAIN__
-# VPS nginx設定 — LINE Bot webhook + QR画像配信
+# VPS nginx config -- LINE Bot webhook + QR image serving
 #
-# このファイルはテンプレート。deploy_vps_linebot.sh --setup が
-# config/vps.conf の値で置換して配置する。手動編集不要。
+# This is a template. deploy_vps_linebot.sh --setup expands
+# placeholders from config/vps.conf. Do not edit manually.
 
-# HTTP → HTTPS リダイレクト
+# HTTP -> HTTPS redirect
 server {
     listen 80;
     server_name __DOMAIN__;
@@ -15,11 +15,11 @@ server {
     listen 443 ssl;
     server_name __DOMAIN__;
 
-    # Let's Encrypt 証明書（certbot管理）
+    # Let's Encrypt certificates (managed by certbot)
     ssl_certificate     __SSL_CERT__;
     ssl_certificate_key __SSL_KEY__;
 
-    # SSL設定
+    # SSL settings
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers on;
 
@@ -40,7 +40,7 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # --- 内部API（register_pubkey, cleanup_qr等）---
+    # --- Internal API (register_pubkey, cleanup_qr, etc.) ---
     location /api/ {
         proxy_pass http://127.0.0.1:__APP_PORT__;
         proxy_set_header Host $host;
@@ -49,20 +49,20 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # --- QR画像配信（静的ファイル）---
+    # --- QR image serving (static files) ---
     location /qr/ {
         alias __QR_DIR__/;
         expires 24h;
         add_header Cache-Control "public, no-transform";
     }
 
-    # --- ヘルスチェック ---
+    # --- Health check ---
     location /health {
         proxy_pass http://127.0.0.1:__APP_PORT__;
         proxy_set_header Host $host;
     }
 
-    # certbot チャレンジ
+    # certbot challenge
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }

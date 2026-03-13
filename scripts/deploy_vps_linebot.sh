@@ -1,20 +1,19 @@
 #!/bin/bash
 #===============================================================================
-# deploy_vps_linebot.sh — VPS LINE Botセットアップ・更新スクリプト
+# deploy_vps_linebot.sh -- VPS LINE Bot setup / update script
 #
-# VPS上で実行する。git clone 済みのリポジトリ内から実行すること。
-# config/vps.conf を事前に編集してから実行する。
+# Run on VPS after git clone. Edit config/vps.conf before running.
 #
 # Usage:
 #   git clone https://github.com/yourname/uecs-llm.git /opt/uecs-llm
 #   cd /opt/uecs-llm
-#   vi config/vps.conf                                 # 環境設定を編集
-#   sudo bash scripts/deploy_vps_linebot.sh --setup    # 初回セットアップ
-#   sudo bash scripts/deploy_vps_linebot.sh            # コード更新（git pull + 再起動）
+#   vi config/vps.conf                                 # edit settings
+#   sudo bash scripts/deploy_vps_linebot.sh --setup    # initial setup
+#   sudo bash scripts/deploy_vps_linebot.sh            # update (git pull + restart)
 #
-# 前提:
-#   - VPSにnginx, certbot, python3-venv がインストール済み
-#   - sudoで実行（systemd/nginx/sudoers設定のため）
+# Prerequisites:
+#   - nginx, certbot, python3-venv installed on VPS
+#   - run with sudo
 #===============================================================================
 
 set -euo pipefail
@@ -32,39 +31,39 @@ if [[ "${1:-}" == "--setup" ]]; then
     SETUP=true
 fi
 
-# root チェック
+# root check
 if [[ $EUID -ne 0 ]]; then
-    echo -e "${RED}ERROR: sudo で実行してください${NC}"
+    echo -e "${RED}ERROR: run with sudo${NC}"
     echo "  sudo bash $0 $*"
     exit 1
 fi
 
-# vps.conf 読み込み
+# load vps.conf
 if [[ ! -f "${VPS_CONF}" ]]; then
-    echo -e "${RED}ERROR: ${VPS_CONF} が見つかりません${NC}"
-    echo "config/vps.conf を編集してから実行してください。"
+    echo -e "${RED}ERROR: ${VPS_CONF} not found${NC}"
+    echo "Edit config/vps.conf first."
     exit 1
 fi
 # shellcheck source=../config/vps.conf
 source "${VPS_CONF}"
 
-# 必須変数チェック
+# required variable check
 for var in DOMAIN APP_PORT DEPLOY_DIR QR_DIR WG_INTERFACE WG_PORT WG_SERVER_IP; do
     if [[ -z "${!var:-}" ]]; then
-        echo -e "${RED}ERROR: ${var} が vps.conf で未設定です${NC}"
+        echo -e "${RED}ERROR: ${var} not set in vps.conf${NC}"
         exit 1
     fi
 done
 
 VPS_SRC="${REPO_ROOT}/src/agriha/vps"
 
-echo -e "${GREEN}=== VPS LINE Bot デプロイ ===${NC}"
-echo "リポジトリ: ${REPO_ROOT}"
-echo "ドメイン:   ${DOMAIN}"
-echo "ポート:     ${APP_PORT}"
+echo -e "${GREEN}=== VPS LINE Bot Deploy ===${NC}"
+echo "Repo:   ${REPO_ROOT}"
+echo "Domain: ${DOMAIN}"
+echo "Port:   ${APP_PORT}"
 
 #-------------------------------------------------------------------------------
-# テンプレート展開関数
+# Template expansion
 #-------------------------------------------------------------------------------
 expand_template() {
     local src="$1"
@@ -80,39 +79,39 @@ expand_template() {
         -e "s|__SSL_CERT__|${SSL_CERT}|g" \
         -e "s|__SSL_KEY__|${SSL_KEY}|g" \
         "${src}" > "${dst}"
-    echo "  ${src} → ${dst}"
+    echo "  ${src} -> ${dst}"
 }
 
 #-------------------------------------------------------------------------------
-# [1] シンボリックリンク作成（src/agriha/vps → DEPLOY_DIR）
+# [1] Symlink (src/agriha/vps -> DEPLOY_DIR)
 #-------------------------------------------------------------------------------
-echo -e "\n${GREEN}[1] デプロイディレクトリ準備...${NC}"
+echo -e "\n${GREEN}[1] Preparing deploy directory...${NC}"
 if [[ -L "${DEPLOY_DIR}" ]]; then
-    echo "シンボリックリンク既存: $(readlink "${DEPLOY_DIR}")"
+    echo "Symlink exists: $(readlink "${DEPLOY_DIR}")"
 elif [[ -d "${DEPLOY_DIR}" ]]; then
-    echo -e "${YELLOW}WARN: ${DEPLOY_DIR} が実ディレクトリとして存在。バックアップして置換${NC}"
+    echo -e "${YELLOW}WARN: ${DEPLOY_DIR} is a real directory. Backing up and replacing.${NC}"
     mv "${DEPLOY_DIR}" "${DEPLOY_DIR}.bak.$(date +%Y%m%d%H%M%S)"
     ln -sf "${VPS_SRC}" "${DEPLOY_DIR}"
 else
     ln -sf "${VPS_SRC}" "${DEPLOY_DIR}"
 fi
-echo "  ${DEPLOY_DIR} → ${VPS_SRC}"
+echo "  ${DEPLOY_DIR} -> ${VPS_SRC}"
 
 #-------------------------------------------------------------------------------
-# 初回セットアップ（--setup時のみ）
+# Initial setup (--setup only)
 #-------------------------------------------------------------------------------
 if $SETUP; then
-    echo -e "\n${GREEN}[2] 初回セットアップ...${NC}"
+    echo -e "\n${GREEN}[2] Initial setup...${NC}"
 
-    # venv作成 + pip install
+    # venv + pip install
     echo -e "${YELLOW}venv + pip install...${NC}"
     cd "${VPS_SRC}"
     python3 -m venv .venv
     .venv/bin/pip install --upgrade pip
     .venv/bin/pip install -r requirements.txt
 
-    # nginx設定（テンプレート展開）
-    echo -e "${YELLOW}nginx設定...${NC}"
+    # nginx (template expansion)
+    echo -e "${YELLOW}nginx config...${NC}"
     expand_template \
         "${REPO_ROOT}/config/nginx-vps.conf.template" \
         "/etc/nginx/sites-available/${DOMAIN}"
@@ -120,65 +119,65 @@ if $SETUP; then
     rm -f /etc/nginx/sites-enabled/default
     nginx -t && systemctl reload nginx
 
-    # systemd サービス（テンプレート展開）
-    echo -e "${YELLOW}systemd設定...${NC}"
+    # systemd service (template expansion)
+    echo -e "${YELLOW}systemd config...${NC}"
     expand_template \
         "${REPO_ROOT}/systemd/agriha-linebot.service.template" \
         /etc/systemd/system/agriha-linebot.service
     systemctl daemon-reload
     systemctl enable agriha-linebot
 
-    # sudoers（www-dataがwg setを実行するため）
-    echo -e "${YELLOW}sudoers設定...${NC}"
+    # sudoers (www-data needs wg set)
+    echo -e "${YELLOW}sudoers config...${NC}"
     echo "www-data ALL=(root) NOPASSWD: /usr/bin/wg set ${WG_INTERFACE} peer *" > /etc/sudoers.d/agriha-wg
     chmod 440 /etc/sudoers.d/agriha-wg
     visudo -c
 
-    # QR画像ディレクトリ
+    # QR image directory
     mkdir -p "${QR_DIR}"
     chown www-data:www-data "${QR_DIR}"
 
-    # configディレクトリ
+    # config directory
     mkdir -p "${VPS_SRC}/config"
 
-    # QRクリーンアップ cron（毎日3時）
-    echo -e "${YELLOW}cronジョブ設定...${NC}"
+    # QR cleanup cron (daily 3am)
+    echo -e "${YELLOW}cron job...${NC}"
     (crontab -u www-data -l 2>/dev/null | grep -v cleanup_qr; echo "0 3 * * * curl -s -X POST http://127.0.0.1:${APP_PORT}/api/cleanup_qr > /dev/null") | crontab -u www-data -
 
-    echo -e "${GREEN}初回セットアップ完了${NC}"
+    echo -e "${GREEN}Initial setup complete${NC}"
 
-    echo -e "\n${YELLOW}残り手順:${NC}"
-    echo "1. .env を作成:"
+    echo -e "\n${YELLOW}Remaining steps:${NC}"
+    echo "1. Create .env:"
     echo "   sudo cp ${DEPLOY_DIR}/.env.example ${DEPLOY_DIR}/.env"
-    echo "   sudo vi ${DEPLOY_DIR}/.env  # 実際の値を設定"
+    echo "   sudo vi ${DEPLOY_DIR}/.env"
     echo "   sudo chown www-data:www-data ${DEPLOY_DIR}/.env"
     echo ""
-    echo "2. WG農家インターフェースのセットアップ:"
+    echo "2. WireGuard farmer VPN setup:"
     echo "   sudo bash ${REPO_ROOT}/scripts/wg_farmers_vps_setup.sh"
     echo ""
-    echo "3. サービス起動:"
+    echo "3. Start service:"
     echo "   sudo systemctl start agriha-linebot"
     echo "   sudo systemctl status agriha-linebot"
     echo ""
-    echo "4. 動作確認:"
+    echo "4. Verify:"
     echo "   curl https://${DOMAIN}/health"
 else
     #---------------------------------------------------------------------------
-    # コード更新（git pull + pip差分 + サービス再起動）
+    # Code update (git pull + pip + restart)
     #---------------------------------------------------------------------------
     echo -e "\n${GREEN}[2] git pull...${NC}"
     cd "${REPO_ROOT}"
     sudo -u "$(stat -c '%U' .git)" git pull
 
-    echo -e "\n${GREEN}[3] pip install (差分)...${NC}"
+    echo -e "\n${GREEN}[3] pip install (diff)...${NC}"
     cd "${VPS_SRC}"
     .venv/bin/pip install -q -r requirements.txt
 
-    echo -e "\n${GREEN}[4] サービス再起動...${NC}"
+    echo -e "\n${GREEN}[4] Restarting service...${NC}"
     systemctl restart agriha-linebot
 
-    echo -e "\n${GREEN}[5] ステータス確認...${NC}"
+    echo -e "\n${GREEN}[5] Status check...${NC}"
     systemctl status agriha-linebot --no-pager -l || true
 fi
 
-echo -e "\n${GREEN}=== デプロイ完了 ===${NC}"
+echo -e "\n${GREEN}=== Deploy complete ===${NC}"
