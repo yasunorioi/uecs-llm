@@ -737,6 +737,11 @@ async def settings(
     provider_def = _get_provider_by_id(current_provider) or LLM_PROVIDERS[0]
     current_api_key_raw = env_vars.get(provider_def["api_key_env"], "")
     current_api_key_masked = mask_api_key(current_api_key_raw) if current_api_key_raw else None
+    # LINE Bot / Weather API keys from .env
+    line_secret_masked = mask_api_key(env_vars.get("LINE_CHANNEL_SECRET", "")) if env_vars.get("LINE_CHANNEL_SECRET") else None
+    line_token_masked = mask_api_key(env_vars.get("LINE_CHANNEL_ACCESS_TOKEN", "")) if env_vars.get("LINE_CHANNEL_ACCESS_TOKEN") else None
+    line_user_id = env_vars.get("LINE_USER_ID", "")
+    vc_api_key_masked = mask_api_key(env_vars.get("VC_API_KEY", "")) if env_vars.get("VC_API_KEY") else None
     # ネットワーク設定
     network_config = load_network_config(NETWORK_CONFIG_PATH)
     network_status = get_network_status()
@@ -770,6 +775,10 @@ async def settings(
         "network_status": network_status,
         "apn_presets": APN_PRESETS,
         "service_statuses": service_statuses,
+        "line_secret_masked": line_secret_masked,
+        "line_token_masked": line_token_masked,
+        "line_user_id": line_user_id,
+        "vc_api_key_masked": vc_api_key_masked,
         "flash": flash,
     }
     return templates.TemplateResponse("settings.html", ctx)
@@ -939,6 +948,40 @@ async def save_llm_provider_route(
         if api_key:
             write_env_key(ENV_FILE, provider_def["api_key_env"], api_key)
 
+        return RedirectResponse(url="/settings?saved=1", status_code=303)
+    except Exception:
+        return RedirectResponse(url="/settings?error=1", status_code=303)
+
+
+@app.post("/settings/line_bot")
+async def save_line_bot_route(
+    line_channel_secret: str = Form(default=""),
+    line_channel_access_token: str = Form(default=""),
+    line_user_id: str = Form(default=""),
+    _: None = Depends(verify_auth),
+) -> RedirectResponse:
+    """LINE Bot credentials to .env."""
+    try:
+        if line_channel_secret:
+            write_env_key(ENV_FILE, "LINE_CHANNEL_SECRET", line_channel_secret)
+        if line_channel_access_token:
+            write_env_key(ENV_FILE, "LINE_CHANNEL_ACCESS_TOKEN", line_channel_access_token)
+        if line_user_id:
+            write_env_key(ENV_FILE, "LINE_USER_ID", line_user_id)
+        return RedirectResponse(url="/settings?saved=1", status_code=303)
+    except Exception:
+        return RedirectResponse(url="/settings?error=1", status_code=303)
+
+
+@app.post("/settings/weather_api")
+async def save_weather_api_route(
+    vc_api_key: str = Form(default=""),
+    _: None = Depends(verify_auth),
+) -> RedirectResponse:
+    """Visual Crossing API key to .env."""
+    try:
+        if vc_api_key:
+            write_env_key(ENV_FILE, "VC_API_KEY", vc_api_key)
         return RedirectResponse(url="/settings?saved=1", status_code=303)
     except Exception:
         return RedirectResponse(url="/settings?error=1", status_code=303)

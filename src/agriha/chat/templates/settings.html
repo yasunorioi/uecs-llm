@@ -181,7 +181,7 @@
         <button type="button" onclick="navigator.clipboard.writeText('{{ network_status.webhook_url }}').then(()=>{this.textContent='✓ コピー済み';setTimeout(()=>{this.textContent='URLをコピー'},2000)})" class="btn btn--secondary" style="font-size:0.8rem; padding:0.3rem 0.6rem;">URLをコピー</button>
       </div>
     {% else %}
-      <p class="form-hint">SIM接続後に表示されます。</p>
+      <p class="form-hint">Webhook URL はネットワーク接続後に自動検出されます。手動設定は LINE Bot セクションで行えます。</p>
     {% endif %}
   </div>
 
@@ -231,6 +231,85 @@
           <option value="none" {% if network_config.auth == 'none' %}selected{% endif %}>なし</option>
         </select>
       </div>
+    </div>
+    <button type="submit" class="btn btn--primary">保存</button>
+  </form>
+</section>
+
+{# ─── LINE Bot設定 ────────────────────────────── #}
+<section class="section">
+  <h2 class="section__title">LINE Bot</h2>
+  <p class="section__desc">
+    LINE Messaging API の認証情報を設定します。
+    <a href="https://developers.line.biz/console/" target="_blank" rel="noopener" style="color:#2563eb;">LINE Developers Console</a>
+  </p>
+  <form action="/settings/line_bot" method="post">
+    <div class="form-row">
+      <label class="form-label" for="line_channel_secret">Channel Secret</label>
+      <div class="form-input-group">
+        <input type="password" id="line_channel_secret" name="line_channel_secret" class="input"
+          placeholder="新しい値を入力（空欄=変更なし）" autocomplete="new-password">
+      </div>
+      <p class="form-hint">
+        {% if line_secret_masked %}設定済み: {{ line_secret_masked }}{% else %}未設定{% endif %}
+      </p>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label" for="line_channel_access_token">Channel Access Token</label>
+      <div class="form-input-group">
+        <input type="password" id="line_channel_access_token" name="line_channel_access_token" class="input"
+          placeholder="新しい値を入力（空欄=変更なし）" autocomplete="new-password">
+      </div>
+      <p class="form-hint">
+        {% if line_token_masked %}設定済み: {{ line_token_masked }}{% else %}未設定{% endif %}
+      </p>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label" for="line_user_id">User ID（管理者通知用）</label>
+      <div class="form-input-group">
+        <input type="text" id="line_user_id" name="line_user_id" class="input"
+          placeholder="Uxxxxxxx..." value="{{ line_user_id or '' }}">
+      </div>
+      <p class="form-hint">LINE Developers Console の「基本設定」から確認できます。空欄=変更なし。</p>
+    </div>
+
+    <div style="margin-bottom:0.75rem;">
+      <label class="form-label">Webhook URL</label>
+      {% if network_status.webhook_url %}
+        <div style="display:flex; gap:0.5rem; align-items:center;">
+          <code style="background:#f3f4f6; padding:0.4rem 0.6rem; border-radius:4px; font-size:0.85rem;">{{ network_status.webhook_url }}</code>
+          <button type="button" onclick="navigator.clipboard.writeText('{{ network_status.webhook_url }}').then(()=>{this.textContent='✓';setTimeout(()=>{this.textContent='Copy'},2000)})" class="btn btn--secondary" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Copy</button>
+        </div>
+        <p class="form-hint">LINE Developers Console → Messaging API → Webhook URL に設定してください。</p>
+      {% else %}
+        <p class="form-hint">https://&lt;your-domain&gt;/callback を LINE Developers Console で設定してください。</p>
+      {% endif %}
+    </div>
+
+    <button type="submit" class="btn btn--primary">保存</button>
+  </form>
+</section>
+
+{# ─── Weather API設定 ─────────────────────────── #}
+<section class="section">
+  <h2 class="section__title">Weather API（Visual Crossing）</h2>
+  <p class="section__desc">
+    Layer 3（LLM予報制御）が天気予報の取得に使用します。
+    <a href="https://www.visualcrossing.com/account" target="_blank" rel="noopener" style="color:#2563eb;">Visual Crossing Account</a>
+  </p>
+  <form action="/settings/weather_api" method="post">
+    <div class="form-row">
+      <label class="form-label" for="vc_api_key">API Key</label>
+      <div class="form-input-group">
+        <input type="password" id="vc_api_key" name="vc_api_key" class="input"
+          placeholder="新しいキーを入力（空欄=変更なし）" autocomplete="new-password">
+      </div>
+      <p class="form-hint">
+        {% if vc_api_key_masked %}設定済み: {{ vc_api_key_masked }}{% else %}未設定（天気予報なしで動作）{% endif %}
+        · 無料プラン: 1000 req/day
+      </p>
     </div>
     <button type="submit" class="btn btn--primary">保存</button>
   </form>
