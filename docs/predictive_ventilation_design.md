@@ -1,6 +1,7 @@
 # 側窓予測制御 設計書
 
-> **Version**: 2.0 | **Date**: 2026-03-13
+> **Version**: 2.1 | **Date**: 2026-03-13
+> **Status**: **実装済み** — rule_engine.py Rule 6c/6d + window_position.py + テスト23件PASS
 > **対象**: rule_engine.py (Layer 2) の Rule 6d 拡張
 
 ## 背景

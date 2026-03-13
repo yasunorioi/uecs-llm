@@ -32,8 +32,8 @@ Layer 3: 知恵（LLM）   — forecast_engine.py
   │  月数百円。高札検索ヒット時はLLMスキップ
   │
 Layer 2: ガムテ（ルールベース）— rule_engine.py
-  │  cron 10分毎。PID温度制御+日射比例灌水+降雨/強風ルール
-  │  rules.yaml + channel_map.yaml で設定。API代ゼロ
+  │  cron 5分毎。ピタゴラスイッチ段階制御+日射比例灌水+降雨/強風ルール
+  │  rules.yaml + channel_map.yaml + window_position.py で設定。API代ゼロ
   │
 Layer 1: 爆発（緊急停止）— emergency_guard.sh
      cron 毎分。bash+curl のみ（Python不要）

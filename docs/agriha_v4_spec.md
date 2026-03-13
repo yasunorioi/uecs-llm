@@ -13,26 +13,27 @@
 
 | # | カテゴリ | 機能 | ステータス | 優先度 | 実装場所 |
 |---|---------|------|----------|--------|---------|
-| F01 | リモート制御 | LINE Bot「開けろ/閉めろ」 | RPi移植設計済み | P0 | chat/app.py + linebot_handler.py (RPi) |
-| F02 | 状況確認 | LINE Bot「今どうなってる？」 | RPi移植設計済み | P0 | chat/app.py + linebot_handler.py (RPi) |
-| F03 | 異常通知 | emergency_guard.sh LINE通知 | v3-rebuild実装済み | P1 | services/agriha-control/emergency_guard.sh |
-| F04 | 自動制御 | Layer1: 緊急停止 | v3-rebuild実装済み | P1 | services/agriha-control/emergency_guard.sh |
-| F05 | 自動制御 | Layer2: ルールベースPID制御 | v3-rebuild実装済み | P2 | services/agriha-control/rule_engine.py |
-| F06 | 自動制御 | Layer3: LLM 1時間予報 | v3-rebuild実装済み | P2 | services/agriha-control/forecast_engine.py |
-| F07 | 自動制御 | 計画実行（plan_executor） | v3-rebuild実装済み | P2 | services/agriha-control/plan_executor.py |
-| F08 | 自動制御 | 日射比例灌水 | v3-rebuild実装済み | P2 | services/agriha-control/rule_engine.py |
-| F09 | UI | ダッシュボード | v3-rebuild実装済み | P2 | services/agriha-chat/ (templates/static) |
-| F10 | UI | Chat窓（Claude対話） | 稼働中(main) | P2 | services/agriha-chat/agriha_chat.py |
-| F11 | HW抽象化 | unipi-daemon（センサー+リレー） | v3-rebuild実装済み | P1 | services/unipi-daemon/ |
-| F12 | HW抽象化 | 雨検知（rain_detector） | v3-rebuild実装済み | P2 | services/rain_detector.py |
-| F13 | HW抽象化 | CO2読取（uart_co2_reader） | v3-rebuild実装済み | P3 | services/uart_co2_reader.py |
-| F14 | インフラ | カメラ定点撮影 | 稼働中(main) | P3 | agriha-capture.sh (mainブランチ) |
-| F15 | インフラ | Nginx統合 | 未実装(設計済み) | P3 | — |
-| F16 | 蒸留 | 判断パターン蒸留パイプライン | 未実装(構想) | P4 | — |
-| F17 | UI | 反省会モード（週次LINE Bot） | 未実装(構想) | P4 | — |
-| F18 | 設定 | channel_map.yaml外部設定 | v3-rebuild実装済み | P1 | config/channel_map.yaml + channel_config.py |
-| F19 | ネットワーク | USB SIM / APN設定UI | 設計済み | P1 | chat/app.py (settings画面) + ModemManager |
+| F01 | リモート制御 | LINE Bot「開けろ/閉めろ」 | RPi移植設計済み | P0 | src/agriha/chat/app.py + linebot_handler.py |
+| F02 | 状況確認 | LINE Bot「今どうなってる？」 | RPi移植設計済み | P0 | src/agriha/chat/app.py + linebot_handler.py |
+| F03 | 異常通知 | emergency_guard.sh LINE通知 | 実装済み | P1 | src/agriha/control/emergency_guard.sh |
+| F04 | 自動制御 | Layer1: 緊急停止 | 実装済み | P1 | src/agriha/control/emergency_guard.sh |
+| F05 | 自動制御 | Layer2: ルールベース+ピタゴラスイッチ | 実装済み | P2 | src/agriha/control/rule_engine.py + window_position.py |
+| F06 | 自動制御 | Layer3: LLM 1時間予報 | 実装済み | P2 | src/agriha/control/forecast_engine.py |
+| F07 | 自動制御 | 計画実行（plan_executor） | 実装済み | P2 | src/agriha/control/plan_executor.py |
+| F08 | 自動制御 | 日射比例灌水 | 実装済み | P2 | src/agriha/control/rule_engine.py |
+| F09 | UI | ダッシュボード+設定画面+サービス再起動 | 実装済み | P2 | src/agriha/chat/ (templates/static) |
+| F10 | UI | Chat窓（Claude対話） | 実装済み | P2 | src/agriha/chat/app.py |
+| F11 | HW抽象化 | unipi-daemon（センサー+リレー） | 実装済み | P1 | src/agriha/daemon/ |
+| F12 | HW抽象化 | 雨検知（rain_detector） | 実装済み | P2 | src/agriha/daemon/rain_detector.py |
+| F13 | HW抽象化 | CO2読取（uart_co2_reader） | 実装済み | P3 | src/agriha/daemon/uart_co2_reader.py |
+| F14 | インフラ | カメラ定点撮影 | 実装済み | P3 | scripts/agriha-capture.sh |
+| F15 | インフラ | Nginx統合 | 設計済み(config/nginx.conf) | P3 | config/nginx.conf |
+| F16 | 蒸留 | 判断パターン蒸留パイプライン | 部分実装 | P4 | src/agriha/control/distiller.py |
+| F17 | UI | 反省会モード（週次LINE Bot） | 設計済み(config有) | P4 | config/reflection.yaml |
+| F18 | 設定 | channel_map.yaml外部設定 | 実装済み | P1 | config/channel_map.yaml + channel_config.py |
+| F19 | ネットワーク | USB SIM / APN設定UI | 設計済み | P1 | src/agriha/chat/app.py (settings画面) + ModemManager |
 | F20 | ネットワーク | HTTPS証明書管理 | 設計済み | P1 | certbot + Nginx |
+| F21 | 自動制御 | ピタゴラスイッチ段階制御 | **実装済み** | P2 | src/agriha/control/rule_engine.py + window_position.py |
 
 ### 1.2 優先度定義
 
@@ -119,51 +120,79 @@ LINE Platform                    VPS (オプション)
     └─────────────┘
 ```
 
-### 2.2 ディレクトリ構成（v4案）
+### 2.2 ディレクトリ構成
+
+> **2026-03-13更新**: unipi-agri-ha / uecs-pico-gateway から全アクティブコードを統合し、uecs-llm をモノレポ化。
 
 ```
-unipi-agri-ha/
+uecs-llm/
 ├── config/                    # 全設定ファイル統一
-│   ├── agriha.cron            # cron設定（4ジョブ）
 │   ├── channel_map.yaml       # リレーch↔機器マッピング
 │   ├── crop_irrigation.yaml   # 灌水パラメータ
-│   ├── emergency.conf.template# 緊急閾値テンプレート
-│   ├── rules.yaml             # ルールエンジン設定（PID/灌水/風/温度）
+│   ├── emergency.conf         # 緊急閾値
+│   ├── forecast.yaml          # LLMプロバイダー・パラメータ
+│   ├── network.yaml           # ネットワーク設定
+│   ├── nginx.conf             # Nginx設定テンプレート
+│   ├── reflection.yaml        # 反省会モード設定
+│   ├── rule_candidates.yaml   # LLM生成ルール候補
+│   ├── rules.yaml             # ルールエンジン設定（PID/灌水/風/温度/ピタゴラスイッチ）
 │   ├── system_prompt.txt      # LLMシステムプロンプト
-│   └── unipi_daemon.yaml      # unipi-daemon設定
+│   ├── thresholds.yaml        # アラーム閾値
+│   ├── unipi_daemon.example.yaml # unipi-daemon設定テンプレート
+│   └── wg0.conf.template      # WireGuard設定テンプレート
 ├── src/agriha/                # 全Pythonソース統一パッケージ
 │   ├── control/               # 三層制御 + executor
-│   │   ├── emergency_guard.sh
-│   │   ├── rule_engine.py
-│   │   ├── forecast_engine.py
-│   │   ├── plan_executor.py
-│   │   └── channel_config.py
-│   ├── chat/                  # WebUI + チャットAPI
-│   │   ├── app.py
-│   │   ├── templates/
-│   │   └── static/
-│   ├── daemon/                # HW抽象化デーモン
-│   │   ├── main.py, rest_api.py, sensor_loop.py
+│   │   ├── emergency_guard.sh # Layer 1: 緊急制御（bash）
+│   │   ├── rule_engine.py     # Layer 2: ルールベース+ピタゴラスイッチ
+│   │   ├── forecast_engine.py # Layer 3: LLM予報
+│   │   ├── plan_executor.py   # Layer 3: 計画実行
+│   │   ├── window_position.py # 側窓推定位置管理
+│   │   ├── nullclaw_proxy.py  # NullClaw OpenAI互換プロキシ
+│   │   ├── channel_config.py  # チャンネルマップ読み込み
+│   │   ├── rule_manager.py    # ルールYAMLパーサ
+│   │   ├── distiller.py       # 蒸留パイプライン
+│   │   └── retry_helper.py    # リトライロジック
+│   ├── chat/                  # WebUI + LINE Bot（RPi直接稼働）
+│   │   ├── app.py             # FastAPI + htmx + 設定画面 + サービス再起動
+│   │   ├── linebot_handler.py # LINE Webhook統合
+│   │   ├── templates/         # Jinja2テンプレート
+│   │   └── static/            # CSS/JS
+│   ├── daemon/                # HW抽象化デーモン + 補助サービス
+│   │   ├── main.py            # 5タスク並行asyncioデーモン
+│   │   ├── rest_api.py, sensor_loop.py
 │   │   ├── i2c_relay.py, gpio_watch.py, ds18b20.py
 │   │   ├── wh65lp_reader.py, mqtt_relay_bridge.py
 │   │   ├── ccm_receiver.py, emergency_override.py
-│   │   └── mosquitto.conf
-│   ├── services/              # 補助サービス
-│   │   ├── rain_detector.py
-│   │   └── uart_co2_reader.py
-│   └── lib/                   # 共通ライブラリ
-│       ├── datetime_helper.py
-│       └── sensor_drivers/
+│   │   ├── rain_detector.py   # 雨検知デーモン
+│   │   └── uart_co2_reader.py # UART CO2リーダー
+│   ├── vps/                   # LINE Bot VPS版（Docker、レガシー）
+│   │   ├── app.py, llm_client.py, router.py, tools.py
+│   │   ├── rpi_client.py, onboarding.py
+│   │   └── tests/
+│   └── linebot/               # LINE Bot共通モジュール
 ├── tests/                     # 全テスト統一（pytest tests/）
-│   ├── control/ chat/ daemon/ lib/
-├── arduino/                   # Picoファームウェア
-├── firmware/                  # CircuitPython
-├── linebot/                   # LINE Bot（VPS）
+│   ├── control/               # 三層制御テスト（ピタゴラスイッチ含む）
+│   ├── daemon/                # デーモンテスト
+│   ├── chat/                  # UIテスト
+│   └── linebot/               # LINE Botテスト
+├── firmware/                  # マイコンファームウェア
+│   ├── arduino/               # Arduino (W5500 Ethernet PoE)
+│   │   ├── env_node_eth/      # 環境センサーノード (SCD41+SHT40+BMP280)
+│   │   ├── solar_node/        # 日射センサーノード
+│   │   └── shared/            # 共通ヘッダ
+│   └── pico/                  # CircuitPython (Pico 2 W)
+│       ├── sensor_node/       # W5500-EVB-Pico2センサー
+│       ├── drainage_node/     # 排水制御
+│       └── weather_node/      # 気象ステーション
+├── hardware/kicad/            # KiCad基板設計（Grove Shield, Actuator）
 ├── systemd/                   # systemdサービスファイル統一
-├── scripts/                   # デプロイ・ユーティリティ
+├── scripts/                   # デプロイ・WG・ユーティリティ
+├── custom_image/              # RPi OSカスタムイメージビルド (pi-gen)
+├── auto_test/                 # 自動テストフレームワーク (udev+systemd)
+├── benchmarks/                # LLM制御ベンチマーク
+├── docker/                    # RPi用 (Mosquitto)
+├── cloud_server/              # VPS用 (InfluxDB+Telegraf+Grafana、オプション)
 ├── docs/                      # 設計書
-├── data/                      # 分析データ
-├── docker/ cloud_server/      # インフラ構成
 └── pyproject.toml             # プロジェクト定義
 ```
 
@@ -185,7 +214,7 @@ unipi-agri-ha/
 ┌───────────────┐   ┌──────▼───────┐   ┌──────────────┐
 │ unipi-daemon  │◄──│ plan         │   │ 高札API      │
 │ :8080         │   │ _executor.py │   │ (類似検索)   │
-│ REST API      │   │ (cron 10分)  │   └──────────────┘
+│ REST API      │   │ (cron 5分)   │   └──────────────┘
 │ +MQTT publish │   └──────────────┘
 └───────┬───────┘          ▲
         │                  │ flag files
@@ -269,16 +298,15 @@ agriha/
 
 ### §3.2 rule_engine.py（Layer2: ルールベース制御）
 
-**概要**: PID制御 + ルールベース判断。10分毎にcronで実行。channel_map.yaml経由でch番号を取得。
+**概要**: ルールベース判断 + ピタゴラスイッチ段階制御。5分毎にcronで実行。channel_map.yaml経由でch番号を取得。
 
 | 項目 | 内容 |
 |------|------|
 | **入力** | GET localhost:8080/api/sensors → indoor_temp, rainfall, wind_speed, wind_dir, solar_wm2 |
-| **設定** | config/rules.yaml, config/channel_map.yaml, /var/lib/agriha/pid_override.json |
-| **処理** | 優先度付きルール評価 → リレー操作 + フラグファイル管理 |
-| **出力** | POST /api/relay/{ch}, rain_flag, wind_flag, solar_accum.json, temp_history.json |
-| **依存** | unipi-daemon REST API, channel_config.py, astral (日の出/日没計算) |
-| **コード行数** | 506行 |
+| **設定** | config/rules.yaml (pitagorasuセクション含む), config/channel_map.yaml, /var/lib/agriha/pid_override.json |
+| **処理** | 優先度付きルール評価 → リレー操作 + フラグファイル管理 + ソフトウェア位置追跡 |
+| **出力** | POST /api/relay/{ch}, rain_flag, wind_flag, solar_accum.json, temp_history.json, window_position.json |
+| **依存** | unipi-daemon REST API, channel_config.py, window_position.py, astral (日の出/日没計算) |
 
 **ルール優先度チェーン**:
 
@@ -287,9 +315,29 @@ agriha/
 | 1 | 降雨時全閉 | rainfall > 0 | 全窓OFF + rain_flag作成 |
 | 2 | 強風方向制御 | wind_speed ≥ 5.0 m/s | 風向別片側閉鎖 + wind_flag |
 | 3 | 気温急上昇 | 20分で+3℃以上 | 全窓全開 |
-| 4 | 時間帯制御 | 日没後〜日の出前 | 全窓閉鎖 |
-| 5 | PID温度制御 | 昼間 + 上記非該当 | PID出力>0→全窓開, ≤0→全窓閉 |
+| 4 | 時間帯制御(6c) | 日没後〜日の出前 | 全窓閉鎖 + 夜間キャリブレーション（ピタゴラスイッチ有効時） |
+| 5 | ピタゴラスイッチ段階制御(6d) | 昼間 + 上記非該当 + pitagorasu.enabled | 5段階開度制御（詳細下記） |
+| 5' | PID温度制御(フォールバック) | 昼間 + pitagorasu.enabled=false | PID出力>0→全窓開, ≤0→全窓閉 |
 | 6 | 日射比例灌水 | solar積算 ≥ 0.9 MJ/m² | ch4灌水60秒 |
+
+**ピタゴラスイッチ段階制御** (Rule 6d, 2026-03-13実装):
+
+| ステージ | 温度帯 | 南窓 | 北窓 | 名称 |
+|---------|--------|------|------|------|
+| 0 | <25℃ | 0% | 0% | closed |
+| 1 | 25-27℃ | 30% | 0% | south_micro |
+| 2 | 27-30℃ | 50% | 50% | both_medium |
+| 3 | 30-32℃ | 80% | 80% | both_wide |
+| 4 | ≥32℃ | 100% | 100% | full_open |
+
+- **ソフトウェア位置追跡**: window_position.py でエンコーダなしモーターの推定開度を管理
+- **非対称走行時間**: 開(巻き上げ)=65秒、閉(巻き下ろし)=50秒（重力影響）
+- **差分制御**: 現在位置→目標位置の差分×走行時間=通電秒数
+- **不感帯**: 5%以下の差分は動かさない（deadband=0.05）
+- **先読み制御**: 温度トレンド+1.5℃/h→1段階先取り、+3.0℃/h→2段階先取り
+- **早朝オフセット**: 5-8時は全段階を-1℃シフト
+- **夜間キャリブレーション**: Rule 6cで全閉走行時間×1.1秒通電→position=0.0リセット
+- **フォールバック**: `pitagorasu.enabled: false` で即座にバイナリ開閉に復帰
 
 **PIDパラメータ** (config/rules.yaml):
 - Kp=8.0, Ki=0.5, Kd=2.0, dt=600秒

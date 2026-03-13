@@ -1,5 +1,8 @@
 # WireGuard VPN Setup Guide
 
+> **⚠️ 注意**: この文書はVPS経由WireGuard構成の手順書。現行の管理VPN(10.10.0.0/24)設定には有効だが、
+> 農家VPN(10.20.0.0/24)の設計は `config/wg0.conf.template` + `scripts/wg_farmer_setup.sh` を参照。
+
 ## Overview
 
 This guide explains how to set up a WireGuard VPN to connect:

@@ -1,8 +1,11 @@
 # v2 三層制御 詳細設計書
 
+> **⚠️ DEPRECATED**: この文書はv4仕様書 (`agriha_v4_spec.md`) に統合済み。最新仕様はv4 specを参照のこと。
+> 本文書は設計経緯の参照用として保持。
+>
 > **Version**: 1.6 (v3.6連動: 蒸留パイプライン §7.5-§7.11 forecast_engine I/O拡張 — 2026-03-04)
 > **Date**: 2026-03-04
-> **Status**: Approved
+> **Status**: ~~Approved~~ → Superseded by agriha_v4_spec.md
 > **Parent**: llm_control_loop_design.md v3.6
 > **Branch**: v2-three-layer
 
