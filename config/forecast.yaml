@@ -1,10 +1,10 @@
 # Layer 3: LLM 1時間予報設定
 # 設計書: docs/v2_three_layer_design.md §6.3
 llm:
-  provider: "ollama"
-  model: "qwen3:8b"
-  base_url: "http://localhost:11434/v1/"  # RPi ローカル Ollama
-  api_key_env: "OLLAMA_API_KEY"           # Ollama はキー不要（ダミー）
+  provider: "nullclaw"
+  model: "nullclaw-local"
+  base_url: "http://localhost:3001/v1/"   # NullClaw OpenAI互換プロキシ
+  api_key_env: "NULLCLAW_API_KEY"         # APIキーなし→NullClaw直行、あり→API優先+フォールバック
   max_tokens: 1024
   max_tool_rounds: 5
   api_timeout_sec: 30.0
