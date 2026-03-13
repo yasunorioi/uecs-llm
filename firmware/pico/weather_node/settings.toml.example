@@ -1,0 +1,277 @@
+# =============================================================================
+# Arsprout Weather Node - Configuration Template
+# =============================================================================
+# This is an example configuration file for the weather monitoring node.
+# Copy this file to "settings.toml" and customize the values for your setup.
+#
+# File location: firmware/weather_node/settings.toml
+# Platform: CircuitPython 9.0+
+# Hardware: W5500-EVB-Pico-PoE
+#
+# IMPORTANT:
+#   - settings.toml is loaded automatically by CircuitPython on boot
+#   - Restart required after changing settings
+#   - Do NOT commit settings.toml with credentials to version control
+# =============================================================================
+
+# =============================================================================
+# [device] - Device Identification
+# =============================================================================
+
+[device]
+# Unique identifier for this greenhouse/node (e.g., "h1", "h2", "nursery")
+house_id = "h1"
+
+# Node type determines MQTT topic structure and sensor suite
+# Options: "weather", "drainage", "control", "actuator"
+node_type = "weather"
+
+# Optional: Custom node name for Home Assistant
+# If not specified, defaults to "{house_id}_{node_type}"
+# node_name = "Greenhouse 1 Weather Station"
+
+
+# =============================================================================
+# [network] - Ethernet Configuration
+# =============================================================================
+
+[network]
+# Static IP configuration for W5500 Ethernet
+# Note: DHCP is not supported in this firmware version
+
+# IP address of this device
+ip = "192.168.1.100"
+
+# Subnet mask (typically 255.255.255.0 for /24 networks)
+subnet = "255.255.255.0"
+
+# Gateway IP (usually your router)
+gateway = "192.168.1.1"
+
+# DNS server (can be gateway or public DNS like 8.8.8.8)
+dns = "192.168.1.1"
+
+
+# =============================================================================
+# [mqtt] - MQTT Broker Configuration
+# =============================================================================
+
+[mqtt]
+# MQTT broker IP address or hostname
+# For local Mosquitto: use broker's IP address
+broker = "192.168.1.50"
+
+# MQTT broker port
+# Standard: 1883 (unencrypted), 8883 (TLS)
+port = 1883
+
+# MQTT authentication (optional)
+# Leave empty ("") if broker does not require authentication
+user = ""
+password = ""
+
+# MQTT keep-alive interval (seconds)
+# Default: 60 seconds
+# keep_alive = 60
+
+# MQTT QoS level (0, 1, or 2)
+# 0 = At most once (default, lowest overhead)
+# 1 = At least once (requires ACK)
+# 2 = Exactly once (highest overhead)
+# qos = 0
+
+
+# =============================================================================
+# [sensors] - I2C Sensor Configuration
+# =============================================================================
+
+[sensors]
+# -----------------------------------------------------------------------------
+# AUTO-DETECTION vs MANUAL SPECIFICATION
+# -----------------------------------------------------------------------------
+# For each sensor:
+#   - "auto" = Automatically detect sensor model via I2C scan
+#   - Specific model (e.g., "SHT31") = Force use of that driver
+#   - Comment out or omit = Sensor is disabled
+#
+# Auto-detection is recommended for most cases.
+# Manual specification is useful for:
+#   - Forcing a specific driver when multiple models share the same I2C address
+#   - Skipping probing to reduce startup time
+#   - Troubleshooting detection issues
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# Temperature & Humidity Sensor
+# -----------------------------------------------------------------------------
+# Supported models: SHT31, SHT41
+# I2C address: 0x44
+# Measures: Temperature (°C), Relative Humidity (%)
+#
+# Options: "auto", "SHT31", "SHT41"
+temperature_humidity = "auto"
+
+# -----------------------------------------------------------------------------
+# CO2 Sensor
+# -----------------------------------------------------------------------------
+# Supported models: SCD30, SCD40, SCD41
+# I2C addresses:
+#   - SCD30: 0x61
+#   - SCD40/SCD41: 0x62
+# Measures: CO2 concentration (ppm)
+#
+# Options: "auto", "SCD30", "SCD40", "SCD41"
+co2 = "auto"
+
+# -----------------------------------------------------------------------------
+# Atmospheric Pressure Sensor
+# -----------------------------------------------------------------------------
+# Supported models: BMP280
+# I2C addresses: 0x76 (alt), 0x77 (default)
+# Measures: Atmospheric pressure (hPa)
+#
+# Options: "auto", "BMP280"
+pressure = "auto"
+
+
+# =============================================================================
+# [sensors.adc] - Analog (ADC) Sensor Configuration
+# =============================================================================
+# ADC sensors are connected to the Pico's analog inputs (ADC0-ADC3).
+# Set to true/false to enable/disable each sensor.
+# -----------------------------------------------------------------------------
+
+[sensors.adc]
+# -----------------------------------------------------------------------------
+# Solar Radiation Sensor
+# -----------------------------------------------------------------------------
+# Connection: ADC0 (GP26)
+# Sensor: Pyranometer or photodiode
+# Unit: W/m² or lux
+solar_radiation = true
+
+# -----------------------------------------------------------------------------
+# Soil Moisture Sensor
+# -----------------------------------------------------------------------------
+# Connection: ADC1 (GP27)
+# Sensor: Capacitive soil moisture sensor
+# Unit: % (0-100%)
+soil_moisture = true
+
+# -----------------------------------------------------------------------------
+# Water Pressure Sensor 1
+# -----------------------------------------------------------------------------
+# Connection: ADC2 (GP28)
+# Sensor: Pressure transducer (0-5V or 4-20mA)
+# Unit: kPa or bar
+# Use case: Main water supply pressure
+water_pressure_1 = true
+
+# -----------------------------------------------------------------------------
+# Water Pressure Sensor 2
+# -----------------------------------------------------------------------------
+# Connection: ADC3 (GP29)
+# Sensor: Pressure transducer (0-5V or 4-20mA)
+# Unit: kPa or bar
+# Use case: Secondary water line or nutrient solution pressure
+water_pressure_2 = false
+
+
+# =============================================================================
+# [timing] - Data Collection & Publishing Intervals
+# =============================================================================
+
+[timing]
+# How often to read sensors and publish data (seconds)
+# Default: 600 (10 minutes)
+# Range: 10 - 3600 seconds
+publish_interval = 600
+
+# Sensor warmup time after power-on (seconds)
+# Some sensors (e.g., SCD30) require warmup before stable readings
+# Default: 5 seconds
+# warmup_time = 5
+
+
+# =============================================================================
+# [calibration] - Sensor Calibration Values
+# =============================================================================
+# Optional: Calibration offsets and scaling factors for sensors
+# Uncomment and adjust as needed after field calibration
+# -----------------------------------------------------------------------------
+
+# [calibration.temperature]
+# offset = 0.0      # Temperature offset (°C)
+# scale = 1.0       # Temperature scale factor
+
+# [calibration.humidity]
+# offset = 0.0      # Humidity offset (%)
+# scale = 1.0       # Humidity scale factor
+
+# [calibration.co2]
+# offset = 0        # CO2 offset (ppm)
+# altitude = 0      # Altitude compensation (meters above sea level)
+
+# [calibration.pressure]
+# offset = 0.0      # Pressure offset (hPa)
+# sea_level = 1013.25  # Sea level pressure for altitude calculation
+
+# [calibration.adc]
+# solar_radiation_scale = 1.0     # Scaling factor for solar sensor
+# soil_moisture_dry = 1.5         # ADC voltage when soil is dry
+# soil_moisture_wet = 0.5         # ADC voltage when soil is wet
+# water_pressure_1_scale = 100.0  # kPa per volt
+# water_pressure_2_scale = 100.0  # kPa per volt
+
+
+# =============================================================================
+# [home_assistant] - Home Assistant Integration
+# =============================================================================
+
+[home_assistant]
+# Enable MQTT Discovery for automatic Home Assistant integration
+# When enabled, sensors appear automatically in Home Assistant
+# Default: true
+discovery = true
+
+# Device manufacturer name (for HA device registry)
+# manufacturer = "Arsprout"
+
+# Device model name (for HA device registry)
+# model = "Weather Node v1.0"
+
+
+# =============================================================================
+# [advanced] - Advanced Settings
+# =============================================================================
+# WARNING: Only modify these if you know what you're doing!
+# -----------------------------------------------------------------------------
+
+# [advanced]
+# # I2C bus speed (Hz)
+# # Default: 100000 (100 kHz, standard mode)
+# # Options: 100000, 400000 (fast mode)
+# i2c_frequency = 100000
+
+# # MQTT reconnect attempts
+# # Default: 3
+# mqtt_reconnect_attempts = 3
+
+# # MQTT reconnect delay (seconds)
+# # Default: 5
+# mqtt_reconnect_delay = 5
+
+# # Enable debug logging
+# # Default: false
+# debug = false
+
+
+# =============================================================================
+# NOTES
+# =============================================================================
+# 1. After editing this file, save it as "settings.toml" (remove .example)
+# 2. Restart the device for changes to take effect
+# 3. Check serial console output to verify settings are loaded correctly
+# 4. If a sensor fails to initialize, the firmware will skip it and continue
+#    (failsafe design - missing sensors do not block startup)
+# =============================================================================

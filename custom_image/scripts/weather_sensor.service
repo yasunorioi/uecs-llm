@@ -1,0 +1,17 @@
+[Unit]
+Description=RS485 Weather Sensor Service
+After=network.target mosquitto.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/unipi-agri-ha/scripts/weather_sensor_service.py
+WorkingDirectory=/opt/unipi-agri-ha/scripts
+Restart=always
+RestartSec=10
+User=root
+Environment=SERIAL_PORT=/dev/ttyUSB0
+Environment=MQTT_BROKER=localhost
+Environment=SENSOR_INTERVAL=60
+
+[Install]
+WantedBy=multi-user.target

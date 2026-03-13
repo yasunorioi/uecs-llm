@@ -1,0 +1,16 @@
+Comment,Designator,Footprint,LCSC
+100n,"C1,C2,C3",C_0805_2012Metric,C49678
+1N4148,D1,D_SOD-123,C81598
+Pico_Left,J1,PinSocket_1x20_P2.54mm_Vertical,
+Pico_Right,J2,PinSocket_1x20_P2.54mm_Vertical,
+Grove_I2C0,J3,JST_PH_B4B-PH-K_1x04_P2.00mm_Vertical,
+Grove_I2C1,J4,JST_PH_B4B-PH-K_1x04_P2.00mm_Vertical,
+ADC0,J5,JST_PH_B3B-PH-K_1x03_P2.00mm_Vertical,
+ADC1,J6,JST_PH_B3B-PH-K_1x03_P2.00mm_Vertical,
+ADC2,J7,JST_PH_B3B-PH-K_1x03_P2.00mm_Vertical,
+1-Wire,J8,JST_PH_B3B-PH-K_1x03_P2.00mm_Vertical,
+Fan,J9,TerminalBlock_bornier-2_P5.08mm,
+2N7002,Q1,SOT-23,C8545
+4.7k,"R1,R2,R3,R4,R5",R_0805_2012Metric,C17673
+100,R6,R_0805_2012Metric,C17408
+10k,R7,R_0805_2012Metric,C17414

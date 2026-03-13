@@ -1,0 +1,188 @@
+[
+    {
+        "id": "setup-tab",
+        "type": "tab",
+        "label": "Setup Wizard",
+        "disabled": false,
+        "info": "初回セットアップウィザード"
+    },
+    {
+        "id": "setup-http-in",
+        "type": "http in",
+        "z": "setup-tab",
+        "name": "GET /setup",
+        "url": "/setup",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 120,
+        "y": 80,
+        "wires": [["setup-check-status"]]
+    },
+    {
+        "id": "setup-check-status",
+        "type": "function",
+        "z": "setup-tab",
+        "name": "Check Setup Status",
+        "func": "const fs = global.get('fs') || require('fs');\nconst configPath = '/opt/unipi-agri-ha/config/setup_complete';\n\nmsg.setupComplete = fs.existsSync(configPath);\nmsg.hostname = require('os').hostname();\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 320,
+        "y": 80,
+        "wires": [["setup-template"]]
+    },
+    {
+        "id": "setup-template",
+        "type": "template",
+        "z": "setup-tab",
+        "name": "Setup Page HTML",
+        "field": "payload",
+        "fieldType": "msg",
+        "format": "html",
+        "syntax": "mustache",
+        "template": "<!DOCTYPE html>\n<html lang=\"ja\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>UniPi Agri HA - セットアップ</title>\n    <style>\n        * { box-sizing: border-box; margin: 0; padding: 0; }\n        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #eee; min-height: 100vh; }\n        .container { max-width: 500px; margin: 0 auto; padding: 20px; }\n        h1 { text-align: center; margin: 30px 0; color: #4ecca3; font-size: 1.5em; }\n        .logo { text-align: center; font-size: 3em; margin-bottom: 10px; }\n        .card { background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); border-radius: 16px; padding: 24px; margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.1); }\n        .card h2 { color: #4ecca3; margin-bottom: 16px; font-size: 1.1em; display: flex; align-items: center; gap: 8px; }\n        .card h2::before { content: attr(data-step); background: #4ecca3; color: #1a1a2e; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.8em; font-weight: bold; }\n        .step { display: none; }\n        .step.active { display: block; }\n        label { display: block; margin-bottom: 6px; color: #aaa; font-size: 0.9em; }\n        textarea, input[type=\"text\"] { width: 100%; padding: 12px; border: 1px solid rgba(255,255,255,0.2); border-radius: 10px; background: rgba(0,0,0,0.3); color: #fff; font-size: 14px; font-family: monospace; margin-bottom: 16px; resize: vertical; }\n        textarea { min-height: 200px; }\n        textarea:focus, input:focus { outline: none; border-color: #4ecca3; box-shadow: 0 0 0 3px rgba(78,204,163,0.2); }\n        button { width: 100%; padding: 14px; background: linear-gradient(135deg, #4ecca3 0%, #38b892 100%); color: #1a1a2e; border: none; border-radius: 10px; font-size: 16px; font-weight: 600; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }\n        button:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(78,204,163,0.4); }\n        button:active { transform: translateY(0); }\n        button:disabled { background: #555; cursor: not-allowed; transform: none; box-shadow: none; }\n        .info-box { background: rgba(0,0,0,0.3); border-radius: 10px; padding: 16px; margin: 16px 0; }\n        .info-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }\n        .info-row:last-child { border-bottom: none; }\n        .info-label { color: #888; font-size: 0.9em; }\n        .info-value { color: #4ecca3; font-family: monospace; font-size: 0.9em; }\n        .success { text-align: center; padding: 40px 20px; }\n        .success-icon { font-size: 4em; margin-bottom: 20px; }\n        .success h2 { color: #4ecca3; margin-bottom: 10px; }\n        .success p { color: #888; margin-bottom: 30px; }\n        .success .links { display: flex; flex-direction: column; gap: 10px; }\n        .success a { display: block; padding: 14px; background: rgba(78,204,163,0.2); color: #4ecca3; text-decoration: none; border-radius: 10px; font-weight: 500; }\n        .success a:hover { background: rgba(78,204,163,0.3); }\n        .error { background: rgba(255,107,107,0.2); color: #ff6b6b; padding: 12px; border-radius: 8px; margin-bottom: 16px; display: none; }\n        .status { display: flex; align-items: center; gap: 8px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px; margin-bottom: 16px; }\n        .status-dot { width: 10px; height: 10px; border-radius: 50%; }\n        .status-dot.pending { background: #888; }\n        .status-dot.running { background: #f1c40f; animation: pulse 1s infinite; }\n        .status-dot.success { background: #4ecca3; }\n        .status-dot.error { background: #ff6b6b; }\n        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }\n        .help-text { font-size: 0.85em; color: #666; margin-top: -10px; margin-bottom: 16px; }\n    </style>\n</head>\n<body>\n    <div class=\"container\">\n        <div class=\"logo\">🌱</div>\n        <h1>UniPi Agri HA</h1>\n\n        {{#setupComplete}}\n        <!-- Already Setup -->\n        <div class=\"card success\">\n            <div class=\"success-icon\">✅</div>\n            <h2>セットアップ完了済み</h2>\n            <p>デバイスは既に設定されています</p>\n            <div class=\"links\">\n                <a href=\"http://{{hostname}}.local:8123\">🏠 Home Assistant</a>\n                <a href=\"http://{{hostname}}.local:1880\">🔧 Node-RED</a>\n                <a href=\"http://{{hostname}}.local/rest/all\">📊 EVOK API</a>\n            </div>\n        </div>\n        {{/setupComplete}}\n\n        {{^setupComplete}}\n        <!-- Step 1: Device Info -->\n        <div class=\"step active\" id=\"step1\">\n            <div class=\"card\">\n                <h2 data-step=\"1\">デバイス情報</h2>\n                <div class=\"info-box\">\n                    <div class=\"info-row\"><span class=\"info-label\">ホスト名</span><span class=\"info-value\" id=\"hostname\">{{hostname}}</span></div>\n                    <div class=\"info-row\"><span class=\"info-label\">IPアドレス</span><span class=\"info-value\" id=\"local-ip\">取得中...</span></div>\n                </div>\n                <label>デバイス名（任意）</label>\n                <input type=\"text\" id=\"deviceName\" placeholder=\"例: greenhouse-1\">\n                <p class=\"help-text\">クラウドで識別しやすい名前をつけてください</p>\n                <button onclick=\"showStep(2)\">次へ →</button>\n            </div>\n        </div>\n\n        <!-- Step 2: WireGuard Config -->\n        <div class=\"step\" id=\"step2\">\n            <div class=\"card\">\n                <h2 data-step=\"2\">VPN設定</h2>\n                <p style=\"color:#888;margin-bottom:16px;\">クラウドサーバーで生成したWireGuard設定をペーストしてください</p>\n                <label>WireGuard設定 (wg0.conf)</label>\n                <textarea id=\"wgConfig\" placeholder=\"[Interface]\nAddress = 10.10.0.10/24\nPrivateKey = ...\n\n[Peer]\nPublicKey = ...\nEndpoint = ...\nAllowedIPs = 10.10.0.0/24\nPersistentKeepalive = 25\"></textarea>\n                <div class=\"error\" id=\"wg-error\"></div>\n                <button onclick=\"saveWgConfig()\">設定を保存</button>\n            </div>\n        </div>\n\n        <!-- Step 3: Apply & Test -->\n        <div class=\"step\" id=\"step3\">\n            <div class=\"card\">\n                <h2 data-step=\"3\">設定適用</h2>\n                <p style=\"color:#888;margin-bottom:16px;\">VPN接続をテストします</p>\n                \n                <div class=\"status\" id=\"status-wg\">\n                    <span class=\"status-dot pending\" id=\"dot-wg\"></span>\n                    <span>WireGuard起動</span>\n                </div>\n                <div class=\"status\" id=\"status-ping\">\n                    <span class=\"status-dot pending\" id=\"dot-ping\"></span>\n                    <span>サーバー接続確認</span>\n                </div>\n                <div class=\"status\" id=\"status-services\">\n                    <span class=\"status-dot pending\" id=\"dot-services\"></span>\n                    <span>サービス起動</span>\n                </div>\n\n                <div class=\"error\" id=\"apply-error\"></div>\n                <button onclick=\"applyConfig()\" id=\"apply-btn\">設定を適用</button>\n            </div>\n        </div>\n\n        <!-- Step 4: Complete -->\n        <div class=\"step\" id=\"step4\">\n            <div class=\"card success\">\n                <div class=\"success-icon\">🎉</div>\n                <h2>セットアップ完了！</h2>\n                <p>VPN接続が確立されました</p>\n                <div class=\"info-box\">\n                    <div class=\"info-row\"><span class=\"info-label\">VPN IP</span><span class=\"info-value\" id=\"vpn-ip\">10.10.0.x</span></div>\n                    <div class=\"info-row\"><span class=\"info-label\">状態</span><span class=\"info-value\" style=\"color:#4ecca3;\">接続中</span></div>\n                </div>\n                <div class=\"links\">\n                    <a href=\"/\">🏠 Node-REDダッシュボードへ</a>\n                    <a href=\"http://{{hostname}}.local:8123\">🏠 Home Assistantへ</a>\n                </div>\n            </div>\n        </div>\n        {{/setupComplete}}\n    </div>\n\n    <script>\n        // Get local IP\n        fetch('/setup/api/info')\n            .then(r => r.json())\n            .then(data => {\n                document.getElementById('local-ip').textContent = data.localIP || 'N/A';\n            })\n            .catch(() => {});\n\n        function showStep(n) {\n            document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));\n            document.getElementById('step' + n).classList.add('active');\n        }\n\n        async function saveWgConfig() {\n            const config = document.getElementById('wgConfig').value.trim();\n            const errorEl = document.getElementById('wg-error');\n            \n            if (!config || !config.includes('[Interface]') || !config.includes('[Peer]')) {\n                errorEl.textContent = '有効なWireGuard設定を入力してください';\n                errorEl.style.display = 'block';\n                return;\n            }\n\n            try {\n                const res = await fetch('/setup/api/wireguard', {\n                    method: 'POST',\n                    headers: { 'Content-Type': 'application/json' },\n                    body: JSON.stringify({ \n                        config,\n                        deviceName: document.getElementById('deviceName').value \n                    })\n                });\n                const data = await res.json();\n                if (data.success) {\n                    showStep(3);\n                } else {\n                    errorEl.textContent = data.error || 'エラーが発生しました';\n                    errorEl.style.display = 'block';\n                }\n            } catch (err) {\n                errorEl.textContent = 'サーバーエラー';\n                errorEl.style.display = 'block';\n            }\n        }\n\n        async function applyConfig() {\n            const btn = document.getElementById('apply-btn');\n            btn.disabled = true;\n            btn.textContent = '適用中...';\n\n            const errorEl = document.getElementById('apply-error');\n            errorEl.style.display = 'none';\n\n            try {\n                // Step 1: Start WireGuard\n                document.getElementById('dot-wg').className = 'status-dot running';\n                let res = await fetch('/setup/api/wireguard/start', { method: 'POST' });\n                let data = await res.json();\n                if (!data.success) throw new Error(data.error || 'WireGuard起動失敗');\n                document.getElementById('dot-wg').className = 'status-dot success';\n\n                // Step 2: Ping test\n                document.getElementById('dot-ping').className = 'status-dot running';\n                res = await fetch('/setup/api/wireguard/test', { method: 'POST' });\n                data = await res.json();\n                if (!data.success) throw new Error(data.error || '接続テスト失敗');\n                document.getElementById('dot-ping').className = 'status-dot success';\n                document.getElementById('vpn-ip').textContent = data.vpnIP || '10.10.0.x';\n\n                // Step 3: Enable services\n                document.getElementById('dot-services').className = 'status-dot running';\n                res = await fetch('/setup/api/complete', { method: 'POST' });\n                data = await res.json();\n                document.getElementById('dot-services').className = 'status-dot success';\n\n                // Done!\n                setTimeout(() => showStep(4), 500);\n\n            } catch (err) {\n                errorEl.textContent = err.message;\n                errorEl.style.display = 'block';\n                btn.disabled = false;\n                btn.textContent = '再試行';\n            }\n        }\n    </script>\n</body>\n</html>",
+        "output": "str",
+        "x": 530,
+        "y": 80,
+        "wires": [["setup-http-out"]]
+    },
+    {
+        "id": "setup-http-out",
+        "type": "http response",
+        "z": "setup-tab",
+        "name": "Send Response",
+        "statusCode": "200",
+        "headers": {
+            "Content-Type": "text/html; charset=utf-8"
+        },
+        "x": 740,
+        "y": 80,
+        "wires": []
+    },
+    {
+        "id": "api-info",
+        "type": "http in",
+        "z": "setup-tab",
+        "name": "GET /setup/api/info",
+        "url": "/setup/api/info",
+        "method": "get",
+        "x": 140,
+        "y": 160,
+        "wires": [["api-info-func"]]
+    },
+    {
+        "id": "api-info-func",
+        "type": "function",
+        "z": "setup-tab",
+        "name": "Get System Info",
+        "func": "const os = require('os');\nconst interfaces = os.networkInterfaces();\nlet localIP = '';\n\nfor (const name of Object.keys(interfaces)) {\n    for (const iface of interfaces[name]) {\n        if (iface.family === 'IPv4' && !iface.internal) {\n            if (!iface.address.startsWith('10.10.')) {\n                localIP = iface.address;\n                break;\n            }\n        }\n    }\n}\n\nmsg.payload = {\n    hostname: os.hostname(),\n    localIP: localIP,\n    uptime: os.uptime()\n};\nreturn msg;",
+        "outputs": 1,
+        "x": 360,
+        "y": 160,
+        "wires": [["api-json-out"]]
+    },
+    {
+        "id": "api-json-out",
+        "type": "http response",
+        "z": "setup-tab",
+        "name": "JSON Response",
+        "statusCode": "200",
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "x": 740,
+        "y": 200,
+        "wires": []
+    },
+    {
+        "id": "api-wg-save",
+        "type": "http in",
+        "z": "setup-tab",
+        "name": "POST /setup/api/wireguard",
+        "url": "/setup/api/wireguard",
+        "method": "post",
+        "x": 160,
+        "y": 240,
+        "wires": [["api-wg-save-func"]]
+    },
+    {
+        "id": "api-wg-save-func",
+        "type": "function",
+        "z": "setup-tab",
+        "name": "Save WG Config",
+        "func": "const fs = require('fs');\nconst { execSync } = require('child_process');\n\ntry {\n    const config = msg.payload.config;\n    const deviceName = msg.payload.deviceName || '';\n    \n    // Validate config\n    if (!config || !config.includes('[Interface]') || !config.includes('[Peer]')) {\n        msg.payload = { success: false, error: '無効な設定形式です' };\n        return msg;\n    }\n    \n    // Write config file\n    fs.writeFileSync('/etc/wireguard/wg0.conf', config, { mode: 0o600 });\n    \n    // Save device name\n    if (deviceName) {\n        fs.writeFileSync('/opt/unipi-agri-ha/config/device_name', deviceName);\n    }\n    \n    msg.payload = { success: true };\n} catch (err) {\n    msg.payload = { success: false, error: err.message };\n}\nreturn msg;",
+        "outputs": 1,
+        "x": 400,
+        "y": 240,
+        "wires": [["api-json-out"]]
+    },
+    {
+        "id": "api-wg-start",
+        "type": "http in",
+        "z": "setup-tab",
+        "name": "POST /setup/api/wireguard/start",
+        "url": "/setup/api/wireguard/start",
+        "method": "post",
+        "x": 180,
+        "y": 320,
+        "wires": [["api-wg-start-func"]]
+    },
+    {
+        "id": "api-wg-start-func",
+        "type": "function",
+        "z": "setup-tab",
+        "name": "Start WireGuard",
+        "func": "const { execSync } = require('child_process');\n\ntry {\n    // Enable and start WireGuard\n    execSync('systemctl enable wg-quick@wg0', { stdio: 'pipe' });\n    execSync('systemctl restart wg-quick@wg0', { stdio: 'pipe' });\n    \n    // Wait a bit for interface to come up\n    await new Promise(resolve => setTimeout(resolve, 2000));\n    \n    // Check status\n    const status = execSync('wg show wg0 2>&1 || echo \"not running\"').toString();\n    \n    if (status.includes('not running') || status.includes('Unable')) {\n        msg.payload = { success: false, error: 'WireGuard起動失敗' };\n    } else {\n        msg.payload = { success: true };\n    }\n} catch (err) {\n    msg.payload = { success: false, error: err.message };\n}\nreturn msg;",
+        "outputs": 1,
+        "x": 420,
+        "y": 320,
+        "wires": [["api-json-out"]]
+    },
+    {
+        "id": "api-wg-test",
+        "type": "http in",
+        "z": "setup-tab",
+        "name": "POST /setup/api/wireguard/test",
+        "url": "/setup/api/wireguard/test",
+        "method": "post",
+        "x": 180,
+        "y": 400,
+        "wires": [["api-wg-test-func"]]
+    },
+    {
+        "id": "api-wg-test-func",
+        "type": "function",
+        "z": "setup-tab",
+        "name": "Test VPN Connection",
+        "func": "const { execSync } = require('child_process');\n\ntry {\n    // Get VPN IP\n    const ipOutput = execSync('ip addr show wg0 2>/dev/null | grep inet | awk \\'{print $2}\\' | cut -d/ -f1').toString().trim();\n    \n    if (!ipOutput) {\n        msg.payload = { success: false, error: 'VPN IPが取得できません' };\n        return msg;\n    }\n    \n    // Ping server (10.10.0.1)\n    try {\n        execSync('ping -c 2 -W 3 10.10.0.1', { stdio: 'pipe' });\n        msg.payload = { success: true, vpnIP: ipOutput };\n    } catch {\n        msg.payload = { success: false, error: 'サーバーに接続できません。設定を確認してください。', vpnIP: ipOutput };\n    }\n} catch (err) {\n    msg.payload = { success: false, error: err.message };\n}\nreturn msg;",
+        "outputs": 1,
+        "x": 440,
+        "y": 400,
+        "wires": [["api-json-out"]]
+    },
+    {
+        "id": "api-complete",
+        "type": "http in",
+        "z": "setup-tab",
+        "name": "POST /setup/api/complete",
+        "url": "/setup/api/complete",
+        "method": "post",
+        "x": 160,
+        "y": 480,
+        "wires": [["api-complete-func"]]
+    },
+    {
+        "id": "api-complete-func",
+        "type": "function",
+        "z": "setup-tab",
+        "name": "Complete Setup",
+        "func": "const fs = require('fs');\nconst { execSync } = require('child_process');\n\ntry {\n    // Mark setup as complete\n    fs.mkdirSync('/opt/unipi-agri-ha/config', { recursive: true });\n    fs.writeFileSync('/opt/unipi-agri-ha/config/setup_complete', new Date().toISOString());\n    \n    // Enable WireGuard on boot\n    execSync('systemctl enable wg-quick@wg0', { stdio: 'pipe' });\n    \n    msg.payload = { success: true };\n} catch (err) {\n    msg.payload = { success: false, error: err.message };\n}\nreturn msg;",
+        "outputs": 1,
+        "x": 400,
+        "y": 480,
+        "wires": [["api-json-out"]]
+    }
+]

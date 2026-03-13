@@ -1,0 +1,5 @@
+# Cloud Server Scripts Dependencies
+# Install: pip3 install -r requirements.txt
+
+# InfluxDB v2 client
+influxdb-client>=1.50.0

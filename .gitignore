@@ -38,3 +38,19 @@ wg0.conf
 # Docker volumes
 docker/mosquitto/data/
 docker/mosquitto/log/
+
+# Firmware build artifacts
+firmware/**/build/
+firmware/**/build_*/
+*.uf2
+*.elf
+*.map
+*.bin
+*.o
+*.a
+*.d
+
+# WireGuard secrets
+wg-farmers.conf
+farmers_secrets.yaml
+hardware/kicad/kicad-symbols/

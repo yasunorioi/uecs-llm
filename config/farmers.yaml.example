@@ -1,0 +1,49 @@
+# config/farmers.yaml - 農家マスタ（git管理）
+# このファイルを config/farmers.yaml にコピーして使用:
+#   cp config/farmers.yaml.example config/farmers.yaml
+#
+# 設計書: docs/multi_farmer_design.md §8
+# 機密レベル: 低（git管理OK）
+
+farmers:
+  # ─────────────────────────────────────────
+  # Phase 0: 殿のみ（単一農家テスト構成）
+  # ─────────────────────────────────────────
+  tono:
+    name: "殿（テスト用）"
+    rpi_host: "10.20.0.10"      # 殿のRPiに割り当てるfarmers WG IP
+    rpi_chat_port: 8502          # RPi agriha_chat.py チャットAPI port
+    system_prompt_path: "/home/pi/arsprout-llama/config/system_prompt.txt"
+    status: active               # active / pending / disabled
+    registered_at: "2026-04-01"
+
+  # ─────────────────────────────────────────
+  # Phase 1以降: テスト農家・本番農家
+  # ─────────────────────────────────────────
+  farmer_a:
+    name: "田中農園"
+    rpi_host: "10.20.0.10"
+    rpi_chat_port: 8502
+    system_prompt_path: "/home/pi/arsprout-llama/config/system_prompt.txt"
+    status: active
+    registered_at: "2026-04-15"
+
+  farmer_b:
+    name: "鈴木ファーム"
+    rpi_host: "10.20.0.20"
+    rpi_chat_port: 8502
+    system_prompt_path: "/home/pi/arsprout-llama/config/system_prompt.txt"
+    status: pending              # pending: WG疎通確認待ち
+    registered_at: "2026-05-01"
+
+# ─────────────────────────────────────────
+# WG IPアドレス割り当て規則
+# ─────────────────────────────────────────
+# MBP (WGサーバ) : 10.20.0.1
+# 農家1           : 10.20.0.10
+# 農家2           : 10.20.0.20
+# 農家N           : 10.20.0.N0  (最大N=24, 最大25農家対応)
+#
+# 農家追加コマンド:
+#   bash scripts/gen_farmer_config.sh <farmer_id> <farmer_name> <wg_ip>
+#   例: bash scripts/gen_farmer_config.sh farmer_c 山田農場 10.20.0.30

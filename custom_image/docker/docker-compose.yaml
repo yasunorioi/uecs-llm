@@ -1,0 +1,63 @@
+version: '3.8'
+
+# UniPi Agri HA - Docker Compose
+# Home Assistant + Node-RED + Mosquitto
+
+services:
+  # MQTT Broker
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    networks:
+      - ha-network
+
+  # Home Assistant
+  homeassistant:
+    image: homeassistant/home-assistant:stable
+    container_name: homeassistant
+    restart: unless-stopped
+    privileged: true
+    network_mode: host
+    volumes:
+      - ./ha-config:/config
+      - /etc/localtime:/etc/localtime:ro
+      - /run/dbus:/run/dbus:ro
+    depends_on:
+      - mosquitto
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Node-RED
+  nodered:
+    image: nodered/node-red:latest
+    container_name: nodered
+    restart: unless-stopped
+    user: "0"  # Run as root to access system commands
+    ports:
+      - "1880:1880"
+    volumes:
+      - ./nodered-data:/data
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/wireguard:/etc/wireguard
+      - /opt/unipi-agri-ha/config:/opt/unipi-agri-ha/config
+    environment:
+      - TZ=Asia/Tokyo
+      - NODE_RED_CREDENTIAL_SECRET=unipi-agri-secret
+    depends_on:
+      - mosquitto
+    networks:
+      - ha-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+networks:
+  ha-network:
+    driver: bridge

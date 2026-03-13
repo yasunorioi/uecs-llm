@@ -1,0 +1,579 @@
+# =============================================================================
+# Grafana Alerting Provisioning Configuration
+# =============================================================================
+# Greenhouse 温室監視アラート設定
+#
+# 使用方法:
+#   docker compose restart grafana で全設定が反映される
+#
+# 注意:
+#   - LINE_CHANNEL_TOKEN, LINE_USER_ID は環境変数で設定（docker-compose.yaml の env_file）
+#   - datasourceUid は influxdb.yaml の uid: influxdb-agriha と一致
+#   - Custom Payload 機能は Grafana v12.0+ で利用可能（grafana/grafana-oss:latest で対応）
+#   - 閾値は仮値。殿が後で調整する前提
+#   - sensor_type タグは MQTT トピックから抽出（telegraf topic_parsing）
+# =============================================================================
+
+apiVersion: 1
+
+# -----------------------------------------------------------------------------
+# Contact Points（通知先）
+# -----------------------------------------------------------------------------
+contactPoints:
+  - orgId: 1
+    name: LINE
+    receivers:
+      - uid: line-webhook
+        type: webhook
+        settings:
+          url: https://api.line.me/v2/bot/message/push
+          httpMethod: POST
+          authorization_scheme: Bearer
+          authorization_credentials: ${LINE_CHANNEL_TOKEN}
+          maxAlerts: 0
+          # Custom Payload（Grafana v12.0+, PR #103818）
+          # LINE Messaging API Push Message 形式で送信
+          payload:
+            template: |-
+              {"to":"{{ .Vars.line_user_id }}","messages":[{"type":"text","text":"{{ .CommonAnnotations.summary }}\n\n{{ .CommonAnnotations.description }}"}]}
+            vars:
+              line_user_id: ${LINE_USER_ID}
+        disableResolveMessage: false
+
+# -----------------------------------------------------------------------------
+# Notification Policies（通知ポリシー）
+# -----------------------------------------------------------------------------
+policies:
+  - orgId: 1
+    receiver: LINE
+    group_by:
+      - alertname
+      - house_id
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 1h
+    routes:
+      # 高温警報: 30分間隔
+      - receiver: LINE
+        matchers:
+          - alertname = 高温警報
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 30m
+        continue: false
+
+      # 低温警報: 30分間隔
+      - receiver: LINE
+        matchers:
+          - alertname = 低温警報
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 30m
+        continue: false
+
+      # 高湿度警報: 1時間間隔
+      - receiver: LINE
+        matchers:
+          - alertname = 高湿度警報
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 1h
+        continue: false
+
+      # 通信断: 30分間隔（早期対応重視）
+      - receiver: LINE
+        matchers:
+          - alertname = 通信断
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 30m
+        continue: false
+
+      # 灌水異常: 1時間間隔
+      - receiver: LINE
+        matchers:
+          - alertname = 灌水異常
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 1h
+        continue: false
+
+      # 日次レポート: 1日1回
+      - receiver: LINE
+        matchers:
+          - alertname = 日次レポート
+        group_wait: 10s
+        group_interval: 1d
+        repeat_interval: 1d
+        continue: false
+
+# -----------------------------------------------------------------------------
+# Mute Timings（通知抑制時間帯）
+# -----------------------------------------------------------------------------
+muteTimes:
+  - orgId: 1
+    name: 夜間抑制（22時-24時）
+    time_intervals:
+      - times:
+          - start_time: "22:00"
+            end_time: "23:59"
+        weekdays:
+          - sunday
+          - monday
+          - tuesday
+          - wednesday
+          - thursday
+          - friday
+          - saturday
+  - orgId: 1
+    name: 夜間抑制（0時-6時）
+    time_intervals:
+      - times:
+          - start_time: "00:00"
+            end_time: "06:00"
+        weekdays:
+          - sunday
+          - monday
+          - tuesday
+          - wednesday
+          - thursday
+          - friday
+          - saturday
+
+# -----------------------------------------------------------------------------
+# Alert Rules（アラートルール）
+# -----------------------------------------------------------------------------
+# datasourceUid: influxdb-agriha（influxdb.yaml で定義）
+# bucket: sensors / measurement: greenhouse_data（telegraf.conf の name_override）
+# sensor_type タグ: MQTT トピック greenhouse/{house_id}/sensor/{sensor_type} から抽出
+# _field: "value"（JSON payload の数値フィールド）
+# 閾値は仮値。殿が後で調整する前提。
+# -----------------------------------------------------------------------------
+
+groups:
+  # ==========================================================================
+  # Group 1: 温室環境監視（評価間隔: 1分）
+  # ==========================================================================
+  - orgId: 1
+    name: 温室環境監視
+    folder: Greenhouse
+    interval: 1m
+    rules:
+      # -----------------------------------------------------------------------
+      # Rule 1: 高温警報（InAirTemp > 35℃, 5分間持続で発報）
+      # -----------------------------------------------------------------------
+      - uid: greenhouse-high-temp
+        title: 高温警報
+        condition: C
+        data:
+          - refId: A
+            queryType: ""
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: influxdb-agriha
+            model:
+              query: |
+                from(bucket: "sensors")
+                  |> range(start: -5m)
+                  |> filter(fn: (r) => r._measurement == "greenhouse_data")
+                  |> filter(fn: (r) => r.sensor_type == "InAirTemp")
+                  |> filter(fn: (r) => r._field == "value")
+                  |> last()
+          - refId: B
+            queryType: ""
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              reducer: last
+              type: reduce
+          - refId: C
+            queryType: ""
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 35
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - B
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              type: threshold
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "🚨 高温警報 {{ $values.B.Value }}℃"
+          description: "ハウス: {{ $labels.house_id }} / 閾値: 35℃超過 / 対応: 換気扇・遮光を確認"
+        labels:
+          severity: critical
+        isPaused: false
+
+      # -----------------------------------------------------------------------
+      # Rule 2: 低温警報（InAirTemp < 5℃, 5分間持続で発報）
+      # -----------------------------------------------------------------------
+      - uid: greenhouse-low-temp
+        title: 低温警報
+        condition: C
+        data:
+          - refId: A
+            queryType: ""
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: influxdb-agriha
+            model:
+              query: |
+                from(bucket: "sensors")
+                  |> range(start: -5m)
+                  |> filter(fn: (r) => r._measurement == "greenhouse_data")
+                  |> filter(fn: (r) => r.sensor_type == "InAirTemp")
+                  |> filter(fn: (r) => r._field == "value")
+                  |> last()
+          - refId: B
+            queryType: ""
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              reducer: last
+              type: reduce
+          - refId: C
+            queryType: ""
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 5
+                    type: lt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - B
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              type: threshold
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "🥶 低温警報 {{ $values.B.Value }}℃"
+          description: "ハウス: {{ $labels.house_id }} / 閾値: 5℃未満 / 対応: 暖房・保温を確認"
+        labels:
+          severity: critical
+        isPaused: false
+
+      # -----------------------------------------------------------------------
+      # Rule 3: 高湿度警報（InAirHumid > 95%, 10分間持続で発報）
+      # -----------------------------------------------------------------------
+      - uid: greenhouse-high-humid
+        title: 高湿度警報
+        condition: C
+        data:
+          - refId: A
+            queryType: ""
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: influxdb-agriha
+            model:
+              query: |
+                from(bucket: "sensors")
+                  |> range(start: -5m)
+                  |> filter(fn: (r) => r._measurement == "greenhouse_data")
+                  |> filter(fn: (r) => r.sensor_type == "InAirHumid")
+                  |> filter(fn: (r) => r._field == "value")
+                  |> last()
+          - refId: B
+            queryType: ""
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              reducer: last
+              type: reduce
+          - refId: C
+            queryType: ""
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 95
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - B
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              type: threshold
+        noDataState: OK
+        execErrState: Alerting
+        for: 10m
+        annotations:
+          summary: "💧 高湿度警報 {{ $values.B.Value }}%"
+          description: "ハウス: {{ $labels.house_id }} / 閾値: 95%超過 / 対応: 換気を確認"
+        labels:
+          severity: warning
+        isPaused: false
+
+      # -----------------------------------------------------------------------
+      # Rule 4: 通信断（全センサーから5分以上データ受信なし）
+      # -----------------------------------------------------------------------
+      - uid: greenhouse-comm-lost
+        title: 通信断
+        condition: C
+        data:
+          - refId: A
+            queryType: ""
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: influxdb-agriha
+            model:
+              query: |
+                from(bucket: "sensors")
+                  |> range(start: -5m)
+                  |> filter(fn: (r) => r._measurement == "greenhouse_data")
+                  |> filter(fn: (r) => r._field == "value")
+                  |> group()
+                  |> count()
+          - refId: B
+            queryType: ""
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              reducer: last
+              type: reduce
+          - refId: C
+            queryType: ""
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 1
+                    type: lt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - B
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              type: threshold
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "📡 通信断"
+          description: "全センサーからのデータ受信が5分以上途絶 / 対応: ネットワーク・ノード電源を確認"
+        labels:
+          severity: critical
+        isPaused: false
+
+  # ==========================================================================
+  # Group 2: 灌水監視（評価間隔: 5分）
+  # ==========================================================================
+  - orgId: 1
+    name: 灌水監視
+    folder: Greenhouse
+    interval: 5m
+    rules:
+      # -----------------------------------------------------------------------
+      # Rule 5: 灌水異常（灌水フラグが30分以上継続ON）
+      # -----------------------------------------------------------------------
+      - uid: greenhouse-irrigation-anomaly
+        title: 灌水異常
+        condition: C
+        data:
+          - refId: A
+            queryType: ""
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            datasourceUid: influxdb-agriha
+            model:
+              query: |
+                from(bucket: "sensors")
+                  |> range(start: -30m)
+                  |> filter(fn: (r) => r._measurement == "greenhouse_data")
+                  |> filter(fn: (r) => r.sensor_type == "Irriopr")
+                  |> filter(fn: (r) => r._field == "value")
+                  |> min()
+          - refId: B
+            queryType: ""
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              reducer: last
+              type: reduce
+          - refId: C
+            queryType: ""
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0.5
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - B
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              type: threshold
+        noDataState: OK
+        execErrState: Alerting
+        for: 30m
+        annotations:
+          summary: "⚠️ 灌水異常"
+          description: "灌水が30分以上継続中 / 対応: バルブ・灌水制御を確認"
+        labels:
+          severity: warning
+        isPaused: false
+
+  # ==========================================================================
+  # Group 3: 日次レポート（評価間隔: 10分）
+  # ==========================================================================
+  - orgId: 1
+    name: 日次レポート
+    folder: Greenhouse
+    interval: 10m
+    rules:
+      # -----------------------------------------------------------------------
+      # Rule 6: 日次レポート（毎日1回サマリ通知）
+      # Notification Policy の repeat_interval: 1d で1日1回送信
+      # -----------------------------------------------------------------------
+      - uid: greenhouse-daily-report
+        title: 日次レポート
+        condition: C
+        data:
+          - refId: A
+            queryType: ""
+            relativeTimeRange:
+              from: 86400
+              to: 0
+            datasourceUid: influxdb-agriha
+            model:
+              query: |
+                from(bucket: "sensors")
+                  |> range(start: -24h)
+                  |> filter(fn: (r) => r._measurement == "greenhouse_data")
+                  |> filter(fn: (r) => r.sensor_type == "InAirTemp")
+                  |> filter(fn: (r) => r._field == "value")
+                  |> last()
+          - refId: B
+            queryType: ""
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              reducer: last
+              type: reduce
+          - refId: C
+            queryType: ""
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - -100
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - B
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              type: threshold
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        annotations:
+          summary: "📊 日次レポート"
+          description: "最新温度: {{ $values.B.Value }}℃ / システム正常稼働中"
+        labels:
+          severity: info
+        isPaused: false
