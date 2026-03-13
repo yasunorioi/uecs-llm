@@ -179,7 +179,15 @@ def handle_follow(reply_token: str, user_id: str) -> None:
             return
 
     farmer_id = _next_farmer_id(secrets)
-    wg_ip = _next_wg_ip(secrets)
+    try:
+        wg_ip = _next_wg_ip(secrets)
+    except ValueError:
+        logger.error("WG IP枯渇: 新規登録不可 user_id=%s", user_id)
+        _reply(
+            reply_token,
+            "申し訳ありません。現在新規登録を受け付けられません。管理者にお問い合わせください。",
+        )
+        return
 
     # farmers_secrets.yaml に pending 追記
     secrets.setdefault("farmers", {})[farmer_id] = {

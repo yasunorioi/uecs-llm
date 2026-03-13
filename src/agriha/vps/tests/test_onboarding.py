@@ -181,6 +181,38 @@ class TestHandleFollowNew:
 
 
 # ---------------------------------------------------------------------------
+# handle_follow — IP枯渇
+# ---------------------------------------------------------------------------
+
+
+class TestHandleFollowIpExhausted:
+    def test_ip_exhausted_replies_error(self, empty_config: Path) -> None:
+        """WG IP枯渇時はエラーメッセージが返り、無言にならない。"""
+        import onboarding
+
+        with patch.object(onboarding, "CONFIG_DIR", empty_config), \
+             patch("onboarding._next_wg_ip", side_effect=ValueError("枯渇")), \
+             patch("onboarding._reply") as mock_reply:
+            onboarding.handle_follow("TOKEN", "U_NEW_EXHAUSTED")
+
+        mock_reply.assert_called_once()
+        reply_text = mock_reply.call_args[0][1]
+        assert "新規登録" in reply_text or "受け付けられません" in reply_text
+
+    def test_ip_exhausted_does_not_save_secrets(self, empty_config: Path) -> None:
+        """WG IP枯渇時はfarmers_secrets.yamlに追記されない。"""
+        import onboarding
+
+        with patch.object(onboarding, "CONFIG_DIR", empty_config), \
+             patch("onboarding._next_wg_ip", side_effect=ValueError("枯渇")), \
+             patch("onboarding._reply"):
+            onboarding.handle_follow("TOKEN", "U_NEW_EXHAUSTED")
+
+        saved = yaml.safe_load((empty_config / "farmers_secrets.yaml").read_text())
+        assert len(saved["farmers"]) == 0
+
+
+# ---------------------------------------------------------------------------
 # handle_follow — 既登録ユーザー
 # ---------------------------------------------------------------------------
 
