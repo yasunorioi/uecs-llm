@@ -41,8 +41,8 @@ MBP_API_ENDPOINT = os.getenv("MBP_API_ENDPOINT", "http://10.20.0.1:5000")
 QR_DIR = Path(os.getenv("QR_DIR", "/var/www/qr"))
 QR_BASE_URL = os.getenv("QR_BASE_URL", "")
 
-LINE_CHANNEL_ACCESS_TOKEN = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
-_configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+_configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN) if LINE_CHANNEL_ACCESS_TOKEN else None
 
 
 def _load_secrets() -> dict:

@@ -29,11 +29,14 @@ from router import route_message
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-LINE_CHANNEL_SECRET = os.environ["LINE_CHANNEL_SECRET"]
-LINE_CHANNEL_ACCESS_TOKEN = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
+LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
 
-configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
-handler = WebhookHandler(LINE_CHANNEL_SECRET)
+if not LINE_CHANNEL_SECRET or not LINE_CHANNEL_ACCESS_TOKEN:
+    logger.warning("LINE credentials not set. Bot endpoints will return 503.")
+
+configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN) if LINE_CHANNEL_ACCESS_TOKEN else None
+handler = WebhookHandler(LINE_CHANNEL_SECRET) if LINE_CHANNEL_SECRET else None
 
 # テストチャネル設定
 LINE_CHANNEL_SECRET_TEST = os.getenv("LINE_CHANNEL_SECRET_TEST", "placeholder_test_secret")
@@ -42,7 +45,7 @@ LINE_CHANNEL_ACCESS_TOKEN_TEST = os.getenv("LINE_CHANNEL_ACCESS_TOKEN_TEST", "pl
 configuration_test = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN_TEST)
 handler_test = WebhookHandler(LINE_CHANNEL_SECRET_TEST)
 
-DB_PATH = os.getenv("CONVERSATION_DB_PATH", "/app/data/conversations.db")
+DB_PATH = os.getenv("CONVERSATION_DB_PATH", "/var/lib/agriha/conversations.db")
 
 
 def init_db() -> None:
