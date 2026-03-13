@@ -1,6 +1,6 @@
 # AgriHA (uecs-llm)
 
-LLM による温室環境制御システム — 三層自律制御アーキテクチャ (v4)
+LLM による温室環境制御システム — 三層自律制御アーキテクチャ
 
 ## アーキテクチャ
 
@@ -88,7 +88,7 @@ RPi上のagriha-ui内で直接稼働（VPS不要）。Cloudflare Tunnelまたは
 ```bash
 # 1. clone
 sudo git clone https://github.com/yasunorioi/uecs-llm.git /opt/agriha
-cd /opt/agriha && git checkout v4
+cd /opt/agriha
 
 # 2. セットアップ（ユーザー作成+venv+systemd+NullClaw全部入り）
 sudo bash setup.sh
