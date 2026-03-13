@@ -9,7 +9,7 @@ import base64
 import yaml
 import pytest
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch, call, ANY
 
 
 # ---------------------------------------------------------------------------
@@ -27,6 +27,23 @@ def tmp_config(tmp_path: Path):
                 "wg_ip": "10.20.0.10",
                 "wg_public_key": "PUBKEY_EXISTING=",
                 "status": "active",
+            },
+        }
+    }
+    (tmp_path / "farmers_secrets.yaml").write_text(yaml.dump(secrets))
+    return tmp_path
+
+
+@pytest.fixture()
+def pending_config(tmp_path: Path):
+    """farmer_a が pending 状態のconfig。"""
+    secrets = {
+        "farmers": {
+            "farmer_a": {
+                "line_user_id": "U_PENDING",
+                "wg_ip": "10.20.0.10",
+                "wg_public_key": None,
+                "status": "pending",
             },
         }
     }
@@ -169,8 +186,8 @@ class TestHandleFollowNew:
 
 
 class TestHandleFollowExisting:
-    def test_already_registered_user(self, tmp_config: Path) -> None:
-        """既登録ユーザーは追加されず「登録済み」のメッセージが返る。"""
+    def test_active_user_gets_registered_message(self, tmp_config: Path) -> None:
+        """active農家の再followは「登録済み」メッセージが返る。"""
         import onboarding
 
         with patch.object(onboarding, "CONFIG_DIR", tmp_config), \
@@ -183,6 +200,34 @@ class TestHandleFollowExisting:
 
         # farmers_secrets.yaml に農家が増えていないこと
         saved = yaml.safe_load((tmp_config / "farmers_secrets.yaml").read_text())
+        assert len(saved["farmers"]) == 1
+
+    def test_pending_user_gets_qr_resent(self, pending_config: Path, tmp_path: Path) -> None:
+        """pending農家の再follow（ブロック解除等）ではQR/Base64が再送される。"""
+        import onboarding
+
+        qr_dir = tmp_path / "qr_resend"
+        with patch.object(onboarding, "CONFIG_DIR", pending_config), \
+             patch.object(onboarding, "QR_DIR", qr_dir), \
+             patch.object(onboarding, "QR_BASE_URL", "https://example.com/qr"), \
+             patch.object(onboarding, "WG_SERVER_PUBLIC_KEY", "SERVER_PUB="), \
+             patch.object(onboarding, "WG_SERVER_ENDPOINT", "vps.example.com:51821"), \
+             patch("onboarding._reply_with_image") as mock_reply_img:
+            onboarding.handle_follow("TOKEN", "U_PENDING")
+
+        # QR付きメッセージが送信されること
+        mock_reply_img.assert_called_once()
+        args = mock_reply_img.call_args
+        assert "QRコード" in args[0][1]
+
+        # Base64をデコードして既存のfarmer_id/wg_ipが使われていることを確認
+        fallback_b64 = args[1]["fallback_text"]
+        decoded = yaml.safe_load(base64.b64decode(fallback_b64).decode())
+        assert decoded["farmer_id"] == "farmer_a"
+        assert decoded["wg_client_ip"] == "10.20.0.10/32"
+
+        # farmers_secrets.yaml に農家が増えていないこと（新規追加ではない）
+        saved = yaml.safe_load((pending_config / "farmers_secrets.yaml").read_text())
         assert len(saved["farmers"]) == 1
 
 
@@ -287,3 +332,112 @@ class TestRegisterPubkey:
             onboarding.register_pubkey("farmer_b", "PUBKEY_B=")
 
         mock_push.assert_called_once_with("U_FARMER_B", "接続完了！チャットタブから話しかけてください。")
+
+
+# ---------------------------------------------------------------------------
+# QR画像生成
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateQrPng:
+    def test_creates_png_file(self, tmp_path: Path) -> None:
+        """QR画像がPNGファイルとして生成される。"""
+        import onboarding
+
+        with patch.object(onboarding, "QR_DIR", tmp_path), \
+             patch.object(onboarding, "QR_BASE_URL", "https://example.com/qr"):
+            url = onboarding._generate_qr_png("test_data_b64", "farmer_a", "U_USER_A")
+
+        png_files = list(tmp_path.glob("*.png"))
+        assert len(png_files) == 1
+        assert "farmer_a" in png_files[0].name
+        assert url.startswith("https://example.com/qr/")
+
+    def test_png_is_valid_image(self, tmp_path: Path) -> None:
+        """生成されたファイルがPNG画像ヘッダを持つ。"""
+        import onboarding
+
+        with patch.object(onboarding, "QR_DIR", tmp_path), \
+             patch.object(onboarding, "QR_BASE_URL", "https://example.com/qr"):
+            onboarding._generate_qr_png("test_data", "farmer_b", "U_USER_B")
+
+        png_file = list(tmp_path.glob("*.png"))[0]
+        header = png_file.read_bytes()[:4]
+        assert header == b"\x89PNG"
+
+
+class TestCleanupExpiredQr:
+    def test_removes_old_files(self, tmp_path: Path) -> None:
+        """max_age_hours 経過したファイルが削除される。"""
+        import onboarding
+        import time
+
+        old_file = tmp_path / "farmer_a_old.png"
+        old_file.write_bytes(b"fake")
+        # ファイルのmtimeを2日前に設定
+        old_mtime = time.time() - 48 * 3600
+        import os
+        os.utime(old_file, (old_mtime, old_mtime))
+
+        new_file = tmp_path / "farmer_b_new.png"
+        new_file.write_bytes(b"fake")
+
+        with patch.object(onboarding, "QR_DIR", tmp_path):
+            removed = onboarding.cleanup_expired_qr(max_age_hours=24)
+
+        assert removed == 1
+        assert not old_file.exists()
+        assert new_file.exists()
+
+    def test_no_dir_returns_zero(self, tmp_path: Path) -> None:
+        """QR_DIRが存在しない場合は0を返す。"""
+        import onboarding
+
+        with patch.object(onboarding, "QR_DIR", tmp_path / "nonexistent"):
+            removed = onboarding.cleanup_expired_qr()
+
+        assert removed == 0
+
+
+class TestHandleFollowQr:
+    def test_follow_sends_image_message(self, empty_config: Path, tmp_path: Path) -> None:
+        """新規followでQR画像付きメッセージが送信される。"""
+        import onboarding
+
+        qr_dir = tmp_path / "qr"
+        with patch.object(onboarding, "CONFIG_DIR", empty_config), \
+             patch.object(onboarding, "QR_DIR", qr_dir), \
+             patch.object(onboarding, "QR_BASE_URL", "https://example.com/qr"), \
+             patch.object(onboarding, "WG_SERVER_PUBLIC_KEY", "SERVER_PUB="), \
+             patch.object(onboarding, "WG_SERVER_ENDPOINT", "vps.example.com:51821"), \
+             patch("onboarding._reply_with_image") as mock_reply_img:
+            onboarding.handle_follow("TOKEN", "U_NEW_QR")
+
+        mock_reply_img.assert_called_once()
+        args = mock_reply_img.call_args
+        assert "QRコード" in args[0][1]
+        assert "https://example.com/qr/" in args[0][2]
+        # fallback_text にBase64が含まれる
+        assert args[1]["fallback_text"] is not None
+
+        # QR PNGファイルが生成されている
+        assert len(list(qr_dir.glob("*.png"))) == 1
+
+    def test_follow_falls_back_to_text_on_qr_error(self, empty_config: Path) -> None:
+        """QR生成失敗時はテキストのみで返信する。"""
+        import onboarding
+
+        with patch.object(onboarding, "CONFIG_DIR", empty_config), \
+             patch.object(onboarding, "WG_SERVER_PUBLIC_KEY", "SERVER_PUB="), \
+             patch.object(onboarding, "WG_SERVER_ENDPOINT", "vps.example.com:51821"), \
+             patch("onboarding._generate_qr_png", side_effect=OSError("disk full")), \
+             patch("onboarding._reply") as mock_reply:
+            onboarding.handle_follow("TOKEN", "U_FALLBACK")
+
+        mock_reply.assert_called_once()
+        reply_text = mock_reply.call_args[0][1]
+        # テキストにBase64ブロックが含まれている
+        lines = reply_text.strip().split("\n")
+        b64_part = lines[-1].strip()
+        decoded = yaml.safe_load(base64.b64decode(b64_part).decode())
+        assert "farmer_id" in decoded

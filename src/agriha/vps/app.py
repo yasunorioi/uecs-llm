@@ -23,7 +23,7 @@ from linebot.v3.messaging import (
 from linebot.v3.webhooks import FollowEvent, MessageEvent, TextMessageContent
 
 from llm_client import generate_response_sync, check_llm_health, CLAUDE_MODEL
-from onboarding import handle_follow, register_pubkey
+from onboarding import cleanup_expired_qr, handle_follow, register_pubkey
 from quiz_scenarios import get_random_quiz
 from router import handle_model_command, route_message
 
@@ -170,6 +170,13 @@ def handle_follow_event(event: FollowEvent):
     user_id = event.source.user_id or "unknown"
     logger.info(f"Follow event: user_id={user_id}")
     handle_follow(reply_token=event.reply_token, user_id=user_id)
+
+
+@app.post("/api/cleanup_qr")
+async def api_cleanup_qr():
+    """期限切れQR画像のクリーンアップ。cronから呼ぶ想定。"""
+    removed = cleanup_expired_qr()
+    return {"removed": removed}
 
 
 @app.post("/api/register_pubkey")

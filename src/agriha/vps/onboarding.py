@@ -8,15 +8,19 @@ POST /api/register_pubkey → wg-farmers.conf更新 + farmers_secrets.yaml更新
 """
 
 import base64
+import hashlib
 import logging
 import os
 import subprocess
+import time
 from pathlib import Path
 
+import qrcode
 import yaml
 from linebot.v3.messaging import (
     ApiClient,
     Configuration,
+    ImageMessage,
     MessagingApi,
     PushMessageRequest,
     ReplyMessageRequest,
@@ -33,6 +37,9 @@ WG_SERVER_PUBLIC_KEY = os.getenv("WG_SERVER_PUBLIC_KEY", "")
 WG_SERVER_ENDPOINT = os.getenv("WG_SERVER_ENDPOINT", "")
 # RPiがMBP APIに到達するためのエンドポイント
 MBP_API_ENDPOINT = os.getenv("MBP_API_ENDPOINT", "http://10.20.0.1:5000")
+# QR画像の配信設定
+QR_DIR = Path(os.getenv("QR_DIR", "/var/www/qr"))
+QR_BASE_URL = os.getenv("QR_BASE_URL", "https://toiso.fit/qr")
 
 LINE_CHANNEL_ACCESS_TOKEN = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
 _configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
@@ -62,6 +69,48 @@ def _next_wg_ip(secrets: dict) -> str:
     raise ValueError("割当可能なWG IPが枯渇しました")
 
 
+def _generate_qr_png(data: str, farmer_id: str, user_id: str) -> str:
+    """Base64文字列からQR画像を生成し、URLを返す。
+
+    Args:
+        data: QRコードに埋め込むデータ（Base64エンコード済み設定ブロック）
+        farmer_id: ファイル名のプレフィックス用
+        user_id: LINE userId（ファイル名の一意性保証 + URL推測防止）
+
+    Returns:
+        QR画像の公開URL
+    """
+    QR_DIR.mkdir(parents=True, exist_ok=True)
+    # farmer_id + user_id で決定的にファイル名を生成（同時リクエストでも衝突しない）
+    token = hashlib.sha256(f"{farmer_id}:{user_id}".encode()).hexdigest()[:12]
+    filename = f"{farmer_id}_{token}.png"
+    filepath = QR_DIR / filename
+
+    img = qrcode.make(data, box_size=10, border=4)
+    img.save(str(filepath))
+    logger.info("QR画像生成: %s", filepath)
+    return f"{QR_BASE_URL}/{filename}"
+
+
+def cleanup_expired_qr(max_age_hours: int = 24) -> int:
+    """指定時間以上経過したQR画像を削除する。
+
+    Returns:
+        削除したファイル数
+    """
+    if not QR_DIR.exists():
+        return 0
+    cutoff = time.time() - (max_age_hours * 3600)
+    removed = 0
+    for f in QR_DIR.glob("*.png"):
+        if f.stat().st_mtime < cutoff:
+            f.unlink()
+            removed += 1
+    if removed:
+        logger.info("期限切れQR画像を%d件削除", removed)
+    return removed
+
+
 def _next_farmer_id(secrets: dict) -> str:
     """既存農家IDから次のfarmer_idを生成する（farmer_a, farmer_b, ...）"""
     existing = set(secrets.get("farmers", {}).keys())
@@ -72,24 +121,61 @@ def _next_farmer_id(secrets: dict) -> str:
     return f"farmer_{len(existing) + 1}"
 
 
+def _send_onboarding_qr(reply_token: str, user_id: str, farmer_id: str, wg_ip: str) -> None:
+    """Base64設定ブロック + QR画像を生成してLINE返信する。
+
+    新規登録とpending再followの両方から呼ばれる共通処理。
+    """
+    # Base64設定ブロック生成（★wg_client_private_key は含めない★）
+    config_block = {
+        "farmer_id": farmer_id,
+        "wg_server_public_key": WG_SERVER_PUBLIC_KEY,
+        "wg_server_endpoint": WG_SERVER_ENDPOINT,
+        "wg_client_ip": f"{wg_ip}/32",
+        "api_endpoint": MBP_API_ENDPOINT,
+    }
+    b64 = base64.b64encode(
+        yaml.dump(config_block, allow_unicode=True, default_flow_style=False).encode()
+    ).decode()
+
+    # QR画像生成 → ImageMessage送信
+    text_msg = (
+        "登録ありがとうございます！\n"
+        "以下のQRコードをRPiのWeb画面（設定タブ）で読み取ってください。\n"
+        "QRが読めない場合は、下のテキストコードを貼り付けてください。"
+    )
+    try:
+        qr_url = _generate_qr_png(b64, farmer_id, user_id)
+        _reply_with_image(reply_token, text_msg, qr_url, fallback_text=b64)
+    except Exception as e:
+        logger.warning("QR生成失敗、テキストのみ送信: %s", e)
+        msg = f"{text_msg}\n\n{b64}"
+        _reply(reply_token, msg)
+
+
 def handle_follow(reply_token: str, user_id: str) -> None:
     """
     友達追加イベント処理:
-    1. 既登録チェック
-    2. farmers_secrets.yaml に pending 追記
-    3. Base64設定ブロック生成（★秘密鍵は含めない★）
-    4. LINE返信「設定コードをRPiに貼ってね」+ Base64ブロック
+    1. 既登録チェック（active → 案内、pending → QR再送）
+    2. 新規: farmers_secrets.yaml に pending 追記
+    3. Base64設定ブロック + QR生成 → LINE返信
     """
     secrets = _load_secrets()
 
     # 既登録チェック
     for fid, sec in secrets.get("farmers", {}).items():
         if sec.get("line_user_id") == user_id:
-            logger.info("既登録ユーザーがfollow: %s → %s", user_id, fid)
-            _reply(
-                reply_token,
-                f"すでに登録済みです（{fid}）。設定済みのRPiからご利用ください。",
-            )
+            status = sec.get("status", "pending")
+            if status == "active":
+                logger.info("active農家が再follow: %s → %s", user_id, fid)
+                _reply(
+                    reply_token,
+                    f"すでに登録済みです（{fid}）。設定済みのRPiからご利用ください。",
+                )
+                return
+            # pending: ブロック解除→再follow等。QR/Base64を再送する
+            logger.info("pending農家が再follow、QR再送: %s → %s", user_id, fid)
+            _send_onboarding_qr(reply_token, user_id, fid, sec["wg_ip"])
             return
 
     farmer_id = _next_farmer_id(secrets)
@@ -105,24 +191,7 @@ def handle_follow(reply_token: str, user_id: str) -> None:
     _save_secrets(secrets)
     logger.info("仮登録: user_id=%s → farmer_id=%s wg_ip=%s", user_id, farmer_id, wg_ip)
 
-    # Base64設定ブロック生成（★wg_client_private_key は含めない★）
-    config_block = {
-        "farmer_id": farmer_id,
-        "wg_server_public_key": WG_SERVER_PUBLIC_KEY,
-        "wg_server_endpoint": WG_SERVER_ENDPOINT,
-        "wg_client_ip": f"{wg_ip}/32",
-        "api_endpoint": MBP_API_ENDPOINT,
-    }
-    b64 = base64.b64encode(
-        yaml.dump(config_block, allow_unicode=True, default_flow_style=False).encode()
-    ).decode()
-
-    msg = (
-        "登録ありがとうございます！\n"
-        "以下の設定コードをRPiのWeb画面（設定タブ）に貼り付けてください。\n\n"
-        f"{b64}"
-    )
-    _reply(reply_token, msg)
+    _send_onboarding_qr(reply_token, user_id, farmer_id, wg_ip)
 
 
 def register_pubkey(farmer_id: str, public_key: str) -> dict:
@@ -186,6 +255,26 @@ def _reply(reply_token: str, text: str) -> None:
                 reply_token=reply_token,
                 messages=[TextMessage(text=text)],
             )
+        )
+
+
+def _reply_with_image(
+    reply_token: str, text: str, image_url: str, fallback_text: str | None = None
+) -> None:
+    """TextMessage + ImageMessage を1回のreplyで送信する。"""
+    messages = [TextMessage(text=text)]
+    messages.append(
+        ImageMessage(
+            original_content_url=image_url,
+            preview_image_url=image_url,
+        )
+    )
+    if fallback_text:
+        messages.append(TextMessage(text=fallback_text))
+    with ApiClient(_configuration) as api_client:
+        line_bot_api = MessagingApi(api_client)
+        line_bot_api.reply_message(
+            ReplyMessageRequest(reply_token=reply_token, messages=messages)
         )
 
 
