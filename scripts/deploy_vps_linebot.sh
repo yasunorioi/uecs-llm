@@ -10,6 +10,7 @@
 #   vi config/vps.conf                                 # edit settings
 #   sudo bash scripts/deploy_vps_linebot.sh --setup    # initial setup
 #   sudo bash scripts/deploy_vps_linebot.sh            # update (git pull + restart)
+#   sudo bash scripts/deploy_vps_linebot.sh --remove   # uninstall everything
 #
 # Prerequisites:
 #   - nginx, certbot, python3-venv installed on VPS
@@ -27,9 +28,11 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 SETUP=false
-if [[ "${1:-}" == "--setup" ]]; then
-    SETUP=true
-fi
+REMOVE=false
+case "${1:-}" in
+    --setup)  SETUP=true ;;
+    --remove) REMOVE=true ;;
+esac
 
 # root check
 if [[ $EUID -ne 0 ]]; then
@@ -81,6 +84,67 @@ expand_template() {
         "${src}" > "${dst}"
     echo "  ${src} -> ${dst}"
 }
+
+#-------------------------------------------------------------------------------
+# --remove: uninstall everything
+#-------------------------------------------------------------------------------
+if $REMOVE; then
+    echo -e "\n${RED}=== Removing VPS LINE Bot ===${NC}"
+
+    # [1] Stop and disable service
+    echo -e "${YELLOW}[1] Stopping service...${NC}"
+    systemctl stop agriha-linebot 2>/dev/null || true
+    systemctl disable agriha-linebot 2>/dev/null || true
+    rm -f /etc/systemd/system/agriha-linebot.service
+    systemctl daemon-reload
+    echo "  agriha-linebot service removed"
+
+    # [2] Remove nginx config
+    echo -e "${YELLOW}[2] Removing nginx config...${NC}"
+    rm -f "/etc/nginx/sites-enabled/${DOMAIN}"
+    rm -f "/etc/nginx/sites-available/${DOMAIN}"
+    if nginx -t 2>/dev/null; then
+        systemctl reload nginx
+    fi
+    echo "  nginx config for ${DOMAIN} removed"
+
+    # [3] Remove sudoers
+    echo -e "${YELLOW}[3] Removing sudoers...${NC}"
+    rm -f /etc/sudoers.d/agriha-wg
+    echo "  sudoers rule removed"
+
+    # [4] Remove cron job
+    echo -e "${YELLOW}[4] Removing cron job...${NC}"
+    (crontab -u www-data -l 2>/dev/null | grep -v cleanup_qr) | crontab -u www-data - 2>/dev/null || true
+    echo "  cleanup_qr cron removed"
+
+    # [5] Remove symlink
+    echo -e "${YELLOW}[5] Removing symlink...${NC}"
+    if [[ -L "${DEPLOY_DIR}" ]]; then
+        rm -f "${DEPLOY_DIR}"
+        echo "  ${DEPLOY_DIR} symlink removed"
+    else
+        echo "  ${DEPLOY_DIR} is not a symlink, skipping"
+    fi
+
+    # [6] Remove venv
+    echo -e "${YELLOW}[6] Removing venv...${NC}"
+    if [[ -d "${VPS_SRC}/.venv" ]]; then
+        rm -rf "${VPS_SRC}/.venv"
+        echo "  .venv removed"
+    else
+        echo "  no .venv found"
+    fi
+
+    # Note: QR dir, .env, WireGuard, and git repo are NOT removed
+    echo -e "\n${GREEN}=== Remove complete ===${NC}"
+    echo -e "${YELLOW}Not removed (manual cleanup if needed):${NC}"
+    echo "  ${QR_DIR}          (QR images)"
+    echo "  ${VPS_SRC}/.env    (secrets)"
+    echo "  /etc/wireguard/    (WireGuard config, use wg-quick down ${WG_INTERFACE})"
+    echo "  ${REPO_ROOT}       (git repo)"
+    exit 0
+fi
 
 #-------------------------------------------------------------------------------
 # [1] Symlink (src/agriha/vps -> DEPLOY_DIR)
