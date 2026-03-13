@@ -171,6 +171,11 @@ else
 
     echo -e "\n${GREEN}[3] pip install (diff)...${NC}"
     cd "${VPS_SRC}"
+    if [[ ! -d .venv ]]; then
+        echo -e "${YELLOW}No .venv found. Creating (run --setup for full initial setup)...${NC}"
+        python3 -m venv .venv
+        .venv/bin/pip install --upgrade pip
+    fi
     .venv/bin/pip install -q -r requirements.txt
 
     echo -e "\n${GREEN}[4] Restarting service...${NC}"
