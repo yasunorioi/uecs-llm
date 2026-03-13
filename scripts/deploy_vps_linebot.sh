@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-VPS_HOST="debian@153.127.46.167"
+VPS_HOST="${VPS_HOST:-debian@153.127.46.167}"
 DEPLOY_DIR="/opt/agriha-linebot"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VPS_SRC="${REPO_ROOT}/src/agriha/vps"
