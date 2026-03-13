@@ -1,0 +1,31 @@
+[Unit]
+Description=UART CO2 Sensor Reader Service
+Documentation=https://github.com/agriha/uart_co2_reader
+After=network.target mosquitto.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/agriha
+ExecStart=/usr/bin/python3 /home/yasu/unipi-agri-ha/services/uart_co2_reader.py --config /etc/agriha/uart_co2_reader.yaml
+
+# 再起動設定
+Restart=on-failure
+RestartSec=10
+
+# セキュリティ設定
+# Note: シリアルポートアクセスのためroot権限が必要
+# 本番環境ではdialoutグループを使用することを推奨
+
+# ログ設定
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=uart_co2_reader
+
+# リソース制限
+LimitNOFILE=1024
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

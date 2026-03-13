@@ -1,0 +1,16 @@
+{
+    "device_type": "usb",
+    "device_name": "Pico 2 W",
+    "baudrate": 115200,
+    "notification": {
+        "type": "line",
+        "token": "YOUR_LINE_NOTIFY_TOKEN_HERE"
+    },
+    "mqtt": {
+        "broker": "localhost",
+        "port": 1883,
+        "topic_prefix": "arsprout/test"
+    },
+    "test_timeout": 60,
+    "log_dir": "/var/log/arsprout"
+}

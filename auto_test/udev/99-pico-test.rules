@@ -1,0 +1,37 @@
+# Pico 2 W USB接続検知ルール
+# 配置先: /etc/udev/rules.d/99-pico-test.rules
+#
+# Raspberry Pi Foundation Vendor ID: 2E8A
+# Product IDs:
+#   - 0005: Pico MSD (BOOTSEL mode)
+#   - 000A: Pico CDC (MicroPython)
+#   - 000B: Pico CDC (CircuitPython)
+#
+# 反映コマンド:
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+
+# ===== CircuitPython/MicroPython CDC モード =====
+# 接続時にテストサービスを起動
+ACTION=="add", SUBSYSTEM=="tty", ATTRS{idVendor}=="2e8a", ATTRS{idProduct}=="000a", \
+    TAG+="systemd", ENV{SYSTEMD_WANTS}+="pico-test.service"
+
+ACTION=="add", SUBSYSTEM=="tty", ATTRS{idVendor}=="2e8a", ATTRS{idProduct}=="000b", \
+    TAG+="systemd", ENV{SYSTEMD_WANTS}+="pico-test.service"
+
+# 接続ログ記録
+ACTION=="add", SUBSYSTEM=="tty", ATTRS{idVendor}=="2e8a", \
+    RUN+="/usr/bin/logger -t pico-udev 'Pico device connected: %k (VID=%s{idVendor}, PID=%s{idProduct})'"
+
+# 切断ログ記録
+ACTION=="remove", SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="2e8a", \
+    RUN+="/usr/bin/logger -t pico-udev 'Pico device disconnected: %k'"
+
+# ===== BOOTSEL モード（ファームウェア書き込み用）=====
+# BOOTSELモードではテスト不要なのでスキップ
+ACTION=="add", SUBSYSTEM=="block", ATTRS{idVendor}=="2e8a", ATTRS{idProduct}=="0005", \
+    RUN+="/usr/bin/logger -t pico-udev 'Pico in BOOTSEL mode: %k (skipping test)'"
+
+# ===== 一般ユーザーからのアクセス許可 =====
+# dialoutグループに所属していればシリアルポートにアクセス可能
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2e8a", MODE="0666"

@@ -1,0 +1,31 @@
+[Unit]
+Description=AgriHA Rain Detector Service
+Documentation=https://github.com/agriha/unipi-agri-ha
+After=network.target evok.service mosquitto.service
+Wants=evok.service mosquitto.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/agriha/services
+ExecStart=/usr/bin/python3 /opt/agriha/services/rain_detector.py --config /etc/agriha/rain_detector.json
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/var/log/agriha
+
+# Resource limits
+MemoryMax=128M
+CPUQuota=25%
+
+[Install]
+WantedBy=multi-user.target

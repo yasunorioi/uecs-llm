@@ -1,0 +1,11 @@
+# Pico 2 W Auto Test Dependencies
+# Install: pip3 install -r requirements.txt
+
+# シリアル通信
+pyserial>=3.5
+
+# HTTP通信（LINE Notify等）
+requests>=2.28.0
+
+# MQTT通信（オプション）
+paho-mqtt>=1.6.0

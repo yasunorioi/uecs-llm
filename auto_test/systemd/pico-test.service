@@ -1,0 +1,54 @@
+# Pico 2 W 自動テストサービス
+# 配置先: /etc/systemd/system/pico-test.service
+#
+# 反映コマンド:
+#   sudo systemctl daemon-reload
+#
+# 手動実行:
+#   sudo systemctl start pico-test.service
+#
+# ログ確認:
+#   journalctl -u pico-test.service -f
+
+[Unit]
+Description=Pico 2 W Auto Test Service
+Documentation=file:///home/yasu/arsprout_analysis/auto_test/README.md
+After=network.target
+
+# 前のテストが完了するまで待機
+ConditionPathExists=!/tmp/pico-test.lock
+
+[Service]
+Type=oneshot
+
+# 実行ユーザー
+User=yasu
+Group=dialout
+
+# 作業ディレクトリ
+WorkingDirectory=/home/yasu/arsprout_analysis/auto_test
+
+# 環境変数
+Environment=PYTHONUNBUFFERED=1
+
+# ロックファイルで多重起動防止
+ExecStartPre=/usr/bin/touch /tmp/pico-test.lock
+
+# テスト実行（LINE通知有効）
+ExecStart=/usr/bin/python3 auto_test_runner.py --notify
+
+# ロックファイル削除
+ExecStopPost=/usr/bin/rm -f /tmp/pico-test.lock
+
+# タイムアウト設定（5分）
+TimeoutStartSec=300
+
+# 失敗時の再起動は行わない（1回限り）
+Restart=no
+
+# ログ出力
+StandardOutput=append:/var/log/arsprout/pico_test.log
+StandardError=append:/var/log/arsprout/pico_test.log
+
+[Install]
+WantedBy=multi-user.target
