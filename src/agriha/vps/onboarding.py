@@ -39,7 +39,7 @@ WG_SERVER_ENDPOINT = os.getenv("WG_SERVER_ENDPOINT", "")
 MBP_API_ENDPOINT = os.getenv("MBP_API_ENDPOINT", "http://10.20.0.1:5000")
 # QR画像の配信設定
 QR_DIR = Path(os.getenv("QR_DIR", "/var/www/qr"))
-QR_BASE_URL = os.getenv("QR_BASE_URL", "https://toiso.fit/qr")
+QR_BASE_URL = os.getenv("QR_BASE_URL", "")
 
 LINE_CHANNEL_ACCESS_TOKEN = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
 _configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)

@@ -21,11 +21,21 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 #-------------------------------------------------------------------------------
-# 設定変数
+# vps.conf 読み込み
 #-------------------------------------------------------------------------------
-FARMERS_WG_IF="wg-farmers"
-FARMERS_WG_PORT="51821"
-FARMERS_WG_IP="10.20.0.1/24"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VPS_CONF="${SCRIPT_DIR}/../config/vps.conf"
+
+if [[ -f "${VPS_CONF}" ]]; then
+    # shellcheck source=../config/vps.conf
+    source "${VPS_CONF}"
+fi
+
+# vps.conf の値を使用（未設定時はデフォルト）
+FARMERS_WG_IF="${WG_INTERFACE:-wg-farmers}"
+FARMERS_WG_PORT="${WG_PORT:-51821}"
+FARMERS_WG_IP="${WG_SERVER_IP:-10.20.0.1/24}"
+FARMERS_QR_DIR="${QR_DIR:-/var/www/qr}"
 
 #-------------------------------------------------------------------------------
 # 前提チェック
@@ -138,10 +148,10 @@ echo -e "${GREEN}wg-farmers 起動完了 + systemd有効化${NC}"
 # QR画像配信ディレクトリ作成
 #-------------------------------------------------------------------------------
 echo -e "\n${GREEN}QR画像配信ディレクトリ作成...${NC}"
-mkdir -p /var/www/qr
-chown www-data:www-data /var/www/qr
-chmod 755 /var/www/qr
-echo -e "${GREEN}/var/www/qr 作成完了${NC}"
+mkdir -p "${FARMERS_QR_DIR}"
+chown www-data:www-data "${FARMERS_QR_DIR}"
+chmod 755 "${FARMERS_QR_DIR}"
+echo -e "${GREEN}${FARMERS_QR_DIR} 作成完了${NC}"
 
 #-------------------------------------------------------------------------------
 # サマリー
@@ -157,9 +167,9 @@ echo "  公開鍵: ${FARMERS_PUBLIC_KEY}"
 echo "  設定ファイル: /etc/wireguard/wg-farmers.conf"
 
 echo -e "\n${YELLOW}次のステップ:${NC}"
-echo "1. nginx設定: /etc/nginx/sites-available/toiso.fit を作成"
-echo "2. LINE Bot systemdサービス: agriha-linebot.service を作成"
-echo "3. .env にWG公開鍵を設定:"
+echo "1. LINE Bot + nginx + systemd セットアップ:"
+echo "   sudo bash scripts/deploy_vps_linebot.sh --setup"
+echo "2. .env にWG公開鍵を設定:"
 echo "   WG_SERVER_PUBLIC_KEY=${FARMERS_PUBLIC_KEY}"
 echo "   WG_SERVER_ENDPOINT=$(hostname -I | awk '{print $1}'):${FARMERS_WG_PORT}"
 echo ""

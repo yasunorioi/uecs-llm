@@ -156,6 +156,70 @@ forecast_engine.py は OpenAI SDK 互換クライアント（NullClawFallbackCli
 - APN設定はプリセットから選択: **SORACOM** (デフォルト) / IIJmio / 手動入力
 - ArSprout既存USB SIM環境との互換性あり（既存設定を検出した場合は上書きしない）
 
+## VPS LINE Bot デプロイ
+
+VPSをLINE Bot + 農家WireGuard VPNサーバとして構築する手順。
+VPSはメッセージルーターとして動作し、LLM処理は各農家のRPiで行う。
+
+### 1. 設定ファイル編集
+
+```bash
+# VPSでリポジトリをclone
+git clone https://github.com/yourname/uecs-llm.git /opt/uecs-llm
+cd /opt/uecs-llm
+
+# 環境設定を編集（ドメイン、ポート、パス等）
+vi config/vps.conf
+```
+
+`config/vps.conf` の編集項目:
+
+| 変数 | 説明 | デフォルト |
+|------|------|-----------|
+| `DOMAIN` | ドメイン名（SSL証明書・QR URL） | `toiso.fit` |
+| `APP_PORT` | uvicornリッスンポート | `8443` |
+| `DEPLOY_DIR` | デプロイ先シンボリックリンク | `/opt/agriha-linebot` |
+| `QR_DIR` | QR画像配信ディレクトリ | `/var/www/qr` |
+| `WG_INTERFACE` | WireGuardインターフェース名 | `wg-farmers` |
+| `WG_PORT` | WireGuard UDPポート | `51821` |
+| `WG_SERVER_IP` | WireGuardサーバIP/CIDR | `10.20.0.1/24` |
+
+### 2. セットアップ実行
+
+```bash
+# WireGuard 農家VPNサーバ構築
+sudo bash scripts/wg_farmers_vps_setup.sh
+
+# LINE Bot + nginx + systemd セットアップ
+sudo bash scripts/deploy_vps_linebot.sh --setup
+
+# .env作成（LINE トークン、WG公開鍵等）
+sudo cp /opt/agriha-linebot/.env.example /opt/agriha-linebot/.env
+sudo vi /opt/agriha-linebot/.env
+sudo chown www-data:www-data /opt/agriha-linebot/.env
+
+# サービス起動
+sudo systemctl start agriha-linebot
+curl https://your-domain/health
+```
+
+### 3. コード更新
+
+```bash
+cd /opt/uecs-llm
+sudo bash scripts/deploy_vps_linebot.sh
+# → git pull + pip差分 + サービス再起動
+```
+
+### テンプレートファイル
+
+| テンプレート | 展開先 | 説明 |
+|-------------|--------|------|
+| `config/nginx-vps.conf.template` | `/etc/nginx/sites-available/${DOMAIN}` | nginx設定 |
+| `systemd/agriha-linebot.service.template` | `/etc/systemd/system/agriha-linebot.service` | systemdサービス |
+
+テンプレート内の `__DOMAIN__`, `__APP_PORT__` 等のプレースホルダは `deploy_vps_linebot.sh --setup` が `config/vps.conf` の値で自動置換する。
+
 ## テスト
 
 ```bash

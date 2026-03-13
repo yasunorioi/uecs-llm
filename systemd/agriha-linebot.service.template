@@ -1,0 +1,27 @@
+# /etc/systemd/system/agriha-linebot.service
+# LINE Bot (FastAPI/uvicorn) — VPS systemdサービス
+#
+# このファイルはテンプレート。deploy_vps_linebot.sh --setup が
+# config/vps.conf の値で置換して配置する。手動編集不要。
+
+[Unit]
+Description=AgriHA LINE Bot (FastAPI + uvicorn)
+After=network.target wg-quick@__WG_INTERFACE__.service
+Wants=wg-quick@__WG_INTERFACE__.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=__DEPLOY_DIR__
+EnvironmentFile=__DEPLOY_DIR__/.env
+Environment="PATH=__DEPLOY_DIR__/.venv/bin:/usr/local/bin:/usr/bin"
+ExecStart=__DEPLOY_DIR__/.venv/bin/uvicorn app:app --host 127.0.0.1 --port __APP_PORT__
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agriha-linebot
+
+[Install]
+WantedBy=multi-user.target
