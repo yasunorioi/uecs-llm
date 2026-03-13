@@ -368,6 +368,28 @@ body {
   background: var(--color-primary-lt);
   box-shadow: 0 2px 6px rgba(45,106,79,0.3);
 }
+.btn--secondary {
+  background: var(--color-bg);
+  color: var(--color-primary);
+  border: 1px solid var(--color-border);
+}
+.btn--secondary:hover {
+  background: var(--color-border);
+}
+
+/* ── アコーディオン（details/summary）──────────────── */
+.section details > .section__desc,
+.section details > form,
+.section details > div,
+.section details > p {
+  padding-left: 0.5rem;
+}
+.section details[open] > summary {
+  margin-bottom: 0.75rem;
+}
+.section details > summary::marker {
+  color: var(--color-primary-xl);
+}
 
 /* ── ユーティリティ ─────────────────────────────────── */
 .text-muted { color: var(--color-muted); font-size: 0.85rem; }

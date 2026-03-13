@@ -15,387 +15,390 @@
 
 {# ─── システムプロンプト ─────────────────────────── #}
 <section class="section">
-  <h2 class="section__title">システムプロンプト</h2>
-  <p class="section__desc">LLM（Layer 3）に与えるシステム指示を編集できます。</p>
-  <form action="/settings/prompt" method="post">
-    <div class="form-group">
-      <textarea
-        name="prompt_text"
-        aria-label="システムプロンプト"
-        rows="20"
-        cols="80"
-        wrap="soft"
-        class="textarea-mono"
-        placeholder="システムプロンプトを入力...">{{ system_prompt or '' }}</textarea>
-    </div>
-    <button type="submit" class="btn btn--primary">保存</button>
-  </form>
+  <details>
+    <summary class="section__title" style="cursor:pointer;">システムプロンプト</summary>
+    <p class="section__desc">LLM（Layer 3）に与えるシステム指示を編集できます。</p>
+    <form action="/settings/prompt" method="post">
+      <div class="form-group">
+        <textarea
+          name="prompt_text"
+          aria-label="システムプロンプト"
+          rows="20"
+          cols="80"
+          wrap="soft"
+          class="textarea-mono"
+          placeholder="システムプロンプトを入力...">{{ system_prompt or '' }}</textarea>
+      </div>
+      <button type="submit" class="btn btn--primary">保存</button>
+    </form>
+  </details>
 </section>
 
 {# ─── 緊急閾値設定 ───────────────────────────────── #}
 <section class="section">
-  <h2 class="section__title">緊急閾値設定</h2>
-  <p class="section__desc">Layer 1（緊急制御）の動作閾値を設定します。</p>
-  <form action="/settings/thresholds" method="post">
-    <div class="form-row">
-      <label class="form-label" for="high_temp">高温閾値</label>
-      <div class="form-input-group">
-        <input
-          type="number"
-          id="high_temp"
-          name="high_temp"
-          step="0.1"
-          min="20"
-          max="40"
-          value="{{ thresholds.emergency.high_temp if thresholds and thresholds.emergency else '27.0' }}"
-          class="input input--number">
-        <span class="input-unit">℃</span>
+  <details>
+    <summary class="section__title" style="cursor:pointer;">緊急閾値設定</summary>
+    <p class="section__desc">Layer 1（緊急制御）の動作閾値を設定します。</p>
+    <form action="/settings/thresholds" method="post">
+      <div class="form-row">
+        <label class="form-label" for="high_temp">高温閾値</label>
+        <div class="form-input-group">
+          <input
+            type="number"
+            id="high_temp"
+            name="high_temp"
+            step="0.1"
+            min="20"
+            max="40"
+            value="{{ thresholds.emergency.high_temp if thresholds and thresholds.emergency else '27.0' }}"
+            class="input input--number">
+          <span class="input-unit">℃</span>
+        </div>
+        <p class="form-hint">この温度を超えると全窓全開（緊急冷却）</p>
       </div>
-      <p class="form-hint">この温度を超えると全窓全開（緊急冷却）</p>
-    </div>
 
-    <div class="form-row">
-      <label class="form-label" for="low_temp">低温閾値</label>
-      <div class="form-input-group">
-        <input
-          type="number"
-          id="low_temp"
-          name="low_temp"
-          step="0.1"
-          min="0"
-          max="25"
-          value="{{ thresholds.emergency.low_temp if thresholds and thresholds.emergency else '16.0' }}"
-          class="input input--number">
-        <span class="input-unit">℃</span>
+      <div class="form-row">
+        <label class="form-label" for="low_temp">低温閾値</label>
+        <div class="form-input-group">
+          <input
+            type="number"
+            id="low_temp"
+            name="low_temp"
+            step="0.1"
+            min="0"
+            max="25"
+            value="{{ thresholds.emergency.low_temp if thresholds and thresholds.emergency else '16.0' }}"
+            class="input input--number">
+          <span class="input-unit">℃</span>
+        </div>
+        <p class="form-hint">この温度を下回ると全窓全閉（緊急保温）</p>
       </div>
-      <p class="form-hint">この温度を下回ると全窓全閉（緊急保温）</p>
-    </div>
 
-    <div class="form-row">
-      <label class="form-label" for="co2_target">CO2 目標値</label>
-      <div class="form-input-group">
-        <input
-          type="number"
-          id="co2_target"
-          name="co2_target"
-          step="1"
-          min="400"
-          max="2000"
-          value="{{ thresholds.co2.target_ppm if thresholds and thresholds.co2 else '700' }}"
-          class="input input--number">
-        <span class="input-unit">ppm</span>
+      <div class="form-row">
+        <label class="form-label" for="co2_target">CO2 目標値</label>
+        <div class="form-input-group">
+          <input
+            type="number"
+            id="co2_target"
+            name="co2_target"
+            step="1"
+            min="400"
+            max="2000"
+            value="{{ thresholds.co2.target_ppm if thresholds and thresholds.co2 else '700' }}"
+            class="input input--number">
+          <span class="input-unit">ppm</span>
+        </div>
+        <p class="form-hint">CO2濃度の目標値（Layer 3 が参照）</p>
       </div>
-      <p class="form-hint">CO2濃度の目標値（Layer 3 が参照）</p>
-    </div>
 
-    <button type="submit" class="btn btn--primary">保存</button>
-  </form>
+      <button type="submit" class="btn btn--primary">保存</button>
+    </form>
+  </details>
 </section>
 
 {# ─── Layer2 制御ルール設定 ──────────────────────── #}
 <section class="section">
-  <h2 class="section__title">制御ルール設定</h2>
-  <p class="section__desc">Layer 2（ルールベース制御）の rules.yaml を直接編集できます。保存時に YAML 構文チェックを行います。</p>
-  <form action="/settings/rules" method="post">
-    <div class="form-group">
-      <textarea
-        name="rules_text"
-        aria-label="制御ルール"
-        rows="30"
-        cols="80"
-        wrap="off"
-        class="textarea-mono"
-        placeholder="rules.yaml の内容を入力...">{{ rules_text or '' }}</textarea>
-    </div>
-    <button type="submit" class="btn btn--primary">保存</button>
-  </form>
+  <details>
+    <summary class="section__title" style="cursor:pointer;">制御ルール設定</summary>
+    <p class="section__desc">Layer 2（ルールベース制御）の rules.yaml を直接編集できます。保存時に YAML 構文チェックを行います。</p>
+    <form action="/settings/rules" method="post">
+      <div class="form-group">
+        <textarea
+          name="rules_text"
+          aria-label="制御ルール"
+          rows="30"
+          cols="80"
+          wrap="off"
+          class="textarea-mono"
+          placeholder="rules.yaml の内容を入力...">{{ rules_text or '' }}</textarea>
+      </div>
+      <button type="submit" class="btn btn--primary">保存</button>
+    </form>
+  </details>
 </section>
 
 {# ─── チャンネルマップ設定 ──────────────────────── #}
 <section class="section">
-  <h2 class="section__title">チャンネルマップ設定</h2>
-  <p class="section__desc">リレーチャンネルと機器のマッピング（channel_map.yaml）を直接編集できます。保存時に YAML 構文チェックを行います。</p>
-  <form action="/settings/channel_map" method="post">
-    <div class="form-group">
-      <textarea
-        name="channel_map_text"
-        aria-label="チャンネルマップ"
-        rows="30"
-        cols="80"
-        wrap="off"
-        class="textarea-mono"
-        placeholder="channel_map.yaml の内容を入力...">{{ channel_map_text or '' }}</textarea>
-    </div>
-    <button type="submit" class="btn btn--primary">保存</button>
-  </form>
+  <details>
+    <summary class="section__title" style="cursor:pointer;">チャンネルマップ設定</summary>
+    <p class="section__desc">リレーチャンネルと機器のマッピング（channel_map.yaml）を直接編集できます。保存時に YAML 構文チェックを行います。</p>
+    <form action="/settings/channel_map" method="post">
+      <div class="form-group">
+        <textarea
+          name="channel_map_text"
+          aria-label="チャンネルマップ"
+          rows="30"
+          cols="80"
+          wrap="off"
+          class="textarea-mono"
+          placeholder="channel_map.yaml の内容を入力...">{{ channel_map_text or '' }}</textarea>
+      </div>
+      <button type="submit" class="btn btn--primary">保存</button>
+    </form>
+  </details>
 </section>
 
 {# ─── ネットワーク設定 ──────────────────────────── #}
 <section class="section">
-  <h2 class="section__title">ネットワーク設定（USB SIM / APN）</h2>
-  <p class="section__desc">USB SIMドングルのAPN設定と接続状態を確認できます。</p>
+  <details>
+    <summary class="section__title" style="cursor:pointer;">ネットワーク設定（USB SIM / APN）</summary>
+    <p class="section__desc">USB SIMドングルのAPN設定と接続状態を確認できます。</p>
 
-  {# 接続状態表示 #}
-  <div style="margin-bottom:1rem; padding:0.75rem; background:#f9fafb; border:1px solid #e5e7eb; border-radius:6px;">
-    <div style="display:flex; gap:1.5rem; flex-wrap:wrap;">
-      <div>
-        <span style="font-size:0.75rem; color:#6b7280;">接続状態</span><br>
-        {% if network_status.connection_type == 'cellular' %}
-          <span style="color:#16a34a;">● セルラー (SIM)</span>
-        {% elif network_status.connection_type == 'wifi' %}
-          <span style="color:#2563eb;">● WiFi</span>
-        {% elif network_status.connection_type == 'ethernet' %}
-          <span style="color:#7c3aed;">● 有線</span>
-        {% else %}
-          <span style="color:#9ca3af;">○ 不明</span>
-        {% endif %}
+    {# 接続状態表示 #}
+    <div style="margin-bottom:1rem; padding:0.75rem; background:#f9fafb; border:1px solid #e5e7eb; border-radius:6px;">
+      <div style="display:flex; gap:1.5rem; flex-wrap:wrap;">
+        <div>
+          <span style="font-size:0.75rem; color:#6b7280;">接続状態</span><br>
+          {% if network_status.connection_type == 'cellular' %}
+            <span style="color:#16a34a;">● セルラー (SIM)</span>
+          {% elif network_status.connection_type == 'wifi' %}
+            <span style="color:#2563eb;">● WiFi</span>
+          {% elif network_status.connection_type == 'ethernet' %}
+            <span style="color:#7c3aed;">● 有線</span>
+          {% else %}
+            <span style="color:#9ca3af;">○ 不明</span>
+          {% endif %}
+        </div>
+        <div>
+          <span style="font-size:0.75rem; color:#6b7280;">ドングル</span><br>
+          {% if network_status.modem_detected %}
+            <span style="color:#16a34a;">● 検出済み</span>
+          {% else %}
+            <span style="color:#9ca3af;">○ 未検出</span>
+          {% endif %}
+        </div>
+        <div>
+          <span style="font-size:0.75rem; color:#6b7280;">固定IP</span><br>
+          {% if network_status.ip_address %}
+            <code>{{ network_status.ip_address }}</code>
+          {% else %}
+            <span style="color:#9ca3af;">未取得</span>
+          {% endif %}
+        </div>
       </div>
-      <div>
-        <span style="font-size:0.75rem; color:#6b7280;">ドングル</span><br>
-        {% if network_status.modem_detected %}
-          <span style="color:#16a34a;">● 検出済み</span>
-        {% else %}
-          <span style="color:#9ca3af;">○ 未検出</span>
-        {% endif %}
-      </div>
-      <div>
-        <span style="font-size:0.75rem; color:#6b7280;">固定IP</span><br>
-        {% if network_status.ip_address %}
-          <code>{{ network_status.ip_address }}</code>
-        {% else %}
-          <span style="color:#9ca3af;">未取得</span>
-        {% endif %}
-      </div>
+      {% if network_status.modem_info %}
+        <p style="margin:0.5rem 0 0; font-size:0.75rem; color:#6b7280;">{{ network_status.modem_info }}</p>
+      {% endif %}
     </div>
-    {% if network_status.modem_info %}
-      <p style="margin:0.5rem 0 0; font-size:0.75rem; color:#6b7280;">{{ network_status.modem_info }}</p>
-    {% endif %}
-  </div>
 
-  {# LINE Webhook URL表示 #}
-  <div style="margin-bottom:1rem;">
-    <label class="form-label">LINE Webhook URL</label>
-    {% if network_status.webhook_url %}
-      <div style="display:flex; gap:0.5rem; align-items:center;">
-        <code id="webhook-url" style="background:#f3f4f6; padding:0.4rem 0.6rem; border-radius:4px; font-size:0.85rem;">{{ network_status.webhook_url }}</code>
-        <button type="button" onclick="navigator.clipboard.writeText('{{ network_status.webhook_url }}').then(()=>{this.textContent='✓ コピー済み';setTimeout(()=>{this.textContent='URLをコピー'},2000)})" class="btn btn--secondary" style="font-size:0.8rem; padding:0.3rem 0.6rem;">URLをコピー</button>
+    {# APN設定フォーム #}
+    <form action="/settings/network/apn" method="post">
+      <div class="form-row">
+        <label class="form-label" for="preset">プリセット</label>
+        <div class="form-input-group">
+          <select id="preset" name="preset" class="input" onchange="applyPreset(this.value)">
+            {% for pid, pdata in apn_presets.items() %}
+            <option value="{{ pid }}"
+              data-apn="{{ pdata.apn }}"
+              data-user="{{ pdata.user }}"
+              data-password="{{ pdata.password }}"
+              data-auth="{{ pdata.auth }}"
+              {% if network_config.apn == pdata.apn and pid != 'manual' %}selected{% endif %}>
+              {{ pdata.label }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
       </div>
-    {% else %}
-      <p class="form-hint">Webhook URL はネットワーク接続後に自動検出されます。手動設定は LINE Bot セクションで行えます。</p>
-    {% endif %}
-  </div>
-
-  {# APN設定フォーム #}
-  <form action="/settings/network/apn" method="post">
-    <div class="form-row">
-      <label class="form-label" for="preset">プリセット</label>
-      <div class="form-input-group">
-        <select id="preset" name="preset" class="input" onchange="applyPreset(this.value)">
-          {% for pid, pdata in apn_presets.items() %}
-          <option value="{{ pid }}"
-            data-apn="{{ pdata.apn }}"
-            data-user="{{ pdata.user }}"
-            data-password="{{ pdata.password }}"
-            data-auth="{{ pdata.auth }}"
-            {% if network_config.apn == pdata.apn and pid != 'manual' %}selected{% endif %}>
-            {{ pdata.label }}
-          </option>
-          {% endfor %}
-        </select>
+      <div class="form-row">
+        <label class="form-label" for="apn">APN名</label>
+        <div class="form-input-group">
+          <input type="text" id="apn" name="apn" class="input" value="{{ network_config.apn }}" placeholder="soracom.io">
+        </div>
       </div>
-    </div>
-    <div class="form-row">
-      <label class="form-label" for="apn">APN名</label>
-      <div class="form-input-group">
-        <input type="text" id="apn" name="apn" class="input" value="{{ network_config.apn }}" placeholder="soracom.io">
+      <div class="form-row">
+        <label class="form-label" for="user">ユーザー名</label>
+        <div class="form-input-group">
+          <input type="text" id="user" name="user" class="input" value="{{ network_config.user }}" placeholder="sora">
+        </div>
       </div>
-    </div>
-    <div class="form-row">
-      <label class="form-label" for="user">ユーザー名</label>
-      <div class="form-input-group">
-        <input type="text" id="user" name="user" class="input" value="{{ network_config.user }}" placeholder="sora">
+      <div class="form-row">
+        <label class="form-label" for="password">パスワード</label>
+        <div class="form-input-group">
+          <input type="password" id="apn_password" name="password" class="input" value="{{ network_config.password }}" autocomplete="new-password">
+        </div>
       </div>
-    </div>
-    <div class="form-row">
-      <label class="form-label" for="password">パスワード</label>
-      <div class="form-input-group">
-        <input type="password" id="apn_password" name="password" class="input" value="{{ network_config.password }}" autocomplete="new-password">
+      <div class="form-row">
+        <label class="form-label" for="auth">認証方式</label>
+        <div class="form-input-group">
+          <select id="auth" name="auth" class="input">
+            <option value="chap" {% if network_config.auth == 'chap' %}selected{% endif %}>CHAP</option>
+            <option value="pap" {% if network_config.auth == 'pap' %}selected{% endif %}>PAP</option>
+            <option value="none" {% if network_config.auth == 'none' %}selected{% endif %}>なし</option>
+          </select>
+        </div>
       </div>
-    </div>
-    <div class="form-row">
-      <label class="form-label" for="auth">認証方式</label>
-      <div class="form-input-group">
-        <select id="auth" name="auth" class="input">
-          <option value="chap" {% if network_config.auth == 'chap' %}selected{% endif %}>CHAP</option>
-          <option value="pap" {% if network_config.auth == 'pap' %}selected{% endif %}>PAP</option>
-          <option value="none" {% if network_config.auth == 'none' %}selected{% endif %}>なし</option>
-        </select>
-      </div>
-    </div>
-    <button type="submit" class="btn btn--primary">保存</button>
-  </form>
+      <button type="submit" class="btn btn--primary">保存</button>
+    </form>
+  </details>
 </section>
 
 {# ─── LINE Bot設定 ────────────────────────────── #}
 <section class="section">
-  <h2 class="section__title">LINE Bot</h2>
-  <p class="section__desc">
-    LINE Messaging API の認証情報を設定します。
-    <a href="https://developers.line.biz/console/" target="_blank" rel="noopener" style="color:#2563eb;">LINE Developers Console</a>
-  </p>
-  <form action="/settings/line_bot" method="post">
-    <div class="form-row">
-      <label class="form-label" for="line_channel_secret">Channel Secret</label>
-      <div class="form-input-group">
-        <input type="password" id="line_channel_secret" name="line_channel_secret" class="input"
-          placeholder="新しい値を入力（空欄=変更なし）" autocomplete="new-password">
-      </div>
-      <p class="form-hint">
-        {% if line_secret_masked %}設定済み: {{ line_secret_masked }}{% else %}未設定{% endif %}
-      </p>
-    </div>
-
-    <div class="form-row">
-      <label class="form-label" for="line_channel_access_token">Channel Access Token</label>
-      <div class="form-input-group">
-        <input type="password" id="line_channel_access_token" name="line_channel_access_token" class="input"
-          placeholder="新しい値を入力（空欄=変更なし）" autocomplete="new-password">
-      </div>
-      <p class="form-hint">
-        {% if line_token_masked %}設定済み: {{ line_token_masked }}{% else %}未設定{% endif %}
-      </p>
-    </div>
-
-    <div class="form-row">
-      <label class="form-label" for="line_user_id">User ID（管理者通知用）</label>
-      <div class="form-input-group">
-        <input type="text" id="line_user_id" name="line_user_id" class="input"
-          placeholder="Uxxxxxxx..." value="{{ line_user_id or '' }}">
-      </div>
-      <p class="form-hint">LINE Developers Console の「基本設定」から確認できます。空欄=変更なし。</p>
-    </div>
-
-    <div style="margin-bottom:0.75rem;">
-      <label class="form-label">Webhook URL</label>
-      {% if network_status.webhook_url %}
-        <div style="display:flex; gap:0.5rem; align-items:center;">
-          <code style="background:#f3f4f6; padding:0.4rem 0.6rem; border-radius:4px; font-size:0.85rem;">{{ network_status.webhook_url }}</code>
-          <button type="button" onclick="navigator.clipboard.writeText('{{ network_status.webhook_url }}').then(()=>{this.textContent='✓';setTimeout(()=>{this.textContent='Copy'},2000)})" class="btn btn--secondary" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Copy</button>
+  <details>
+    <summary class="section__title" style="cursor:pointer;">LINE Bot</summary>
+    <p class="section__desc">
+      LINE Messaging API の認証情報を設定します。
+      <a href="https://developers.line.biz/console/" target="_blank" rel="noopener" style="color:#2563eb;">LINE Developers Console</a>
+    </p>
+    <form action="/settings/line_bot" method="post">
+      <div class="form-row">
+        <label class="form-label" for="line_channel_secret">Channel Secret</label>
+        <div class="form-input-group">
+          <input type="password" id="line_channel_secret" name="line_channel_secret" class="input"
+            placeholder="新しい値を入力（空欄=変更なし）" autocomplete="new-password">
         </div>
-        <p class="form-hint">LINE Developers Console → Messaging API → Webhook URL に設定してください。</p>
-      {% else %}
-        <p class="form-hint">https://&lt;your-domain&gt;/callback を LINE Developers Console で設定してください。</p>
-      {% endif %}
-    </div>
+        <p class="form-hint">
+          {% if line_secret_masked %}設定済み: {{ line_secret_masked }}{% else %}未設定{% endif %}
+        </p>
+      </div>
 
-    <button type="submit" class="btn btn--primary">保存</button>
-  </form>
+      <div class="form-row">
+        <label class="form-label" for="line_channel_access_token">Channel Access Token</label>
+        <div class="form-input-group">
+          <input type="password" id="line_channel_access_token" name="line_channel_access_token" class="input"
+            placeholder="新しい値を入力（空欄=変更なし）" autocomplete="new-password">
+        </div>
+        <p class="form-hint">
+          {% if line_token_masked %}設定済み: {{ line_token_masked }}{% else %}未設定{% endif %}
+        </p>
+      </div>
+
+      <div class="form-row">
+        <label class="form-label" for="line_user_id">User ID（管理者通知用）</label>
+        <div class="form-input-group">
+          <input type="text" id="line_user_id" name="line_user_id" class="input"
+            placeholder="Uxxxxxxx..." value="{{ line_user_id or '' }}">
+        </div>
+        <p class="form-hint">LINE Developers Console の「基本設定」から確認できます。空欄=変更なし。</p>
+      </div>
+
+      <div style="margin-bottom:0.75rem;">
+        <label class="form-label">Webhook URL</label>
+        {% if network_status.webhook_url %}
+          <div style="display:flex; gap:0.5rem; align-items:center;">
+            <code style="background:#f3f4f6; padding:0.4rem 0.6rem; border-radius:4px; font-size:0.85rem;">{{ network_status.webhook_url }}</code>
+            <button type="button" onclick="navigator.clipboard.writeText('{{ network_status.webhook_url }}').then(()=>{this.textContent='✓';setTimeout(()=>{this.textContent='Copy'},2000)})" class="btn btn--secondary" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Copy</button>
+          </div>
+          <p class="form-hint">LINE Developers Console → Messaging API → Webhook URL に設定してください。</p>
+        {% else %}
+          <p class="form-hint">https://&lt;your-domain&gt;/callback を LINE Developers Console で設定してください。</p>
+        {% endif %}
+      </div>
+
+      <button type="submit" class="btn btn--primary">保存</button>
+    </form>
+  </details>
 </section>
 
 {# ─── Weather API設定 ─────────────────────────── #}
 <section class="section">
-  <h2 class="section__title">Weather API（Visual Crossing）</h2>
-  <p class="section__desc">
-    Layer 3（LLM予報制御）が天気予報の取得に使用します。
-    <a href="https://www.visualcrossing.com/account" target="_blank" rel="noopener" style="color:#2563eb;">Visual Crossing Account</a>
-  </p>
-  <form action="/settings/weather_api" method="post">
-    <div class="form-row">
-      <label class="form-label" for="vc_api_key">API Key</label>
-      <div class="form-input-group">
-        <input type="password" id="vc_api_key" name="vc_api_key" class="input"
-          placeholder="新しいキーを入力（空欄=変更なし）" autocomplete="new-password">
+  <details>
+    <summary class="section__title" style="cursor:pointer;">Weather API（Visual Crossing）</summary>
+    <p class="section__desc">
+      Layer 3（LLM予報制御）が天気予報の取得に使用します。
+      <a href="https://www.visualcrossing.com/account" target="_blank" rel="noopener" style="color:#2563eb;">Visual Crossing Account</a>
+    </p>
+    <form action="/settings/weather_api" method="post">
+      <div class="form-row">
+        <label class="form-label" for="vc_api_key">API Key</label>
+        <div class="form-input-group">
+          <input type="password" id="vc_api_key" name="vc_api_key" class="input"
+            placeholder="新しいキーを入力（空欄=変更なし）" autocomplete="new-password">
+        </div>
+        <p class="form-hint">
+          {% if vc_api_key_masked %}設定済み: {{ vc_api_key_masked }}{% else %}未設定（天気予報なしで動作）{% endif %}
+          · 無料プラン: 1000 req/day
+        </p>
       </div>
-      <p class="form-hint">
-        {% if vc_api_key_masked %}設定済み: {{ vc_api_key_masked }}{% else %}未設定（天気予報なしで動作）{% endif %}
-        · 無料プラン: 1000 req/day
-      </p>
-    </div>
-    <button type="submit" class="btn btn--primary">保存</button>
-  </form>
+      <button type="submit" class="btn btn--primary">保存</button>
+    </form>
+  </details>
 </section>
 
 {# ─── LLMプロバイダー設定 ─────────────────────── #}
 <section class="section">
-  <h2 class="section__title">LLMプロバイダー設定</h2>
-  <p class="section__desc">Layer 3（LLM予報制御）で使用するプロバイダーを選択し、APIキーを設定します。</p>
-  <form action="/settings/llm_provider" method="post">
-    <div class="form-row">
-      <label class="form-label" for="provider">プロバイダー</label>
-      <div class="form-input-group">
-        <select id="provider" name="provider" class="input">
-          {% for p in llm_providers %}
-          <option value="{{ p.id }}"
-            data-base-url="{{ p.base_url }}"
-            data-default-model="{{ p.default_model }}"
-            {% if p.id == current_provider %}selected{% endif %}>
-            {{ p.name }}
-          </option>
-          {% endfor %}
-        </select>
+  <details>
+    <summary class="section__title" style="cursor:pointer;">LLMプロバイダー設定</summary>
+    <p class="section__desc">Layer 3（LLM予報制御）で使用するプロバイダーを選択し、APIキーを設定します。</p>
+    <form action="/settings/llm_provider" method="post">
+      <div class="form-row">
+        <label class="form-label" for="provider">プロバイダー</label>
+        <div class="form-input-group">
+          <select id="provider" name="provider" class="input">
+            {% for p in llm_providers %}
+            <option value="{{ p.id }}"
+              data-base-url="{{ p.base_url }}"
+              data-default-model="{{ p.default_model }}"
+              {% if p.id == current_provider %}selected{% endif %}>
+              {{ p.name }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
       </div>
-    </div>
 
-    <div class="form-row">
-      <label class="form-label" for="model">モデル名</label>
-      <div class="form-input-group">
-        <input
-          type="text"
-          id="model"
-          name="model"
-          class="input"
-          placeholder="空欄=デフォルトモデル使用">
+      <div class="form-row">
+        <label class="form-label" for="model">モデル名</label>
+        <div class="form-input-group">
+          <input
+            type="text"
+            id="model"
+            name="model"
+            class="input"
+            placeholder="空欄=デフォルトモデル使用">
+        </div>
+        <p class="form-hint">空欄の場合、選択プロバイダーのデフォルトモデルを使用します。</p>
       </div>
-      <p class="form-hint">空欄の場合、選択プロバイダーのデフォルトモデルを使用します。</p>
-    </div>
 
-    <div class="form-row">
-      <label class="form-label" for="api_key">APIキー</label>
-      <div class="form-input-group">
-        <input
-          type="password"
-          id="api_key"
-          name="api_key"
-          class="input"
-          placeholder="新しいキーを入力（空欄=変更なし）"
-          autocomplete="new-password">
+      <div class="form-row">
+        <label class="form-label" for="api_key">APIキー</label>
+        <div class="form-input-group">
+          <input
+            type="password"
+            id="api_key"
+            name="api_key"
+            class="input"
+            placeholder="新しいキーを入力（空欄=変更なし）"
+            autocomplete="new-password">
+        </div>
+        <p class="form-hint">
+          {% if current_api_key_masked %}
+            設定済み: {{ current_api_key_masked }}
+          {% else %}
+            未設定
+          {% endif %}
+          · 空欄のまま保存すると既存キーを維持します。
+        </p>
       </div>
-      <p class="form-hint">
-        {% if current_api_key_masked %}
-          設定済み: {{ current_api_key_masked }}
-        {% else %}
-          未設定
-        {% endif %}
-        · 空欄のまま保存すると既存キーを維持します。
-      </p>
-    </div>
 
-    <button type="submit" class="btn btn--primary">保存</button>
-  </form>
+      <button type="submit" class="btn btn--primary">保存</button>
+    </form>
 
-  {# APIキー状態バナー #}
-  {% if current_provider == 'nullclaw' %}
-  <p class="form-hint" style="margin-top:0.75rem;">
-    ✅ NullClaw（ローカルAI）で動作中。インターネット不要・ゼロコスト。
-  </p>
-  <p class="form-hint">
-    💡 APIキーを入力すると、より高性能なクラウドLLMが利用できます。API失敗時は自動的にNullClawにフォールバックします。
-  </p>
-  {% elif current_api_key_masked %}
-  <p class="form-hint" style="margin-top:0.75rem;">
-    ☁️ クラウドAPI使用中。回線断・API失敗時は自動でNullClaw（ローカル）に切り替わります。
-  </p>
-  {% else %}
-  <p class="form-hint" style="margin-top:0.75rem; color: #b45309;">
-    ⚠️ APIキーが未設定です。NullClaw（ローカル）で動作します。
-  </p>
-  {% endif %}
+    {# APIキー状態バナー #}
+    {% if current_provider == 'nullclaw' %}
+    <p class="form-hint" style="margin-top:0.75rem;">
+      ✅ NullClaw（ローカルAI）で動作中。インターネット不要・ゼロコスト。
+    </p>
+    <p class="form-hint">
+      💡 APIキーを入力すると、より高性能なクラウドLLMが利用できます。API失敗時は自動的にNullClawにフォールバックします。
+    </p>
+    {% elif current_api_key_masked %}
+    <p class="form-hint" style="margin-top:0.75rem;">
+      ☁️ クラウドAPI使用中。回線断・API失敗時は自動でNullClaw（ローカル）に切り替わります。
+    </p>
+    {% else %}
+    <p class="form-hint" style="margin-top:0.75rem; color: #b45309;">
+      ⚠️ APIキーが未設定です。NullClaw（ローカル）で動作します。
+    </p>
+    {% endif %}
+  </details>
 </section>
 
 {# ─── LLM詳細設定（forecast.yaml直接編集）────── #}
 <section class="section">
   <details>
-    <summary class="section__title" style="cursor: pointer;">LLM詳細設定（forecast.yaml）</summary>
+    <summary class="section__title" style="cursor:pointer;">LLM詳細設定（forecast.yaml）</summary>
     <p class="section__desc">forecast.yaml を直接編集できます。保存時に YAML 構文チェックを行います。</p>
     <form action="/settings/forecast" method="post">
       <div class="form-group">
@@ -412,32 +415,35 @@
     </form>
   </details>
 </section>
+
 {# ─── サービス再起動 ──────────────────────────── #}
 <section class="section">
-  <h2 class="section__title">サービス再起動</h2>
-  <p class="section__desc">各サービスを再起動できます。agriha-ui を再起動するとこの画面の接続が切れます。</p>
-  <div style="display:flex; flex-direction:column; gap:0.75rem;">
-    {% for svc, svc_status in service_statuses.items() %}
-    <div style="display:flex; align-items:center; gap:1rem; padding:0.75rem; background:#f9fafb; border:1px solid #e5e7eb; border-radius:6px;">
-      <div style="flex:1;">
-        <strong>{{ svc }}</strong><br>
-        <span style="font-size:0.8rem;
-          {% if svc_status == 'active' %}color:#16a34a;
-          {% elif svc_status == 'inactive' %}color:#9ca3af;
-          {% else %}color:#b45309;{% endif %}">
-          {{ svc_status }}
-        </span>
+  <details>
+    <summary class="section__title" style="cursor:pointer;">サービス再起動</summary>
+    <p class="section__desc">各サービスを再起動できます。agriha-ui を再起動するとこの画面の接続が切れます。</p>
+    <div style="display:flex; flex-direction:column; gap:0.75rem;">
+      {% for svc, svc_status in service_statuses.items() %}
+      <div style="display:flex; align-items:center; gap:1rem; padding:0.75rem; background:#f9fafb; border:1px solid #e5e7eb; border-radius:6px;">
+        <div style="flex:1;">
+          <strong>{{ svc }}</strong><br>
+          <span style="font-size:0.8rem;
+            {% if svc_status == 'active' %}color:#16a34a;
+            {% elif svc_status == 'inactive' %}color:#9ca3af;
+            {% else %}color:#b45309;{% endif %}">
+            {{ svc_status }}
+          </span>
+        </div>
+        <form action="/settings/restart_service" method="post" style="margin:0;"
+              onsubmit="return confirm('{{ svc }} を再起動しますか？')">
+          <input type="hidden" name="service" value="{{ svc }}">
+          <button type="submit" class="btn btn--primary" style="font-size:0.85rem; padding:0.4rem 1rem;">
+            再起動
+          </button>
+        </form>
       </div>
-      <form action="/settings/restart_service" method="post" style="margin:0;"
-            onsubmit="return confirm('{{ svc }} を再起動しますか？')">
-        <input type="hidden" name="service" value="{{ svc }}">
-        <button type="submit" class="btn btn--primary" style="font-size:0.85rem; padding:0.4rem 1rem;">
-          再起動
-        </button>
-      </form>
+      {% endfor %}
     </div>
-    {% endfor %}
-  </div>
+  </details>
 </section>
 {% endblock %}
 
