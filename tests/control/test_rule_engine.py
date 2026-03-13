@@ -20,6 +20,7 @@ import pytest
 import yaml
 
 from agriha.control.rule_engine import (
+    _compute_pitagorasu_stage,
     _compute_window_state,
     _get_temperature_stage,
     append_temp_history,
@@ -1071,3 +1072,175 @@ class TestEvaluateRulesState:
             current_plan=plan, now=DAYTIME, channel_map_path=channel_map_file,
         )
         assert "forecast_rain_close_all" not in result["triggered_rules"]
+
+
+# ──────────────────────────────────────────────
+# ピタゴラススイッチ テスト
+# ──────────────────────────────────────────────
+
+class TestComputePitagorasuStage:
+    """_compute_pitagorasu_stage 単体テスト"""
+
+    def test_cold_returns_closed(self) -> None:
+        """20℃ → stage 0 (closed)"""
+        r = _compute_pitagorasu_stage(20.0, None, 10)
+        assert r["stage"] == 0
+        assert r["stage_name"] == "closed"
+        assert r["south_target"] == 0.0
+        assert r["north_target"] == 0.0
+
+    def test_warm_returns_south_micro(self) -> None:
+        """26℃ → stage 1 (south_micro)"""
+        r = _compute_pitagorasu_stage(26.0, None, 10)
+        assert r["stage"] == 1
+        assert r["stage_name"] == "south_micro"
+        assert r["south_target"] == 0.3
+        assert r["north_target"] == 0.0
+
+    def test_hot_returns_both_medium(self) -> None:
+        """28℃ → stage 2 (both_medium)"""
+        r = _compute_pitagorasu_stage(28.0, None, 10)
+        assert r["stage"] == 2
+        assert r["south_target"] == 0.5
+        assert r["north_target"] == 0.5
+
+    def test_very_hot_returns_full_open(self) -> None:
+        """33℃ → stage 4 (full_open)"""
+        r = _compute_pitagorasu_stage(33.0, None, 10)
+        assert r["stage"] == 4
+        assert r["south_target"] == 1.0
+        assert r["north_target"] == 1.0
+
+    def test_early_morning_offset(self) -> None:
+        """25.5℃ at 6:00 → offset -1.0 → effective 24.5℃ → closed (stage 0)
+        But 25.5℃ at 10:00 → effective 25.5℃ → south_micro (stage 1)"""
+        r_morning = _compute_pitagorasu_stage(25.5, None, 6)
+        r_day = _compute_pitagorasu_stage(25.5, None, 10)
+        assert r_morning["stage"] == 0  # 24.5 < 25 → closed
+        assert r_day["stage"] == 1      # 25.5 >= 25, < 27 → south_micro
+
+    def test_rapid_trend_bonus(self) -> None:
+        """24℃ + rapid trend 4℃/h → effective 26℃ → south_micro"""
+        r = _compute_pitagorasu_stage(24.0, 4.0, 10)
+        assert r["stage"] == 1  # 24 + 2.0 bonus = 26
+        assert r["effective_temp"] == 26.0
+
+    def test_mild_trend_bonus(self) -> None:
+        """24℃ + mild trend 2℃/h → effective 25℃ → south_micro"""
+        r = _compute_pitagorasu_stage(24.0, 2.0, 10)
+        assert r["stage"] == 1  # 24 + 1.0 bonus = 25 → stage 1 (25 < 27)
+
+    def test_negative_trend_no_bonus(self) -> None:
+        """26℃ + falling trend → no bonus → south_micro"""
+        r = _compute_pitagorasu_stage(26.0, -2.0, 10)
+        assert r["stage"] == 1
+        assert r["effective_temp"] == 26.0
+
+
+class TestPitagorasuIntegration:
+    """ピタゴラススイッチ有効時の evaluate_rules 統合テスト"""
+
+    @pytest.fixture
+    def pitagorasu_cfg(self, base_cfg) -> dict:
+        cfg = dict(base_cfg)
+        cfg["pitagorasu"] = {
+            "enabled": True,
+            "open_travel_sec": 65,
+            "close_travel_sec": 50,
+            "deadband": 0.05,
+        }
+        return cfg
+
+    def test_pitagorasu_stage_triggered(
+        self, pitagorasu_cfg, base_crop_cfg, status_normal, channel_map_file, tmp_path
+    ) -> None:
+        """28℃ → pitagorasu_stage_2 (both_medium)"""
+        sensors = {
+            "sensors": {
+                "agriha/h01/ccm/InAirTemp": {"value": 28.0},
+                "agriha/h01/ccm/InSolar": {"value": 0.0},
+                "agriha/farm/weather/misol": {
+                    "rainfall": 0.0, "wind_speed_ms": 1.0, "wind_direction": 5,
+                },
+            }
+        }
+        solar_acc = {"date": "2026-03-01", "accumulated_mj": 0.0, "irrigations_today": 0}
+
+        # Mock window position and temp history
+        pos_path = str(tmp_path / "window_position.json")
+        Path(pos_path).write_text(json.dumps({
+            "north": 0.0, "south": 0.0, "last_calibrated_at": None, "last_updated_at": None,
+        }))
+        hist_path = str(tmp_path / "temp_history.json")
+        Path(hist_path).write_text(json.dumps({"points": []}))
+
+        with patch("agriha.control.rule_engine.load_position", return_value={
+            "north": 0.0, "south": 0.0, "last_calibrated_at": None, "last_updated_at": None,
+        }), patch("agriha.control.rule_engine.save_position"), \
+             patch("agriha.control.rule_engine.load_temp_history", return_value={"points": []}):
+            result = evaluate_rules(
+                pitagorasu_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None,
+                now=DAYTIME, channel_map_path=channel_map_file,
+            )
+
+        triggered = result["triggered_rules"]
+        assert any("pitagorasu_stage" in t for t in triggered)
+        # 南北とも50%開放 → open_channel=1, duration指定あり
+        actions_with_dur = [(a[0], a[1], a[2]) for a in result["relay_actions"]]
+        open_actions = [a for a in actions_with_dur if a[1] == 1 and a[2] is not None and a[2] > 0]
+        assert len(open_actions) >= 1  # 少なくとも1つは開動作あり
+
+    def test_pitagorasu_disabled_falls_back(
+        self, base_cfg, base_crop_cfg, status_normal, channel_map_file
+    ) -> None:
+        """pitagorasu.enabled=false → 従来バイナリ制御"""
+        cfg = dict(base_cfg)
+        cfg["pitagorasu"] = {"enabled": False}
+        sensors = {
+            "sensors": {
+                "agriha/h01/ccm/InAirTemp": {"value": 29.0},
+                "agriha/h01/ccm/InSolar": {"value": 0.0},
+                "agriha/farm/weather/misol": {
+                    "rainfall": 0.0, "wind_speed_ms": 1.0, "wind_direction": 5,
+                },
+            }
+        }
+        solar_acc = {"date": "2026-03-01", "accumulated_mj": 0.0, "irrigations_today": 0}
+
+        result = evaluate_rules(
+            cfg, base_crop_cfg, sensors, status_normal, solar_acc, None,
+            now=DAYTIME, channel_map_path=channel_map_file,
+        )
+        assert "temp_high_open" in result["triggered_rules"]
+
+    def test_nighttime_calibration(
+        self, pitagorasu_cfg, base_crop_cfg, status_normal, channel_map_file
+    ) -> None:
+        """夜間 + pitagorasu有効 → キャリブレーション付き全閉"""
+        sensors = {
+            "sensors": {
+                "agriha/h01/ccm/InAirTemp": {"value": 15.0},
+                "agriha/h01/ccm/InSolar": {"value": 0.0},
+                "agriha/farm/weather/misol": {
+                    "rainfall": 0.0, "wind_speed_ms": 1.0, "wind_direction": 5,
+                },
+            }
+        }
+        solar_acc = {"date": "2026-03-01", "accumulated_mj": 0.0, "irrigations_today": 0}
+
+        with patch("agriha.control.rule_engine.load_position", return_value={
+            "north": 0.5, "south": 0.3, "last_calibrated_at": None, "last_updated_at": None,
+        }), patch("agriha.control.rule_engine.save_position") as mock_save, \
+             patch("agriha.control.rule_engine.calibrate_closed") as mock_cal:
+            result = evaluate_rules(
+                pitagorasu_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None,
+                now=NIGHTTIME, channel_map_path=channel_map_file,
+            )
+
+        assert "nighttime_close" in result["triggered_rules"]
+        # キャリブレーション呼び出し確認
+        assert mock_cal.call_count == 2  # 北側・南側
+        assert mock_save.called
+        # close_travel=50 * 1.1 = 55秒
+        close_actions = [a for a in result["relay_actions"] if a[2] is not None and a[2] == 55]
+        assert len(close_actions) == 2  # 北・南

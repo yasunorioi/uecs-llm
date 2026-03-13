@@ -25,6 +25,10 @@ from astral.sun import sun
 
 from agriha.control.channel_config import load_channel_map, load_window_groups, get_window_channels
 from agriha.control.retry_helper import RETRY_DELAYS_LOCAL_SEC, retry_with_backoff
+from agriha.control.window_position import (
+    load_position, save_position, update_position,
+    calibrate_closed, compute_move,
+)
 
 # ──────────────────────────────────────────────
 # 定数・デフォルトパス（環境変数で上書き可能）
@@ -429,37 +433,107 @@ def evaluate_rules(
             for g in groups:
                 _close_group(g)
 
-    # ── Rule 6c: 時間帯制御 ───────────────────────────
+    # ── Rule 6c: 夜間全閉 + キャリブレーション ─────────
+    pitagorasu_cfg = cfg.get("pitagorasu", {})
     if nighttime:
         triggered_rules.append("nighttime_close")
-        logger.info("Rule 6c: 夜間 → 全窓閉")
-        for g in groups:
-            if not _group_acted(g):
-                _close_group(g)
+        if pitagorasu_cfg.get("enabled"):
+            win_pos = load_position()
+            close_travel = pitagorasu_cfg.get("close_travel_sec", 50)
+            calibration_dur = int(close_travel * 1.1)  # +10%余裕
+            for g in groups:
+                if not _group_acted(g):
+                    relay_actions.append((g["close_channel"], 1, calibration_dur))
+                    relay_actions.append((g["open_channel"], 0, None))
+                    calibrate_closed(win_pos, g["name"])
+            save_position(win_pos)
+            logger.info("Rule 6c: 夜間全閉 + キャリブレーション (%d秒)", calibration_dur)
+        else:
+            logger.info("Rule 6c: 夜間 → 全窓閉")
+            for g in groups:
+                if not _group_acted(g):
+                    _close_group(g)
 
     # ── Rule 6d: 温度制御（Layer 3 計画があれば委譲） ──
     if not layer3_active:
         if indoor_temp is not None:
-            margin_open = temp_cfg["margin_open"]
-            margin_close = temp_cfg["margin_close"]
-            if indoor_temp > target_temp + margin_open:
-                triggered_rules.append("temp_high_open")
-                logger.info(
-                    "Rule 6d: 高温 %.1f℃ > %.1f+%.1f → 側窓開",
-                    indoor_temp, target_temp, margin_open,
+            if pitagorasu_cfg.get("enabled"):
+                # ピタゴラススイッチ: 段階的窓開放
+                temp_history = load_temp_history()
+                trend = compute_temperature_trend(temp_history)
+                hour = now.hour
+                pitagorasu = _compute_pitagorasu_stage(
+                    indoor_temp, trend, hour,
+                    early_offset=temp_cfg.get("early_morning_offset", -1.0),
+                    stages=pitagorasu_cfg.get("stages"),
+                    predictive_cfg=pitagorasu_cfg.get("predictive"),
                 )
+                triggered_rules.append(f"pitagorasu_stage_{pitagorasu['stage']}")
+                logger.info("Rule 6d: %s", pitagorasu["reason"])
+
+                win_pos = load_position()
+                open_travel = pitagorasu_cfg.get("open_travel_sec", 65)
+                close_travel = pitagorasu_cfg.get("close_travel_sec", 50)
+                deadband = pitagorasu_cfg.get("deadband", 0.05)
+
                 for g in groups:
-                    if not _group_acted(g):
-                        _open_group(g)
-            elif indoor_temp < target_temp - margin_close:
-                triggered_rules.append("temp_low_close")
-                logger.info(
-                    "Rule 6d: 低温 %.1f℃ < %.1f-%.1f → 側窓閉",
-                    indoor_temp, target_temp, margin_close,
-                )
-                for g in groups:
-                    if not _group_acted(g):
-                        _close_group(g)
+                    if _group_acted(g):
+                        continue
+                    is_south = "南" in g["name"]
+                    key = "south" if is_south else "north"
+                    current = win_pos.get(key, 0.0)
+                    target = pitagorasu[f"{key}_target"]
+
+                    direction, dur = compute_move(
+                        current, target, open_travel, close_travel, deadband,
+                    )
+                    if direction is None:
+                        logger.info(
+                            "Rule 6d: %s 不感帯内 (%.0f%%→%.0f%%) → 維持",
+                            g["name"], current * 100, target * 100,
+                        )
+                        continue
+
+                    if direction == "open":
+                        relay_actions.append((g["open_channel"], 1, int(dur)))
+                        relay_actions.append((g["close_channel"], 0, None))
+                    else:
+                        relay_actions.append((g["close_channel"], 1, int(dur)))
+                        relay_actions.append((g["open_channel"], 0, None))
+
+                    logger.info(
+                        "Rule 6d: %s %s %.0f%%→%.0f%% (%s %d秒)",
+                        g["name"], direction, current * 100, target * 100,
+                        direction, int(dur),
+                    )
+                    update_position(
+                        win_pos, g["name"], direction, dur,
+                        open_travel, close_travel,
+                    )
+
+                save_position(win_pos)
+            else:
+                # フォールバック: 従来のバイナリ開閉
+                margin_open = temp_cfg["margin_open"]
+                margin_close = temp_cfg["margin_close"]
+                if indoor_temp > target_temp + margin_open:
+                    triggered_rules.append("temp_high_open")
+                    logger.info(
+                        "Rule 6d: 高温 %.1f℃ > %.1f+%.1f → 側窓開",
+                        indoor_temp, target_temp, margin_open,
+                    )
+                    for g in groups:
+                        if not _group_acted(g):
+                            _open_group(g)
+                elif indoor_temp < target_temp - margin_close:
+                    triggered_rules.append("temp_low_close")
+                    logger.info(
+                        "Rule 6d: 低温 %.1f℃ < %.1f-%.1f → 側窓閉",
+                        indoor_temp, target_temp, margin_close,
+                    )
+                    for g in groups:
+                        if not _group_acted(g):
+                            _close_group(g)
     else:
         logger.info("Rule 6d: Layer 3 計画有効 → 温度制御を Layer 3 に委譲")
 
@@ -514,6 +588,88 @@ def _eval_irrigation(
         solar_acc["last_irrigation_at"] = datetime.now(tz=_JST).isoformat()
     else:
         logger.info("Rule 6e: 日射積算 %.4f < %.2f → 灌水スキップ", solar_acc["accumulated_mj"], solar_threshold)
+
+
+# ──────────────────────────────────────────────
+# ピタゴラススイッチ（段階的窓開放）
+# 設計書: predictive_ventilation_design.md
+# ──────────────────────────────────────────────
+
+_DEFAULT_PITAGORASU_STAGES = [
+    {"max_temp": 25.0, "south": 0.0, "north": 0.0, "name": "closed"},
+    {"max_temp": 27.0, "south": 0.3, "north": 0.0, "name": "south_micro"},
+    {"max_temp": 30.0, "south": 0.5, "north": 0.5, "name": "both_medium"},
+    {"max_temp": 32.0, "south": 0.8, "north": 0.8, "name": "both_wide"},
+    {"max_temp": 999,  "south": 1.0, "north": 1.0, "name": "full_open"},
+]
+
+
+def _compute_pitagorasu_stage(
+    temp: float,
+    trend: float | None,
+    hour: int,
+    early_offset: float = -1.0,
+    stages: list[dict] | None = None,
+    predictive_cfg: dict | None = None,
+) -> dict:
+    """ピタゴラススイッチの段階と目標開度を返す。
+
+    温度トレンドに基づく先読み補正と早朝オフセットを適用し、
+    実効温度から段階を判定する。
+
+    Returns:
+        {
+            "stage": 0-4,
+            "stage_name": str,
+            "south_target": 0.0-1.0,
+            "north_target": 0.0-1.0,
+            "effective_temp": float,
+            "reason": str,
+        }
+    """
+    if stages is None:
+        stages = _DEFAULT_PITAGORASU_STAGES
+
+    # 早朝オフセット（5-8時は-1℃シフト → 換気を先行）
+    offset = early_offset if 5 <= hour < 8 else 0.0
+
+    # 先読み補正: トレンドに基づき実効温度を嵩上げ
+    predictive_bonus = 0.0
+    if trend is not None and trend > 0:
+        p = predictive_cfg or {}
+        rapid = p.get("rapid_trend_threshold", 3.0)
+        mild = p.get("mild_trend_threshold", 1.5)
+        if trend > rapid:
+            predictive_bonus = p.get("rapid_bonus", 2.0)
+        elif trend > mild:
+            predictive_bonus = p.get("mild_bonus", 1.0)
+
+    effective_temp = temp + predictive_bonus + offset
+
+    for i, s in enumerate(stages):
+        if effective_temp < s["max_temp"]:
+            return {
+                "stage": i,
+                "stage_name": s["name"],
+                "south_target": s["south"],
+                "north_target": s["north"],
+                "effective_temp": effective_temp,
+                "reason": (
+                    f"T_eff={effective_temp:.1f}℃ "
+                    f"(実測{temp:.1f} +予測{predictive_bonus:+.1f} +朝{offset:+.1f}) "
+                    f"→ {s['name']} (S:{s['south']:.0%} N:{s['north']:.0%})"
+                ),
+            }
+
+    last = stages[-1]
+    return {
+        "stage": len(stages) - 1,
+        "stage_name": last["name"],
+        "south_target": last["south"],
+        "north_target": last["north"],
+        "effective_temp": effective_temp,
+        "reason": f"T_eff={effective_temp:.1f}℃ → {last['name']} (フォールバック)",
+    }
 
 
 # ──────────────────────────────────────────────

@@ -31,4 +31,21 @@ location:
   longitude: 141.603
   elevation: 21
 
+pitagorasu:
+  enabled: true                   # false=従来のバイナリ開閉にフォールバック
+  open_travel_sec: 65             # 全閉→全開 走行時間（巻き上げ、重力に逆らう）
+  close_travel_sec: 50            # 全開→全閉 走行時間（巻き下ろし、重力アシスト）
+  deadband: 0.05                  # 不感帯（5%未満の差分は無視）
+  stages:                         # max_temp昇順。effective_temp < max_temp で判定
+    - {max_temp: 25.0, south: 0.0, north: 0.0, name: closed}
+    - {max_temp: 27.0, south: 0.3, north: 0.0, name: south_micro}
+    - {max_temp: 30.0, south: 0.5, north: 0.5, name: both_medium}
+    - {max_temp: 32.0, south: 0.8, north: 0.8, name: both_wide}
+    - {max_temp: 999,  south: 1.0, north: 1.0, name: full_open}
+  predictive:
+    mild_trend_threshold: 1.5     # ℃/h 以上で先読み補正
+    rapid_trend_threshold: 3.0    # ℃/h 以上で大幅先読み
+    mild_bonus: 1.0               # mild時の実効温度加算 (℃)
+    rapid_bonus: 2.0              # rapid時の実効温度加算 (℃)
+
 custom_rules: []
