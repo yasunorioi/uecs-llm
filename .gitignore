@@ -54,3 +54,6 @@ firmware/**/build_*/
 wg-farmers.conf
 farmers_secrets.yaml
 hardware/kicad/kicad-symbols/
+
+# Large binaries (download on demand)
+*.jar
