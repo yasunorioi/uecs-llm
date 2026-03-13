@@ -740,6 +740,17 @@ async def settings(
     # ネットワーク設定
     network_config = load_network_config(NETWORK_CONFIG_PATH)
     network_status = get_network_status()
+    # サービス状態
+    service_statuses: dict[str, str] = {}
+    for svc in sorted(_RESTARTABLE_SERVICES):
+        try:
+            cp = subprocess.run(
+                ["systemctl", "is-active", svc],
+                capture_output=True, text=True, timeout=5,
+            )
+            service_statuses[svc] = cp.stdout.strip()
+        except Exception:
+            service_statuses[svc] = "unknown"
     flash: str | None = None
     if saved:
         flash = "設定を保存しました"
@@ -758,6 +769,7 @@ async def settings(
         "network_config": network_config,
         "network_status": network_status,
         "apn_presets": APN_PRESETS,
+        "service_statuses": service_statuses,
         "flash": flash,
     }
     return templates.TemplateResponse("settings.html", ctx)
@@ -930,6 +942,52 @@ async def save_llm_provider_route(
         return RedirectResponse(url="/settings?saved=1", status_code=303)
     except Exception:
         return RedirectResponse(url="/settings?error=1", status_code=303)
+
+
+# ── サービス再起動 ─────────────────────────────────────────────────────────
+
+_RESTARTABLE_SERVICES = {
+    "unipi-daemon",
+    "agriha-ui",
+    "agriha-nullclaw-proxy",
+}
+
+
+@app.post("/settings/restart_service")
+async def restart_service_route(
+    service: str = Form(...),
+    _: None = Depends(verify_auth),
+) -> RedirectResponse:
+    """systemd サービスを再起動する。"""
+    if service not in _RESTARTABLE_SERVICES:
+        return RedirectResponse(url="/settings?error=1", status_code=303)
+    try:
+        subprocess.run(
+            ["sudo", "systemctl", "restart", service],
+            check=True,
+            timeout=15,
+        )
+        return RedirectResponse(url="/settings?saved=1", status_code=303)
+    except Exception:
+        return RedirectResponse(url="/settings?error=1", status_code=303)
+
+
+@app.get("/api/service_status")
+async def service_status_route(
+    _: None = Depends(verify_auth),
+) -> dict[str, Any]:
+    """再起動可能サービスの稼働状態を返す。"""
+    result: dict[str, Any] = {}
+    for svc in sorted(_RESTARTABLE_SERVICES):
+        try:
+            cp = subprocess.run(
+                ["systemctl", "is-active", svc],
+                capture_output=True, text=True, timeout=5,
+            )
+            result[svc] = cp.stdout.strip()
+        except Exception:
+            result[svc] = "unknown"
+    return result
 
 
 # ── LINE Bot Webhook ───────────────────────────────────────────────────────

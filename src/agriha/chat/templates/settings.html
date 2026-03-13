@@ -333,6 +333,33 @@
     </form>
   </details>
 </section>
+{# ─── サービス再起動 ──────────────────────────── #}
+<section class="section">
+  <h2 class="section__title">サービス再起動</h2>
+  <p class="section__desc">各サービスを再起動できます。agriha-ui を再起動するとこの画面の接続が切れます。</p>
+  <div style="display:flex; flex-direction:column; gap:0.75rem;">
+    {% for svc, svc_status in service_statuses.items() %}
+    <div style="display:flex; align-items:center; gap:1rem; padding:0.75rem; background:#f9fafb; border:1px solid #e5e7eb; border-radius:6px;">
+      <div style="flex:1;">
+        <strong>{{ svc }}</strong><br>
+        <span style="font-size:0.8rem;
+          {% if svc_status == 'active' %}color:#16a34a;
+          {% elif svc_status == 'inactive' %}color:#9ca3af;
+          {% else %}color:#b45309;{% endif %}">
+          {{ svc_status }}
+        </span>
+      </div>
+      <form action="/settings/restart_service" method="post" style="margin:0;"
+            onsubmit="return confirm('{{ svc }} を再起動しますか？')">
+        <input type="hidden" name="service" value="{{ svc }}">
+        <button type="submit" class="btn btn--primary" style="font-size:0.85rem; padding:0.4rem 1rem;">
+          再起動
+        </button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+</section>
 {% endblock %}
 
 {% block scripts %}
