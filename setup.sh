@@ -70,8 +70,8 @@ echo "  → ${DATA_DIR} 作成完了"
 sudo mkdir -p /var/log/agriha
 sudo chown "${AGRIHA_USER}:${AGRIHA_USER}" /var/log/agriha
 echo "  → /var/log/agriha 作成完了"
-sudo chown -R "${AGRIHA_USER}:${AGRIHA_USER}" "${SCRIPT_DIR}"
-echo "  → ${SCRIPT_DIR} 所有権を ${AGRIHA_USER} に変更"
+find "${SCRIPT_DIR}" -path "${SCRIPT_DIR}/.git" -prune -o -print0 | xargs -0 sudo chown "${AGRIHA_USER}:${AGRIHA_USER}"
+echo "  → ${SCRIPT_DIR} 所有権を ${AGRIHA_USER} に変更（.git除外）"
 # ダッシュボードから編集するファイルはagrihaユーザーに書き込み権限を付与
 for f in rules.yaml channel_map.yaml system_prompt.txt crop_irrigation.yaml forecast.yaml thresholds.yaml; do
     if [ -f "${CONFIG_DIR}/${f}" ]; then
