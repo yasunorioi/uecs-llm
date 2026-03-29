@@ -23,7 +23,7 @@
 {% endif %}
 
 {# ─── 主要センサーカード ─────────────────────────── #}
-{# センサーキーマッピング: CCM=agriha/1/ccm/sensor/*, DS18B20, Misol #}
+{# センサーキーマッピング: CCM=agriha/h01/ccm/sensor/*, DS18B20, Misol #}
 <section class="section">
   <h2 class="section__title">センサー値</h2>
   <div class="card-grid">
@@ -32,10 +32,10 @@
     <div class="card card--sensor">
       <div class="card__label">🌡 気温（室内）</div>
       <div class="card__value">
-        {% if sensors.get('agriha/1/ccm/sensor/InAirTemp') %}
-          {{ "%.1f"|format(sensors['agriha/1/ccm/sensor/InAirTemp']['value']) }} ℃
-        {% elif sensors.get('agriha/1/sensor/DS18B20') %}
-          {{ "%.1f"|format(sensors['agriha/1/sensor/DS18B20']['temperature_c']) }} ℃
+        {% if sensors.get('agriha/h01/ccm/sensor/InAirTemp') %}
+          {{ "%.1f"|format(sensors['agriha/h01/ccm/sensor/InAirTemp']['value']) }} ℃
+        {% elif sensors.get('agriha/h01/sensor/DS18B20') %}
+          {{ "%.1f"|format(sensors['agriha/h01/sensor/DS18B20']['temperature_c']) }} ℃
         {% else %}
           ---
         {% endif %}
@@ -46,8 +46,8 @@
     <div class="card card--sensor">
       <div class="card__label">💧 湿度（室内）</div>
       <div class="card__value">
-        {% if sensors.get('agriha/1/ccm/sensor/InAirHumid') %}
-          {{ "%.1f"|format(sensors['agriha/1/ccm/sensor/InAirHumid']['value']) }} %
+        {% if sensors.get('agriha/h01/ccm/sensor/InAirHumid') %}
+          {{ "%.1f"|format(sensors['agriha/h01/ccm/sensor/InAirHumid']['value']) }} %
         {% elif sensors.get('agriha/farm/weather/misol') %}
           {{ "%.1f"|format(sensors['agriha/farm/weather/misol']['humidity_pct']) }} %（外気）
         {% else %}
@@ -60,8 +60,8 @@
     <div class="card card--sensor">
       <div class="card__label">🌫 CO2濃度</div>
       <div class="card__value">
-        {% if sensors.get('agriha/1/ccm/sensor/InAirCO2') %}
-          {{ sensors['agriha/1/ccm/sensor/InAirCO2']['value']|int }} ppm
+        {% if sensors.get('agriha/h01/ccm/sensor/InAirCO2') %}
+          {{ sensors['agriha/h01/ccm/sensor/InAirCO2']['value']|int }} ppm
         {% else %}
           ---
         {% endif %}
@@ -72,8 +72,8 @@
     <div class="card card--sensor">
       <div class="card__label">☀ 日射量</div>
       <div class="card__value">
-        {% if sensors.get('agriha/1/ccm/sensor/InRadiation') %}
-          {{ sensors['agriha/1/ccm/sensor/InRadiation']['value']|int }} W/m²
+        {% if sensors.get('agriha/h01/ccm/sensor/InRadiation') %}
+          {{ sensors['agriha/h01/ccm/sensor/InRadiation']['value']|int }} W/m²
         {% elif sensors.get('agriha/farm/weather/misol') %}
           {{ sensors['agriha/farm/weather/misol'].get('uv_wm2', 0)|int }} W/m²（外気）
         {% else %}
@@ -111,8 +111,8 @@
     <div class="card card--sensor">
       <div class="card__label">💧 露点温度</div>
       <div class="card__value">
-        {% if sensors.get('agriha/1/ccm/sensor/InAirDP') %}
-          {{ "%.1f"|format(sensors['agriha/1/ccm/sensor/InAirDP']['value']) }} ℃
+        {% if sensors.get('agriha/h01/ccm/sensor/InAirDP') %}
+          {{ "%.1f"|format(sensors['agriha/h01/ccm/sensor/InAirDP']['value']) }} ℃
         {% else %}
           ---
         {% endif %}
@@ -123,8 +123,8 @@
     <div class="card card--sensor">
       <div class="card__label">📊 積算日射</div>
       <div class="card__value">
-        {% if sensors.get('agriha/1/ccm/sensor/IntgRadiation') %}
-          {{ "%.2f"|format(sensors['agriha/1/ccm/sensor/IntgRadiation']['value']) }} MJ/m²
+        {% if sensors.get('agriha/h01/ccm/sensor/IntgRadiation') %}
+          {{ "%.2f"|format(sensors['agriha/h01/ccm/sensor/IntgRadiation']['value']) }} MJ/m²
         {% else %}
           ---
         {% endif %}
@@ -135,11 +135,11 @@
 
   {# その他のセンサー #}
   {% set known_keys = [
-    'agriha/1/ccm/sensor/InAirTemp', 'agriha/1/ccm/sensor/InAirHumid',
-    'agriha/1/ccm/sensor/InAirCO2', 'agriha/1/ccm/sensor/InRadiation',
-    'agriha/1/ccm/sensor/InAirDP', 'agriha/1/ccm/sensor/IntgRadiation',
-    'agriha/1/sensor/DS18B20', 'agriha/farm/weather/misol',
-    'agriha/1/relay/state'
+    'agriha/h01/ccm/sensor/InAirTemp', 'agriha/h01/ccm/sensor/InAirHumid',
+    'agriha/h01/ccm/sensor/InAirCO2', 'agriha/h01/ccm/sensor/InRadiation',
+    'agriha/h01/ccm/sensor/InAirDP', 'agriha/h01/ccm/sensor/IntgRadiation',
+    'agriha/h01/sensor/DS18B20', 'agriha/farm/weather/misol',
+    'agriha/h01/relay/state'
   ] %}
   {% if sensors %}
     {% set other_sensors = [] %}
