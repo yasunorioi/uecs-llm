@@ -1,7 +1,7 @@
 """agriha_ui/app.py - AgriHA Web UI バックエンド (FastAPI)
 
 ダッシュボード + 設定画面 + 制御履歴
-ポート: 8502
+ポート: 8501
 設計書: docs/v2_three_layer_design.md
 """
 
@@ -766,6 +766,14 @@ async def line_callback(request: Request) -> dict[str, str]:
         text = msg.get("text", "")
         reply_token = event.get("replyToken", "")
 
+        # v5: ルールコンパイラコマンドを先にチェック
+        from agriha.chat.linebot_handler import is_rule_command, handle_rule_command
+        rule_cmd = is_rule_command(text)
+        if rule_cmd:
+            reply_text = handle_rule_command(rule_cmd)
+            send_reply(reply_token, reply_text, LINE_CHANNEL_ACCESS_TOKEN)
+            continue
+
         # forecast.yaml からLLM設定を読み込む
         forecast_text = _load_forecast_config_text()
         try:
@@ -853,7 +861,8 @@ async def get_flags(_: None = Depends(verify_auth)) -> dict[str, bool]:
 
 @app.get("/api/plan")
 async def get_plan(_: None = Depends(verify_auth)) -> dict[str, Any]:
-    """current_plan.json の内容を返す。ファイルなし時は {"plan": null} を返す。"""
+    """current_plan.json の内容を返す。ファイルなし時は {"plan": null} を返す。
+    v5: forecast_engine廃止により常にnullを返す想定。UI互換のため残置。"""
     return _get_plan_data()
 
 
