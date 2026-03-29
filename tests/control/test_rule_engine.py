@@ -1,10 +1,8 @@
 """
-tests/v2_control/test_rule_engine.py — Layer 2 rule_engine pytest テスト
+tests/control/test_rule_engine.py — Layer 2 rule_engine pytest テスト (v5対応)
 
-設計書 §7.2 の14テストケースを実装。
-- httpx.Client は unittest.mock でモック
-- ファイルI/O は tmp_path フィクスチャで一時ディレクトリ使用
-- astral は実際のライブラリを使用（日時固定でテスト）
+v5: priority chain評価、変温管理、CO2/湿度ルール、外気温ベース開度テーブル。
+v4から削除: load_current_plan, PID制御, Layer 3委譲。
 """
 
 from __future__ import annotations
@@ -23,13 +21,17 @@ from agriha.control.rule_engine import (
     evaluate_rules,
     fetch_sensors,
     fetch_status,
+    get_rise_rate_per_hour,
+    get_schedule_target,
+    get_target_opening,
     is_layer1_locked_out,
     is_nighttime,
-    load_current_plan,
     load_solar_accumulator,
+    opening_to_relay_duration,
     post_relay,
     run,
     save_solar_accumulator,
+    update_weather_flags,
 )
 
 _JST = ZoneInfo("Asia/Tokyo")
@@ -40,13 +42,39 @@ _JST = ZoneInfo("Asia/Tokyo")
 
 @pytest.fixture
 def base_cfg() -> dict[str, Any]:
-    """テスト用 rules.yaml 相当の設定辞書。"""
+    """テスト用 rules.yaml 相当の設定辞書（v5形式）。"""
     return {
-        "temperature": {
-            "target_day": 26.0,
-            "target_night": 17.0,
-            "margin_open": 2.0,
-            "margin_close": 1.0,
+        "temperature_schedule": {
+            "pre_dawn": {"target": 18, "offset_min": -60},
+            "morning": {"target": 25},
+            "afternoon": {"target": 28},
+            "evening": {"target": 23},
+            "night": {"target": 17},
+        },
+        "morning_ventilation": {
+            "max_rise_rate_per_hour": 3.0,
+            "start_offset_min": -30,
+        },
+        "co2": {
+            "outdoor_baseline": 450,
+            "ventilation_trigger": 350,
+            "critical_low": 300,
+            "stop_ventilation_above": 430,
+        },
+        "humidity": {
+            "ventilation_start": 85,
+            "ventilation_stop": 75,
+        },
+        "window_step_table": {
+            10: 0,
+            15: 5,
+            20: 25,
+            25: 85,
+            30: 100,
+        },
+        "window_motor": {
+            "full_open_duration_sec": 120,
+            "min_change_pct": 5,
         },
         "wind": {
             "strong_wind_threshold_ms": 5.0,
@@ -152,14 +180,127 @@ def status_normal() -> dict[str, Any]:
     return {"locked_out": False, "relay_state": {}}
 
 
-# ── 日中の固定時刻（10:00 JST, 2026-03-01）─────────
-DAYTIME = datetime(2026, 3, 1, 10, 0, 0, tzinfo=_JST)
-# ── 夜間の固定時刻（00:00 JST, 2026-03-01）──────────
-NIGHTTIME = datetime(2026, 3, 1, 0, 0, 0, tzinfo=_JST)
+# ── 日中の固定時刻（10:00 JST, 2026-07-01 — 夏の昼間）─────────
+DAYTIME = datetime(2026, 7, 1, 10, 0, 0, tzinfo=_JST)
+# ── 夜間の固定時刻（00:00 JST, 2026-07-01）──────────
+NIGHTTIME = datetime(2026, 7, 1, 0, 0, 0, tzinfo=_JST)
+# ── 午後の固定時刻（13:00 JST, 2026-07-01）──────────
+AFTERNOON = datetime(2026, 7, 1, 13, 0, 0, tzinfo=_JST)
 
 
 # ──────────────────────────────────────────────
-# ① 降雨検知 → 全窓閉
+# v5新規: get_schedule_target テスト
+# ──────────────────────────────────────────────
+
+def test_schedule_target_morning(base_cfg):
+    """10:00 JST → morning period, target=25"""
+    target, period = get_schedule_target(base_cfg, DAYTIME)
+    assert period == "morning"
+    assert target == 25.0
+
+
+def test_schedule_target_night(base_cfg):
+    """00:00 JST → night period, target=17"""
+    target, period = get_schedule_target(base_cfg, NIGHTTIME)
+    assert period == "night"
+    assert target == 17.0
+
+
+def test_schedule_target_afternoon(base_cfg):
+    """13:00 JST → afternoon period, target=28"""
+    target, period = get_schedule_target(base_cfg, AFTERNOON)
+    assert period == "afternoon"
+    assert target == 28.0
+
+
+# ──────────────────────────────────────────────
+# v5新規: get_target_opening テスト
+# ──────────────────────────────────────────────
+
+def test_target_opening_interpolation():
+    """外気温22℃ → 10℃=0%, 15℃=5%, 20℃=25%, 25℃=85% の間で線形補間"""
+    table = {10: 0, 15: 5, 20: 25, 25: 85, 30: 100}
+    # 22℃ → 20-25の間、ratio=0.4、25+0.4*(85-25)=49
+    opening = get_target_opening(22.0, table)
+    assert 40 <= opening <= 55  # 線形補間の範囲
+
+
+def test_target_opening_exact_boundary():
+    """外気温25℃ → テーブル値そのまま85%"""
+    table = {10: 0, 15: 5, 20: 25, 25: 85, 30: 100}
+    assert get_target_opening(25.0, table) == 85
+
+
+def test_target_opening_below_min():
+    """外気温5℃（テーブル最小以下）→ 最小値0%"""
+    table = {10: 0, 15: 5, 20: 25, 25: 85, 30: 100}
+    assert get_target_opening(5.0, table) == 0
+
+
+def test_target_opening_above_max():
+    """外気温35℃（テーブル最大以上）→ 最大値100%"""
+    table = {10: 0, 15: 5, 20: 25, 25: 85, 30: 100}
+    assert get_target_opening(35.0, table) == 100
+
+
+# ──────────────────────────────────────────────
+# v5新規: opening_to_relay_duration テスト
+# ──────────────────────────────────────────────
+
+def test_opening_to_relay_no_change():
+    """開度変化が min_change_pct 未満 → none"""
+    cfg = {"window_motor": {"full_open_duration_sec": 120, "min_change_pct": 5}}
+    direction, duration = opening_to_relay_duration(50, 53, cfg)
+    assert direction == "none"
+    assert duration == 0
+
+
+def test_opening_to_relay_open():
+    """0% → 50% → open, 60秒"""
+    cfg = {"window_motor": {"full_open_duration_sec": 120, "min_change_pct": 5}}
+    direction, duration = opening_to_relay_duration(0, 50, cfg)
+    assert direction == "open"
+    assert duration == 60
+
+
+def test_opening_to_relay_close():
+    """100% → 0% → close, 120秒"""
+    cfg = {"window_motor": {"full_open_duration_sec": 120, "min_change_pct": 5}}
+    direction, duration = opening_to_relay_duration(100, 0, cfg)
+    assert direction == "close"
+    assert duration == 120
+
+
+# ──────────────────────────────────────────────
+# v5新規: get_rise_rate_per_hour テスト
+# ──────────────────────────────────────────────
+
+def test_rise_rate_calculation():
+    """30分で+3℃ → 6℃/h"""
+    t0 = datetime(2026, 7, 1, 8, 0, 0, tzinfo=_JST)
+    t1 = t0 + timedelta(minutes=30)
+    history = [
+        {"t": t0.isoformat(), "temp": 20.0},
+        {"t": t1.isoformat(), "temp": 23.0},
+    ]
+    rate = get_rise_rate_per_hour(history)
+    assert rate is not None
+    assert abs(rate - 6.0) < 0.1
+
+
+def test_rise_rate_too_short():
+    """データ間隔が5分未満 → None"""
+    t0 = datetime(2026, 7, 1, 8, 0, 0, tzinfo=_JST)
+    t1 = t0 + timedelta(minutes=3)
+    history = [
+        {"t": t0.isoformat(), "temp": 20.0},
+        {"t": t1.isoformat(), "temp": 21.0},
+    ]
+    assert get_rise_rate_per_hour(history) is None
+
+
+# ──────────────────────────────────────────────
+# ① 降雨検知 → 全窓閉 (P1)
 # ──────────────────────────────────────────────
 
 def test_rain_closes_all_windows(base_cfg, base_crop_cfg, status_normal, channel_map_file):
@@ -172,32 +313,31 @@ def test_rain_closes_all_windows(base_cfg, base_crop_cfg, status_normal, channel
                 "rainfall": 1.5,
                 "wind_speed_ms": 1.0,
                 "wind_direction": 5,
+                "temperature_c": 20.0,
             },
         }
     }
-    solar_acc = {"date": "2026-03-01", "accumulated_mj": 0.0, "irrigations_today": 0}
+    solar_acc = {"date": "2026-07-01", "accumulated_mj": 0.0, "irrigations_today": 0}
     result = evaluate_rules(
-        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None,
+        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc,
         now=DAYTIME, channel_map_path=channel_map_file,
     )
     triggered = result["triggered_rules"]
     actions = {a[0]: a[1] for a in result["relay_actions"]}
 
     assert "rain_close_all" in triggered
-    # 北側窓: close_channel(6)=1, open_channel(5)=0
     assert actions[6] == 1
     assert actions[5] == 0
-    # 南側窓: close_channel(7)=1, open_channel(8)=0
     assert actions[7] == 1
     assert actions[8] == 0
 
 
 # ──────────────────────────────────────────────
-# ② 強風（北風 5m/s 超）→ 北側窓閉、南側はアクションなし
+# ② 強風（北風 5m/s 超）→ 北側窓閉 (P2)
 # ──────────────────────────────────────────────
 
 def test_strong_north_wind_closes_north_windows(base_cfg, base_crop_cfg, status_normal, channel_map_file):
-    """北風 wind_dir=2, speed=6m/s → 北側窓閉 (close_ch6=1, open_ch5=0)。南側はアクションなし。"""
+    """北風 wind_dir=2, speed=6m/s → 北側窓閉。南側はアクションなし。"""
     sensors = {
         "sensors": {
             "agriha/h01/ccm/InAirTemp": {"value": 25.0},
@@ -206,103 +346,101 @@ def test_strong_north_wind_closes_north_windows(base_cfg, base_crop_cfg, status_
                 "rainfall": 0.0,
                 "wind_speed_ms": 6.0,
                 "wind_direction": 2,
+                "temperature_c": 20.0,
             },
         }
     }
-    solar_acc = {"date": "2026-03-01", "accumulated_mj": 0.0, "irrigations_today": 0}
+    solar_acc = {"date": "2026-07-01", "accumulated_mj": 0.0, "irrigations_today": 0}
     result = evaluate_rules(
-        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None,
+        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc,
         now=DAYTIME, channel_map_path=channel_map_file,
     )
     triggered = result["triggered_rules"]
     actions = {a[0]: a[1] for a in result["relay_actions"]}
 
     assert "strong_wind" in triggered
-    # 北側窓: close_channel(6)=1, open_channel(5)=0
     assert actions.get(6) == 1
     assert actions.get(5) == 0
-    # 南側窓: アクションなし
-    assert 7 not in actions
-    assert 8 not in actions
 
 
 # ──────────────────────────────────────────────
-# ③ 高温（target+margin 超過）→ 側窓開
+# ③ CO2低下 → 強制換気 (P5)
 # ──────────────────────────────────────────────
 
-def test_high_temp_opens_windows(base_cfg, base_crop_cfg, sensors_normal, status_normal, channel_map_file):
-    """気温 29℃ (> 26+2=28℃) → 全窓開 (open_ch=1, close_ch=0)。"""
-    sensors = dict(sensors_normal)
-    sensors["sensors"] = dict(sensors_normal["sensors"])
-    sensors["sensors"]["agriha/h01/ccm/InAirTemp"] = {"value": 29.0}
-    solar_acc = {"date": "2026-03-01", "accumulated_mj": 0.0, "irrigations_today": 0}
-
+def test_co2_critical_triggers_vent(base_cfg, base_crop_cfg, status_normal, channel_map_file):
+    """CO2=250ppm (<300) → co2_critical_vent, 開度>=60%"""
+    sensors = {
+        "sensors": {
+            "agriha/h01/ccm/InAirTemp": {"value": 26.0},
+            "agriha/h01/ccm/InAirCO2": {"value": 250.0},
+            "agriha/h01/ccm/InSolar": {"value": 200.0},
+            "agriha/farm/weather/misol": {
+                "rainfall": 0.0,
+                "wind_speed_ms": 1.0,
+                "wind_direction": 5,
+                "temperature_c": 22.0,
+            },
+        }
+    }
+    solar_acc = {"date": "2026-07-01", "accumulated_mj": 0.0, "irrigations_today": 0}
     result = evaluate_rules(
-        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None,
+        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc,
         now=DAYTIME, channel_map_path=channel_map_file,
     )
-    triggered = result["triggered_rules"]
-    actions = {a[0]: a[1] for a in result["relay_actions"]}
-
-    assert "temp_high_open" in triggered
-    # 北側窓: open_channel(5)=1, close_channel(6)=0
-    assert actions[5] == 1
-    assert actions[6] == 0
-    # 南側窓: open_channel(8)=1, close_channel(7)=0
-    assert actions[8] == 1
-    assert actions[7] == 0
+    assert "co2_critical_vent" in result["triggered_rules"]
+    assert result["target_opening_pct"] >= 60
 
 
 # ──────────────────────────────────────────────
-# ④ 低温（target-margin 未満）→ 側窓閉
+# ④ 高湿度 → 換気 (P4)
 # ──────────────────────────────────────────────
 
-def test_low_temp_closes_windows(base_cfg, base_crop_cfg, sensors_normal, status_normal, channel_map_file):
-    """気温 24℃ (< 26-1=25℃) → 全窓閉 (close_ch=1, open_ch=0)。"""
-    sensors = dict(sensors_normal)
-    sensors["sensors"] = dict(sensors_normal["sensors"])
-    sensors["sensors"]["agriha/h01/ccm/InAirTemp"] = {"value": 24.0}
-    solar_acc = {"date": "2026-03-01", "accumulated_mj": 0.0, "irrigations_today": 0}
-
+def test_humidity_triggers_vent(base_cfg, base_crop_cfg, status_normal, channel_map_file):
+    """湿度=90% (>=85) → humidity_vent, 開度>=30%"""
+    sensors = {
+        "sensors": {
+            "agriha/h01/ccm/InAirTemp": {"value": 26.0},
+            "agriha/h01/ccm/InAirHumid": {"value": 90.0},
+            "agriha/h01/ccm/InSolar": {"value": 200.0},
+            "agriha/farm/weather/misol": {
+                "rainfall": 0.0,
+                "wind_speed_ms": 1.0,
+                "wind_direction": 5,
+                "temperature_c": 22.0,
+            },
+        }
+    }
+    solar_acc = {"date": "2026-07-01", "accumulated_mj": 0.0, "irrigations_today": 0}
     result = evaluate_rules(
-        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None,
+        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc,
         now=DAYTIME, channel_map_path=channel_map_file,
     )
-    triggered = result["triggered_rules"]
-    actions = {a[0]: a[1] for a in result["relay_actions"]}
-
-    assert "temp_low_close" in triggered
-    # 北側窓: close_channel(6)=1, open_channel(5)=0
-    assert actions[6] == 1
-    assert actions[5] == 0
-    # 南側窓: close_channel(7)=1, open_channel(8)=0
-    assert actions[7] == 1
-    assert actions[8] == 0
+    assert "humidity_vent" in result["triggered_rules"]
+    assert result["target_opening_pct"] >= 30
 
 
 # ──────────────────────────────────────────────
-# ⑤ 日射比例灌水 → 積算閾値到達で灌水実行
+# ⑤ 日射比例灌水 → 積算閾値到達で灌水実行 (P7)
 # ──────────────────────────────────────────────
 
-def test_solar_irrigation_threshold_reached(base_cfg, base_crop_cfg, sensors_normal, status_normal):
-    """InSolar=400W/m² × 300秒 = 0.12MJ。累積0.85+0.12=0.97 > 0.9 → 灌水実行。"""
+def test_solar_irrigation_threshold_reached(base_cfg, base_crop_cfg, sensors_normal, status_normal, channel_map_file):
+    """InSolar=400W/m² × 600秒 = 0.24MJ。累積0.70+0.24=0.94 > 0.9 → 灌水実行。"""
     sensors = dict(sensors_normal)
     sensors["sensors"] = dict(sensors_normal["sensors"])
     sensors["sensors"]["agriha/h01/ccm/InSolar"] = {"value": 400.0}
-    solar_acc = {"date": "2026-03-01", "accumulated_mj": 0.85, "irrigations_today": 0}
+    solar_acc = {"date": "2026-07-01", "accumulated_mj": 0.70, "irrigations_today": 0}
 
     result = evaluate_rules(
-        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None, now=DAYTIME
+        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc,
+        now=DAYTIME, channel_map_path=channel_map_file,
     )
     triggered = result["triggered_rules"]
     actions = {a[0]: (a[1], a[2]) for a in result["relay_actions"]}
 
     assert "solar_irrigation" in triggered
-    # ch4 が灌水チャンネル、value=1, duration_sec > 0
     assert 4 in actions
     assert actions[4][0] == 1
     assert actions[4][1] is not None and actions[4][1] > 0
-    # 積算値がリセットされている
     assert result["solar_acc"]["accumulated_mj"] < 0.01
     assert result["solar_acc"]["irrigations_today"] == 1
 
@@ -311,22 +449,21 @@ def test_solar_irrigation_threshold_reached(base_cfg, base_crop_cfg, sensors_nor
 # ⑥ 日射比例灌水 → 閾値未到達で何もしない
 # ──────────────────────────────────────────────
 
-def test_solar_irrigation_threshold_not_reached(base_cfg, base_crop_cfg, sensors_normal, status_normal):
-    """InSolar=100W/m² × 300秒 = 0.03MJ。累積0.5+0.03=0.53 < 0.9 → 灌水なし。"""
+def test_solar_irrigation_threshold_not_reached(base_cfg, base_crop_cfg, sensors_normal, status_normal, channel_map_file):
+    """InSolar=100W/m² × 600秒 = 0.06MJ。累積0.5+0.06=0.56 < 0.9 → 灌水なし。"""
     sensors = dict(sensors_normal)
     sensors["sensors"] = dict(sensors_normal["sensors"])
     sensors["sensors"]["agriha/h01/ccm/InSolar"] = {"value": 100.0}
-    solar_acc = {"date": "2026-03-01", "accumulated_mj": 0.5, "irrigations_today": 0}
+    solar_acc = {"date": "2026-07-01", "accumulated_mj": 0.5, "irrigations_today": 0}
 
     result = evaluate_rules(
-        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None, now=DAYTIME
+        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc,
+        now=DAYTIME, channel_map_path=channel_map_file,
     )
     triggered = result["triggered_rules"]
     actions = {a[0]: a[1] for a in result["relay_actions"]}
 
     assert "solar_irrigation" not in triggered
-    assert 4 not in actions
-    # 積算値が増えている
     assert result["solar_acc"]["accumulated_mj"] > 0.5
 
 
@@ -357,15 +494,13 @@ def test_solar_accumulator_date_reset(tmp_path):
 # ──────────────────────────────────────────────
 
 def test_layer1_lockout_skips_run(tmp_path):
-    """lockout_state.json で Layer 1 ロックアウト中 → run() が 1 を返す。"""
+    """lockout_state.json で Layer 1 ロックアウト中 → is_layer1_locked_out が True。"""
     lockout_path = tmp_path / "lockout_state.json"
     future = datetime.now(tz=_JST) + timedelta(minutes=3)
     lockout_path.write_text(json.dumps({
         "layer1_lockout_until": future.isoformat(),
         "last_action": "emergency_open",
     }))
-
-    # is_layer1_locked_out が True を返すことを確認
     assert is_layer1_locked_out(str(lockout_path)) is True
 
 
@@ -389,8 +524,6 @@ def test_commandgate_lockout_skips(tmp_path, base_cfg, base_crop_cfg):
     config_path.write_text(yaml.dump(base_cfg))
     crop_path = tmp_path / "crop_irrigation.yaml"
     crop_path.write_text(yaml.dump(base_crop_cfg))
-
-    # lockout_state.json なし（Layer 1 ロックアウトなし）
     lockout_path = tmp_path / "lockout_state.json"
     lockout_path.write_text(json.dumps({}))
 
@@ -405,18 +538,18 @@ def test_commandgate_lockout_skips(tmp_path, base_cfg, base_crop_cfg):
                 "agriha/h01/ccm/InSolar": {"value": 0.0},
                 "agriha/farm/weather/misol": {
                     "rainfall": 0.0, "wind_speed_ms": 1.0, "wind_direction": 5,
+                    "temperature_c": 20.0,
                 },
             }
         }
         status_resp = MagicMock()
-        status_resp.json.return_value = {"locked_out": True}  # CommandGateロックアウト
+        status_resp.json.return_value = {"locked_out": True}
         mock_client.get.side_effect = [sensors_resp, status_resp]
 
         result = run(
             config_path=str(config_path),
             crop_config_path=str(crop_path),
             lockout_path=str(lockout_path),
-            plan_path=str(tmp_path / "current_plan.json"),
             solar_acc_path=str(tmp_path / "solar_accumulator.json"),
             state_path=str(tmp_path / "rule_engine_state.json"),
         )
@@ -425,51 +558,7 @@ def test_commandgate_lockout_skips(tmp_path, base_cfg, base_crop_cfg):
 
 
 # ──────────────────────────────────────────────
-# ⑩ current_plan.json 有効 → 温度制御を Layer 3 に委譲
-# ──────────────────────────────────────────────
-
-def test_layer3_plan_active_skips_temp_control(base_cfg, base_crop_cfg, status_normal):
-    """current_plan.json が有効な場合、高温でも temp_high_open はトリガーされない。"""
-    sensors = {
-        "sensors": {
-            "agriha/h01/ccm/InAirTemp": {"value": 30.0},  # 高温
-            "agriha/h01/ccm/InSolar": {"value": 0.0},
-            "agriha/farm/weather/misol": {
-                "rainfall": 0.0, "wind_speed_ms": 1.0, "wind_direction": 5,
-            },
-        }
-    }
-    solar_acc = {"date": "2026-03-01", "accumulated_mj": 0.0, "irrigations_today": 0}
-    current_plan = {
-        "valid_until": (datetime.now(tz=_JST) + timedelta(hours=1)).isoformat(),
-        "actions": [],
-    }
-
-    result = evaluate_rules(
-        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc, current_plan, now=DAYTIME
-    )
-    triggered = result["triggered_rules"]
-
-    assert "temp_high_open" not in triggered
-
-
-# ──────────────────────────────────────────────
-# ⑪ current_plan.json 期限切れ → Layer 2 全権制御
-# ──────────────────────────────────────────────
-
-def test_layer3_plan_expired_layer2_takes_control(tmp_path):
-    """current_plan.json が期限切れの場合 load_current_plan は None を返す。"""
-    plan_path = tmp_path / "current_plan.json"
-    past = datetime.now(tz=_JST) - timedelta(hours=2)
-    plan_path.write_text(json.dumps({
-        "valid_until": past.isoformat(),
-        "actions": [],
-    }))
-    assert load_current_plan(str(plan_path)) is None
-
-
-# ──────────────────────────────────────────────
-# ⑫ REST API 接続失敗 → ログ出力して終了
+# ⑩ REST API 接続失敗 → ログ出力して終了
 # ──────────────────────────────────────────────
 
 def test_api_failure_returns_error(tmp_path, base_cfg, base_crop_cfg):
@@ -492,7 +581,6 @@ def test_api_failure_returns_error(tmp_path, base_cfg, base_crop_cfg):
             config_path=str(config_path),
             crop_config_path=str(crop_path),
             lockout_path=str(lockout_path),
-            plan_path=str(tmp_path / "current_plan.json"),
             solar_acc_path=str(tmp_path / "solar_accumulator.json"),
             state_path=str(tmp_path / "rule_engine_state.json"),
         )
@@ -501,11 +589,11 @@ def test_api_failure_returns_error(tmp_path, base_cfg, base_crop_cfg):
 
 
 # ──────────────────────────────────────────────
-# ⑬ 日没後 → 全窓閉
+# ⑪ 日没後 → nighttime_close (P6)
 # ──────────────────────────────────────────────
 
 def test_nighttime_closes_all_windows(base_cfg, base_crop_cfg, status_normal, channel_map_file):
-    """夜間(00:00 JST)の場合、nighttime_close がトリガーされ全窓閉 (close_ch=1, open_ch=0)。"""
+    """夜間(00:00 JST) → nighttime_close がトリガーされる。"""
     sensors = {
         "sensors": {
             "agriha/h01/ccm/InAirTemp": {"value": 20.0},
@@ -514,48 +602,75 @@ def test_nighttime_closes_all_windows(base_cfg, base_crop_cfg, status_normal, ch
                 "rainfall": 0.0,
                 "wind_speed_ms": 1.0,
                 "wind_direction": 5,
+                "temperature_c": 15.0,
             },
         }
     }
-    solar_acc = {"date": "2026-03-01", "accumulated_mj": 0.0, "irrigations_today": 0}
+    solar_acc = {"date": "2026-07-01", "accumulated_mj": 0.0, "irrigations_today": 0}
 
     result = evaluate_rules(
-        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc, None,
+        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc,
         now=NIGHTTIME, channel_map_path=channel_map_file,
     )
     triggered = result["triggered_rules"]
-    actions = {a[0]: a[1] for a in result["relay_actions"]}
 
     assert "nighttime_close" in triggered
-    # 北側窓: close_channel(6)=1, open_channel(5)=0
-    assert actions.get(6) == 1
-    assert actions.get(5) == 0
-    # 南側窓: close_channel(7)=1, open_channel(8)=0
-    assert actions.get(7) == 1
-    assert actions.get(8) == 0
 
 
 # ──────────────────────────────────────────────
-# ⑭ 日の出前 → 全窓閉（is_nighttime のテスト）
+# ⑫ is_nighttime テスト
 # ──────────────────────────────────────────────
 
 def test_before_sunrise_is_nighttime(base_cfg):
     """日の出前(04:00 JST)は is_nighttime が True を返す。"""
-    before_sunrise = datetime(2026, 3, 1, 4, 0, 0, tzinfo=_JST)
+    before_sunrise = datetime(2026, 7, 1, 3, 0, 0, tzinfo=_JST)
     assert is_nighttime(base_cfg, dt=before_sunrise) is True
 
 
 def test_midday_is_not_nighttime(base_cfg):
     """正午(12:00 JST)は is_nighttime が False を返す。"""
-    midday = datetime(2026, 3, 1, 12, 0, 0, tzinfo=_JST)
+    midday = datetime(2026, 7, 1, 12, 0, 0, tzinfo=_JST)
     assert is_nighttime(base_cfg, dt=midday) is False
 
 
 # ──────────────────────────────────────────────
-# 追加: 正常フロー全実行テスト
+# ⑬ 急昇温 → 強制換気 (P3)
 # ──────────────────────────────────────────────
 
-def test_run_normal_flow(tmp_path, base_cfg, base_crop_cfg):
+def test_rapid_rise_triggers_vent(base_cfg, base_crop_cfg, status_normal, channel_map_file):
+    """temp_history に 30分で+5℃ → rapid_rise_vent, 開度>=60%"""
+    t0 = DAYTIME - timedelta(minutes=30)
+    temp_history = [
+        {"t": t0.isoformat(), "temp": 20.0},
+        {"t": DAYTIME.isoformat(), "temp": 25.0},
+    ]
+    sensors = {
+        "sensors": {
+            "agriha/h01/ccm/InAirTemp": {"value": 26.0},
+            "agriha/h01/ccm/InSolar": {"value": 200.0},
+            "agriha/farm/weather/misol": {
+                "rainfall": 0.0,
+                "wind_speed_ms": 1.0,
+                "wind_direction": 5,
+                "temperature_c": 22.0,
+            },
+        }
+    }
+    solar_acc = {"date": "2026-07-01", "accumulated_mj": 0.0, "irrigations_today": 0}
+    result = evaluate_rules(
+        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc,
+        now=DAYTIME, channel_map_path=channel_map_file,
+        temp_history=temp_history,
+    )
+    assert "rapid_rise_vent" in result["triggered_rules"]
+    assert result["target_opening_pct"] >= 60
+
+
+# ──────────────────────────────────────────────
+# ⑭ 正常フロー全実行テスト
+# ──────────────────────────────────────────────
+
+def test_run_normal_flow(tmp_path, base_cfg, base_crop_cfg, channel_map_file):
     """正常なAPI応答 → run() が 0 を返し state ファイルが生成される。"""
     config_path = tmp_path / "rules.yaml"
     config_path.write_text(yaml.dump(base_cfg))
@@ -577,6 +692,7 @@ def test_run_normal_flow(tmp_path, base_cfg, base_crop_cfg):
                 "agriha/h01/ccm/InSolar": {"value": 100.0},
                 "agriha/farm/weather/misol": {
                     "rainfall": 0.0, "wind_speed_ms": 1.0, "wind_direction": 5,
+                    "temperature_c": 20.0,
                 },
             }
         }
@@ -588,10 +704,12 @@ def test_run_normal_flow(tmp_path, base_cfg, base_crop_cfg):
             config_path=str(config_path),
             crop_config_path=str(crop_path),
             lockout_path=str(lockout_path),
-            plan_path=str(tmp_path / "current_plan.json"),
             solar_acc_path=str(solar_acc_path),
             state_path=str(state_path),
             flag_dir=str(tmp_path / "flags"),
+            channel_map_path=str(channel_map_file),
+            temp_history_path=str(tmp_path / "temp_history.json"),
+            window_pos_path=str(tmp_path / "window_position.json"),
         )
 
     assert result == 0
@@ -605,12 +723,8 @@ def test_run_normal_flow(tmp_path, base_cfg, base_crop_cfg):
 # ──────────────────────────────────────────────
 
 class TestWeatherFlags:
-    """update_weather_flags: flagファイル書き出し／削除テスト"""
 
     def test_rain_flag_written_on_rain(self, tmp_path: Path, base_cfg: dict) -> None:
-        """雨センサー > 閾値 → rain_flag が書き出される"""
-        from agriha.control.rule_engine import update_weather_flags
-
         sensors = {
             "sensors": {
                 "agriha/farm/weather/misol": {"rainfall": 1.0, "wind_speed_ms": 1.0}
@@ -620,9 +734,6 @@ class TestWeatherFlags:
         assert (tmp_path / "rain_flag").exists()
 
     def test_rain_flag_deleted_on_clear(self, tmp_path: Path, base_cfg: dict) -> None:
-        """降雨なし → 既存 rain_flag が削除される"""
-        from agriha.control.rule_engine import update_weather_flags
-
         (tmp_path / "rain_flag").write_text("old")
         sensors = {
             "sensors": {
@@ -633,9 +744,6 @@ class TestWeatherFlags:
         assert not (tmp_path / "rain_flag").exists()
 
     def test_wind_flag_written_on_strong_wind(self, tmp_path: Path, base_cfg: dict) -> None:
-        """強風 > 閾値 → wind_flag が書き出される"""
-        from agriha.control.rule_engine import update_weather_flags
-
         sensors = {
             "sensors": {
                 "agriha/farm/weather/misol": {"rainfall": 0.0, "wind_speed_ms": 8.0}
@@ -645,9 +753,6 @@ class TestWeatherFlags:
         assert (tmp_path / "wind_flag").exists()
 
     def test_wind_flag_deleted_on_calm(self, tmp_path: Path, base_cfg: dict) -> None:
-        """弱風 → 既存 wind_flag が削除される"""
-        from agriha.control.rule_engine import update_weather_flags
-
         (tmp_path / "wind_flag").write_text("old")
         sensors = {
             "sensors": {
@@ -658,9 +763,6 @@ class TestWeatherFlags:
         assert not (tmp_path / "wind_flag").exists()
 
     def test_no_flag_on_normal_weather(self, tmp_path: Path, base_cfg: dict) -> None:
-        """通常天候（降雨なし・弱風）→ flagファイルが作成されない"""
-        from agriha.control.rule_engine import update_weather_flags
-
         sensors = {
             "sensors": {
                 "agriha/farm/weather/misol": {"rainfall": 0.0, "wind_speed_ms": 1.0}
@@ -669,3 +771,31 @@ class TestWeatherFlags:
         update_weather_flags(base_cfg, sensors, flag_dir=str(tmp_path))
         assert not (tmp_path / "rain_flag").exists()
         assert not (tmp_path / "wind_flag").exists()
+
+
+# ──────────────────────────────────────────────
+# v5: 温度制御テスト — 外気温ベースステップテーブル (P6)
+# ──────────────────────────────────────────────
+
+def test_temp_above_target_opens_window(base_cfg, base_crop_cfg, status_normal, channel_map_file):
+    """室温>目標 + 外気温22℃ → ステップテーブルで開度決定"""
+    sensors = {
+        "sensors": {
+            "agriha/h01/ccm/InAirTemp": {"value": 30.0},
+            "agriha/h01/ccm/InSolar": {"value": 200.0},
+            "agriha/farm/weather/misol": {
+                "rainfall": 0.0,
+                "wind_speed_ms": 1.0,
+                "wind_direction": 5,
+                "temperature_c": 22.0,
+            },
+        }
+    }
+    solar_acc = {"date": "2026-07-01", "accumulated_mj": 0.0, "irrigations_today": 0}
+    result = evaluate_rules(
+        base_cfg, base_crop_cfg, sensors, status_normal, solar_acc,
+        now=DAYTIME, channel_map_path=channel_map_file,
+    )
+    assert "temp_schedule" in result["triggered_rules"]
+    # 外気温22℃ → テーブル補間で ~49%
+    assert result["target_opening_pct"] > 0

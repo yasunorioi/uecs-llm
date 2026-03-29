@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """Layer 3: LLM 1時間予報エンジン — Claude Haiku + unipi-daemon REST API.
 
+⚠ v5で廃止 — rule_compiler.py に移行。
+  このファイルはNullClawFallbackClient等の共有コンポーネントがapp.pyで
+  参照されているため残存している。cronでの定期実行は停止済み。
+  新規開発は rule_compiler.py で行うこと。
+  設計書: docs/layer3_compiler_design.md
+
+--- 以下 v4 旧docstring ---
 cron (0 * * * *) から起動され、1時間分のアクション計画を生成して終了する。
 **リレー操作は一切行わない。** 計画の実行は plan_executor.py が担当。
 

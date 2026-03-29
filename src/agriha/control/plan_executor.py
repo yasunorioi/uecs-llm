@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """plan_executor.py — Layer 3 補助: アクション計画実行
 
+⚠ v5で廃止 — Layer 2 (rule_engine.py) が直接制御するため不要。
+  cronでの定期実行は停止済み。
+  設計書: docs/layer3_compiler_design.md §2.2
+
+--- 以下 v4 旧docstring ---
 cron (* * * * *) から起動。current_plan.json の予定時刻到来アクションを
 REST API 経由で実行し、実行済みマークを書き込む。
 

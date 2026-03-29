@@ -1,0 +1,43 @@
+{
+  "meta": {
+    "run_at": "2026-03-07T02:13:50.153990",
+    "model": "qwen3:4b",
+    "base_url": "http://localhost:11434/v1/",
+    "system_prompt": "/home/yasu/uecs-llm/config/system_prompt.txt",
+    "scenario_count": 1
+  },
+  "summary": {
+    "total_score": 10,
+    "max_score": 10,
+    "pass_count": 1,
+    "fail_count": 0,
+    "pct": 100.0
+  },
+  "results": [
+    {
+      "scenario_id": "S02d",
+      "score": 10,
+      "max_score": 10,
+      "grade": "PASS",
+      "matched_criterion": "温度段階ルールに従い換気開始（ch5-ch8いずれかをON）",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [
+        {
+          "channel": 5,
+          "value": 1,
+          "duration_sec": 60
+        },
+        {
+          "channel": 6,
+          "value": 1,
+          "duration_sec": 60
+        }
+      ],
+      "elapsed_sec": 62.33,
+      "error": null
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "id": "S02b",
+  "name": "気温急上昇先読み開放（ヒント付き）",
+  "category": "殿指定",
+  "rule_ref": "ルール2",
+  "description": "S02と同一条件だが、rule_engineの閾値到達予測ヒントが付加されている。小型LLMがヒントを受けて先読み開放を判断できるかを検証する。",
+  "datetime": "2025-05-20T09:30:00+09:00",
+  "sun": {
+    "sunrise": "04:21",
+    "sunset": "18:48",
+    "is_daytime": true,
+    "minutes_since_sunrise": 309
+  },
+  "sensors": {
+    "inside_temp_c": 24.0,
+    "inside_humidity_pct": 65.0,
+    "co2_ppm": 900,
+    "outside_temp_c": 18.0,
+    "outside_humidity_pct": 60.0,
+    "wind_speed_ms": 2.0,
+    "wind_direction": "南",
+    "rain": false,
+    "relay_states": {
+      "ch1": 0, "ch2": 1, "ch3": 0, "ch4": 0,
+      "ch5": 0, "ch6": 0, "ch7": 0, "ch8": 0
+    }
+  },
+  "weather_forecast_1h": {
+    "temp_c": 23.0,
+    "rain_probability_pct": 0,
+    "wind_speed_ms": 2.5,
+    "wind_direction": "南",
+    "_note": "外気温+5℃上昇 → ハウス内は+8〜10℃程度上昇する見込み"
+  },
+  "threshold_hint": {
+    "temperature_trend": "+4.8℃/h",
+    "threshold_eta": "27℃到達まで約35分",
+    "recommendation": "先読み開放を検討"
+  },
+  "grading": {
+    "rationale": "閾値到達予測ヒント（27℃到達まで約35分）を受けて、先読みで換気を開始するのが正解。",
+    "criteria": [
+      {
+        "points": 10,
+        "description": "予報+ヒントを根拠に換気開始（ch5-ch8いずれかをON）",
+        "condition": {"any_on": [5, 6, 7, 8]}
+      },
+      {
+        "points": 0,
+        "description": "現在温度は問題ないとして何もしなかった",
+        "condition": {}
+      }
+    ],
+    "forbidden_conditions": []
+  }
+}

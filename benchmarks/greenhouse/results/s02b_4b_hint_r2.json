@@ -1,0 +1,32 @@
+{
+  "meta": {
+    "run_at": "2026-03-07T01:58:23.622090",
+    "model": "qwen3:4b",
+    "base_url": "http://localhost:11434/v1/",
+    "system_prompt": "/home/yasu/uecs-llm/config/system_prompt.txt",
+    "scenario_count": 1
+  },
+  "summary": {
+    "total_score": 0,
+    "max_score": 10,
+    "pass_count": 0,
+    "fail_count": 1,
+    "pct": 0.0
+  },
+  "results": [
+    {
+      "scenario_id": "S02b",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 56.12,
+      "error": null
+    }
+  ]
+}

@@ -4,7 +4,7 @@
 - 署名検証 (HMAC-SHA256)
 - 全テキスト→LLM tool calling→Reply
 - ツール: get_sensors, get_status, set_relay
-- forecast_engine.py と同じ OpenAI SDK互換クライアントパターン
+- v5: ルールコンパイラ連携コマンド（「ルール更新」「ルール適用」）
 """
 
 from __future__ import annotations
@@ -297,3 +297,93 @@ def send_push(user_id: str, message: str, access_token: str) -> bool:
     except Exception as exc:
         logger.error("send_push failed: %s", exc)
         return False
+
+
+# ── v5: ルールコンパイラ連携コマンド ──────────────────────────────────────
+
+# LINE Botで受け付けるルール操作キーワード
+RULE_COMPILE_KEYWORDS = ("ルール更新", "ルール生成", "ルールコンパイル")
+RULE_APPLY_KEYWORDS = ("ルール適用", "ルール反映")
+RULE_STATUS_KEYWORDS = ("ルール確認", "ルール状態")
+
+
+def is_rule_command(text: str) -> str | None:
+    """テキストがルール操作コマンドか判定。該当すればコマンド種別を返す。"""
+    text = text.strip()
+    for kw in RULE_COMPILE_KEYWORDS:
+        if kw in text:
+            return "compile"
+    for kw in RULE_APPLY_KEYWORDS:
+        if kw in text:
+            return "apply"
+    for kw in RULE_STATUS_KEYWORDS:
+        if kw in text:
+            return "status"
+    return None
+
+
+def handle_rule_command(command: str) -> str:
+    """ルール操作コマンドを実行し、応答テキストを返す。
+
+    compile/apply は subprocess で rule_compiler.py を呼び出す。
+    status は現行 rules.yaml の validate 結果を返す。
+    """
+    import os
+    import subprocess
+
+    repo_dir = os.environ.get("REPO_DIR", "/opt/agriha")
+    venv_python = os.path.join(repo_dir, ".venv", "bin", "python3")
+    if not os.path.exists(venv_python):
+        venv_python = "python3"
+
+    if command == "compile":
+        try:
+            result = subprocess.run(
+                [venv_python, "-m", "agriha.control.rule_compiler", "compile"],
+                capture_output=True, text=True, timeout=180,
+                cwd=repo_dir,
+                env={**os.environ, "PYTHONPATH": os.path.join(repo_dir, "src")},
+            )
+            if result.returncode == 0:
+                return "✓ ルール候補を生成しました。「ルール適用」で反映できます。"
+            else:
+                error_msg = (result.stderr or result.stdout or "不明なエラー")[-500:]
+                return f"⚠ ルール生成に失敗しました:\n{error_msg}"
+        except subprocess.TimeoutExpired:
+            return "⚠ ルール生成がタイムアウトしました（3分）"
+        except Exception as exc:
+            return f"⚠ ルール生成エラー: {exc}"
+
+    elif command == "apply":
+        try:
+            # --no-backup は使わない（安全のためバックアップ必須）
+            # 対話的確認はスキップ（LINE Botなので）
+            result = subprocess.run(
+                [venv_python, "-m", "agriha.control.rule_compiler", "apply"],
+                capture_output=True, text=True, timeout=30,
+                cwd=repo_dir,
+                input="y\n",  # 矛盾警告があっても適用
+                env={**os.environ, "PYTHONPATH": os.path.join(repo_dir, "src")},
+            )
+            if result.returncode == 0:
+                return "✓ ルールを適用しました。次のcron実行（10分以内）から有効です。"
+            else:
+                error_msg = (result.stderr or result.stdout or "不明なエラー")[-500:]
+                return f"⚠ ルール適用に失敗しました:\n{error_msg}"
+        except Exception as exc:
+            return f"⚠ ルール適用エラー: {exc}"
+
+    elif command == "status":
+        try:
+            result = subprocess.run(
+                [venv_python, "-m", "agriha.control.rule_compiler", "validate"],
+                capture_output=True, text=True, timeout=10,
+                cwd=repo_dir,
+                env={**os.environ, "PYTHONPATH": os.path.join(repo_dir, "src")},
+            )
+            output = (result.stdout or result.stderr or "不明")[:1000]
+            return f"📋 ルール状態:\n{output}"
+        except Exception as exc:
+            return f"⚠ ルール確認エラー: {exc}"
+
+    return "⚠ 不明なルールコマンドです"

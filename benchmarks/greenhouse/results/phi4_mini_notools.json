@@ -1,0 +1,127 @@
+{
+  "meta": {
+    "run_at": "2026-03-07T01:12:07.700930",
+    "model": "phi4-mini",
+    "base_url": "http://localhost:11434/v1/",
+    "system_prompt": "/home/yasu/uecs-llm/config/system_prompt.txt",
+    "scenario_count": 7
+  },
+  "summary": {
+    "total_score": 10,
+    "max_score": 70,
+    "pass_count": 1,
+    "fail_count": 6,
+    "pct": 14.3
+  },
+  "results": [
+    {
+      "scenario_id": "S01",
+      "score": 10,
+      "max_score": 10,
+      "grade": "PASS",
+      "matched_criterion": "南窓(ch5/ch6)を開放した",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [
+        {
+          "channel": 2,
+          "value": 1,
+          "duration_sec": 300
+        },
+        {
+          "channel": 5,
+          "value": 1,
+          "duration_sec": 60
+        }
+      ],
+      "elapsed_sec": 16.91,
+      "error": null
+    },
+    {
+      "scenario_id": "S02",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 2.49,
+      "error": null
+    },
+    {
+      "scenario_id": "S03",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 3.05,
+      "error": null
+    },
+    {
+      "scenario_id": "S04",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 3.35,
+      "error": null
+    },
+    {
+      "scenario_id": "S05",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 18.83,
+      "error": null
+    },
+    {
+      "scenario_id": "S06",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 1.35,
+      "error": null
+    },
+    {
+      "scenario_id": "S07",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 1.09,
+      "error": null
+    }
+  ]
+}

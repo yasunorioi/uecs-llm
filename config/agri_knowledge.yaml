@@ -1,0 +1,248 @@
+# 農学データベース (agri_knowledge.yaml)
+#
+# 出典: 道央農業振興公社研修資料「施設園芸の環境制御技術」
+#       (R8/3/13, 石狩農業改良普及センター 小田元太)
+# 用途: rule_compiler.py (Phase 3) が rules.yaml 生成時に参照する
+#       LLMに「思い出させる」のではなく「データとして与える」
+#
+# ページ番号は研修資料スキャン (Scan2026-03-17_193303_XXX.jpg) に対応
+
+# ══════════════════════════════════════════════
+# 作物特性
+# ══════════════════════════════════════════════
+
+crop:
+  name: 長ナス
+  species: Solanum melongena
+
+  # ── 温度適性 ──────────────────────────────
+  # p.009: 作物の生育適温テーブル
+  temperature:
+    germination: { min: 20, max: 30 }         # 発芽適温 (℃)
+    growth_day: { min: 23, max: 28 }          # 生育適温・日中 (℃)
+    growth_night: { min: 16, max: 20 }        # 生育適温・夜間 (℃)
+    max_tolerable: { min: 35, max: 40 }       # 最高温度 (℃)
+    min_tolerable: 8                           # 最低温度 (℃)
+    translocation_optimal: 28                  # 転流適温 (℃) — 光合成適温より高い
+    pollen_sterility: 35                       # 花粉稔性低下温度 (℃)
+    source: "研修資料 p.009"
+
+  # ── 変温管理 ──────────────────────────────
+  # p.011-012, p.034-035: 変温管理の4ポイント
+  variable_temperature:
+    principle: |
+      ①日の出後 → 気温は日射に比例して徐々に上げる
+      ②午後1〜2時 → 日射が最も強くなる頃最高気温にする
+        転流の適温は光合成の適温より高い
+        → 転流を促すため午前の気温よりも高めに管理する
+      ③日の入り30分前 → 気温を一気に下げ、相対湿度を高くする
+        → 果実や茎などの先端へCaなどの力配を促す（蒸散抑制＋根圧利用）
+        → 葉面や果実の温度を高く光合成産物の転流を促す
+      ④ハウス内気温 → 日の出前から徐々に上げる(3℃/時間以内)
+        早朝加温: 気温と葉温の温度差を小さくする（結露防止）
+        北海道では特に春・秋の気象条件下で実施
+    periods:
+      pre_dawn:
+        description: "早朝加温 — 日の出前から葉温を上げて結露防止"
+        target: 18
+        constraint: "3℃/時間以内の昇温"
+      morning:
+        description: "日射比例 — 日射に比例して徐々に上昇"
+        target: 25
+      afternoon:
+        description: "転流促進 — 光合成適温より高く管理"
+        target: 28
+        reason: "転流の適温 > 光合成の適温 (p.034)"
+      evening:
+        description: "転流温度 — 日没30分前から一気に下げる"
+        target: 23
+        reason: "蒸散抑制+根圧利用でCa等の転流促進"
+      night:
+        description: "呼吸抑制 — 消耗を最小限に"
+        target: 17
+    source: "研修資料 p.011, p.012, p.034, p.035"
+
+  # ── 朝の温度管理 ──────────────────────────
+  # p.035, p.040: 急昇温の害
+  morning_management:
+    max_rise_rate: 3.0                         # ℃/時間以内
+    reason: |
+      急激な温度上昇 → 結露 → 裂果 → 気孔閉鎖
+      1. 葉面の結露水が急速に蒸発 → 裂果
+      2. 蒸散が追いつかず気孔が閉じる → CO2吸収停止
+      3. 光合成停滞 → 収量低下
+    source: "研修資料 p.035, p.040"
+
+  # ── CO2管理 ──────────────────────────────
+  # p.010, p.014, p.033, p.043-044
+  co2:
+    outdoor_baseline: 450                      # ppm — 恵庭市外気平均
+    photosynthesis_stall: 300                  # ppm以下で光合成停滞
+    enrichment_available: false                # CO2施用装置なし
+    note: "換気がCO2補充の唯一の手段"
+    daytime_low_concentration:
+      description: |
+        日中、光合成によりハウス内CO2濃度が急激に低下する。
+        p.014のグラフ: 早朝450ppm → 日中200ppm以下まで低下。
+        換気しないと150-200ppmで停滞し光合成が大幅に制限される。
+      graph_date: "2019-10-07"
+      pattern: "早朝450ppm → 9時頃から急低下 → 日中200ppm前後 → 夕方回復"
+    source: "研修資料 p.010, p.014, p.033, p.043"
+
+  # ── 気孔管理 ──────────────────────────────
+  # p.043, p.044: 気孔のメカニズム
+  stomata:
+    principle: "気孔を閉じない管理が最重要"
+    mechanisms:
+      ci_response: "葉内CO2(Ci)低下 → 気孔開放 / Ci上昇 → 気孔閉鎖"
+      rapid_temp_rise: "急激な温度上昇 → 蒸散急増 → 水分不足 → 気孔閉鎖"
+      water_stress: "土壌水分不足 → ABA生成 → 気孔閉鎖"
+    control_implication: |
+      気孔が閉じると:
+      - CO2吸収停止 → 光合成停止
+      - 蒸散停止 → 葉温上昇 → さらなるストレス
+      制御の目標: 気孔が開いた状態を維持する
+    source: "研修資料 p.043, p.044"
+
+  # ── 根圧管理 ──────────────────────────────
+  # p.041, p.034
+  root_pressure:
+    soil_temp_min: 15                          # ℃以下で根の活性低下
+    ec_optimal:
+      transplant: { min: 0.4, max: 0.5 }      # dS/m
+    note: |
+      高ECで根圧崩壊 → 養分吸収低下
+      体内濃度が高いほど果実に肥大に偏れ、生殖成長傾向となる
+    source: "研修資料 p.041, p.034"
+
+  # ── 灌水管理 ──────────────────────────────
+  # p.013: 日射比例かん水テーブル（ナス）
+  irrigation:
+    method: "日射比例かん水 — 積算日射量に比例してかん水量を調整する方法"
+    drain_rate_target: { min: 20, max: 30 }    # % — 排液率目標
+
+    # ナスのステージ別設定 (p.013テーブル)
+    stages:
+      transplant:                              # 定植期
+        solar_threshold_mj: 1.50
+        ec: { min: 0.4, max: 0.5 }            # dS/m
+        irrigation_ml_per_plant: { min: 100, max: 120 }
+      early_growth:                            # 初期(生育期)
+        solar_threshold_mj: 1.25
+        ec: { min: 0.85, max: 1.0 }
+        irrigation_ml_per_plant: { min: 120, max: 150 }
+      flowering:                               # 開花期
+        solar_threshold_mj: 0.90
+        ec: { min: 0.85, max: 0.90 }
+        irrigation_ml_per_plant: { min: 200, max: 300 }
+      harvest_early:                           # 収穫初期
+        solar_threshold_mj: 0.90
+        ec: { min: 0.85, max: 0.90 }
+        irrigation_ml_per_plant: { min: 200, max: 300 }
+        note: "積算EC 1.7-1.8 MJ/m²"
+      harvest_peak:                            # 収穫盛期
+        solar_threshold_mj: 0.90
+        ec: { min: 0.90, max: 1.00 }
+        irrigation_ml_per_plant: { min: 270, max: 300 }
+        note: "積算EC 1.8-2.0 MJ/m²"
+      harvest_late:                            # 収穫後期
+        solar_threshold_mj: 1.00
+        ec: { min: 1.00, max: 1.25 }
+        irrigation_ml_per_plant: { min: 250, max: 270 }
+        note: "積算EC 2.0-2.2 MJ/m²"
+
+    # 参考: トマトとの比較
+    tomato_comparison:
+      note: |
+        定植のかん水: EC 0.4〜0.5と設定定着まで日射量1.5MJ/m²毎に、
+        1株に120〜120のかん水(約1.1L)
+        ナスはトマトの約1.1倍。トマトは少なめ（約0.9倍）
+    source: "研修資料 p.013"
+
+  # ── 土壌水分・養分 ──────────────────────────
+  # p.033, p.034
+  soil_management:
+    water_nutrient_growth:
+      description: "土壌水分・養分 → 草勢への影響"
+      high_concentration: "体内濃度高い → 果実肥大に偏る → 生殖成長傾向"
+      low_temp_soil: "地温15℃以下 → 根の活性低下 → 養分吸収低下"
+      high_ec_soil: "土壌ECが高く養分低い → 養分吸収低下"
+    disease_control:
+      description: "土壌水分・養分 → 病害・障害制御"
+      excess_water: "低温期の土壌水分過剰 → 空中湿度の上昇 → 病害リスク"
+      high_ec_stress: "高ECも加わると痛み"
+    source: "研修資料 p.033, p.034"
+
+# ══════════════════════════════════════════════
+# 地域特性（北海道・石狩管内）
+# ══════════════════════════════════════════════
+
+hokkaido:
+  growing_season_days: 205                     # 年間栽培可能日数
+  optimal_days: 30                             # うち最適条件の日数
+  note: |
+    環境制御で最適日数を増やすのが収量向上の鍵。
+    「人での管理では矛盾なく複雑な環境を実施することは難しい。
+    ここまでの環境で無駄なく複雑な環境を実現するには
+    データを基にした『制御』まで行うことで初めて効果がでる！」
+    ただし、環境制御機器は安くない…
+  source: "研修資料 p.008, p.017"
+
+  location:
+    name: 恵庭市
+    latitude: 42.888
+    longitude: 141.603
+    elevation: 21                              # m
+    co2_outdoor_avg: 450                       # ppm
+
+  climate_challenges:
+    spring_autumn: |
+      春・秋は急激な気温変化が多い。
+      早朝の結露防止（早朝加温）が特に重要。
+      3℃/時間以内の昇温制約を厳守。
+
+# ══════════════════════════════════════════════
+# ArSprout 2025 実績データ（キャリブレーション用）
+# ══════════════════════════════════════════════
+
+arsprout_2025:
+  data_location: "/home/yasu/unipi-agri-ha/data/"
+  merged_file: "merged_sensor_data.csv"
+  period: "2025-06-06 〜 2025-08-19"
+  daytime_records: 4753
+
+  # 外気温ベース窓開度テーブル（実績値）
+  window_step_calibration:
+    10: { target: 0, actual_avg: 0 }
+    15: { target: 5, actual_avg: 5 }
+    20: { target: 25, actual_avg: 26 }
+    25: { target: 85, actual_avg: 84 }
+    30: { target: 100, actual_avg: 100 }
+
+  co2_findings:
+    description: |
+      ArSprout 2025ではCO2設定値はあったが実効性なし。
+      150-250ppmで開度5-10%のまま放置 → 光合成停滞。
+      温度主導の換気判断のみで、CO2を見た判断はされていなかった。
+    action: "v5で300ppmを強制換気トリガー、350ppmで換気促進に設定"
+
+# ══════════════════════════════════════════════
+# 制御の考え方（研修資料の設計思想）
+# ══════════════════════════════════════════════
+
+control_philosophy:
+  monitoring_vs_control:
+    step1: "ハウス内環境モニタリング"
+    step2: "他の農業者と比較・検討 → 次年度の栽培時の参考に"
+    conclusion: |
+      モニタリングをして終わりではもったいない！
+      データを基にした「制御」まで行うことで初めて効果がでる
+    source: "研修資料 p.008"
+
+  priority_principle: |
+    環境制御の優先順位:
+    1. 安全（降雨・強風 → 即閉鎖）
+    2. 気孔を閉じない（急昇温防止・CO2補充・湿度管理）
+    3. 光合成最大化（変温管理・転流促進）
+    4. 灌水管理（日射比例）
+    この優先順位はrule_engine.pyのpriority chainに直接対応する。

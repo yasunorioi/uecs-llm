@@ -1,0 +1,164 @@
+{
+  "meta": {
+    "run_at": "2026-03-07T01:09:54.651666",
+    "model": "qwen3:1.7b",
+    "base_url": "http://localhost:11434/v1/",
+    "system_prompt": "/home/yasu/uecs-llm/config/system_prompt.txt",
+    "scenario_count": 7
+  },
+  "summary": {
+    "total_score": 26,
+    "max_score": 70,
+    "pass_count": 3,
+    "fail_count": 4,
+    "pct": 37.1
+  },
+  "results": [
+    {
+      "scenario_id": "S01",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 6.33,
+      "error": null
+    },
+    {
+      "scenario_id": "S02",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 16.18,
+      "error": null
+    },
+    {
+      "scenario_id": "S03",
+      "score": 10,
+      "max_score": 10,
+      "grade": "PASS",
+      "matched_criterion": "湿度を下げるため換気開始（ch5-ch8いずれかをON）",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [
+        {
+          "channel": 5,
+          "value": 1,
+          "duration_sec": 300
+        },
+        {
+          "channel": 6,
+          "value": 1,
+          "duration_sec": 300
+        },
+        {
+          "channel": 7,
+          "value": 1,
+          "duration_sec": 300
+        },
+        {
+          "channel": 8,
+          "value": 1,
+          "duration_sec": 300
+        }
+      ],
+      "elapsed_sec": 8.51,
+      "error": null
+    },
+    {
+      "scenario_id": "S04",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 26.43,
+      "error": null
+    },
+    {
+      "scenario_id": "S05",
+      "score": 6,
+      "max_score": 10,
+      "grade": "PARTIAL",
+      "matched_criterion": "南窓または北窓のみ全開（片側のみ）",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [
+        {
+          "channel": 5,
+          "value": 1,
+          "duration_sec": 300
+        },
+        {
+          "channel": 6,
+          "value": 1,
+          "duration_sec": 300
+        }
+      ],
+      "elapsed_sec": 9.25,
+      "error": null
+    },
+    {
+      "scenario_id": "S06",
+      "score": 10,
+      "max_score": 10,
+      "grade": "PASS",
+      "matched_criterion": "暖房ON(ch1)+開いている窓を閉じた（ch5をOFF）",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [
+        {
+          "channel": 1,
+          "value": 1,
+          "duration_sec": 300
+        },
+        {
+          "channel": 5,
+          "value": 0,
+          "duration_sec": 300
+        },
+        {
+          "channel": 6,
+          "value": 0,
+          "duration_sec": 300
+        }
+      ],
+      "elapsed_sec": 7.99,
+      "error": null
+    },
+    {
+      "scenario_id": "S07",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 36.08,
+      "error": null
+    }
+  ]
+}

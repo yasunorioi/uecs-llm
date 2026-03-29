@@ -1,21 +1,72 @@
-# Layer 2: ルールベース制御設定
-temperature:
-  target_day: 26.0             # 日中目標温度 (℃)
-  target_night: 17.0           # 夜間目標温度 (℃) ※LOW_TEMP_THRESHOLD(16℃)+1℃以上を推奨
-  margin_open: 2.0             # 目標+Nで窓開 (℃)
-  margin_close: 1.0            # 目標-Nで窓閉 (℃)
-  # window_channels は channel_map.yaml の side_window.groups に集約（open/close分離）
+# Layer 2: ルールベース制御設定 (v5拡張)
+#
+# 設計書: docs/layer3_compiler_design.md
+# データ根拠: ArSprout 2025実績 + 道央農業振興公社研修資料 (R8/3/13)
+
+# ── 変温管理（5時間帯別目標温度）──────────────────────
+# 旧: target_day / target_night の2段階
+# 新: 研修資料 p.011/012/014 に基づく5時間帯
+temperature_schedule:
+  pre_dawn:                        # 日の出前
+    target: 18                     # 早朝加温で葉温を上げる（結露防止）
+    offset_min: -60                # 日の出60分前から適用
+  morning:                         # 日の出〜正午
+    target: 25                     # 日射比例で徐々に上昇
+  afternoon:                       # 正午〜14時
+    target: 28                     # 転流の適温 > 光合成適温 (p.014)
+  evening:                         # 14時〜日没
+    target: 23                     # 転流温度（光合成産物の移動促進）
+  night:                           # 日没後
+    target: 17                     # 呼吸抑制
+
+# ── 朝換気（急昇温防止）─────────────────────────────
+# 研修資料 p.035: 3℃/時間以内。急昇温→結露→裂果→気孔閉鎖
+morning_ventilation:
+  max_rise_rate_per_hour: 3.0      # ℃/時間 — 超過で換気強制
+  start_offset_min: -30            # 日の出30分前から監視開始
+
+# ── CO2管理（施用装置なし）──────────────────────────
+# 外気(~450ppm)が最高値。換気が唯一のCO2補充手段
+# ArSprout 2025問題: 150-250ppmで開度5-10%のまま放置→光合成停滞
+co2:
+  outdoor_baseline: 450            # ppm — 外気平均（恵庭市）
+  ventilation_trigger: 350         # ppm — これ以下で換気促進
+  critical_low: 300                # ppm — 光合成停滞、強制換気
+  stop_ventilation_above: 430      # ppm — 外気近く、換気不要
+
+# ── 湿度管理 ──────────────────────────────────────
+# 結露=病害。ヒステリシスでチャタリング防止
+humidity:
+  ventilation_start: 85            # % — これ以上で換気開始
+  ventilation_stop: 75             # % — ここまで下がったら換気抑制
+
+# ── 窓開度テーブル（外気温ベース）──────────────────────
+# ArSprout 2025実績キャリブレーション (昼間4,753データ点)
+# 前提: 室温が目標温度を超えている場合のみ適用
+# 外気が低い=換気効率高い=微開で十分、高い=大きく開けないと効かない
+window_step_table:
+  10: 0                            # 実績: 0%  (早春・晩秋)
+  15: 5                            # 実績: 5%  (春秋)
+  20: 25                           # 実績: 26% (初夏・初秋)
+  25: 85                           # 実績: 84% (夏)
+  30: 100                          # 実績: 100% (盛夏)
+
+# ── 窓駆動パラメータ ──────────────────────────────
+window_motor:
+  full_open_duration_sec: 120      # 全閉→全開の所要時間（秒）
+  min_change_pct: 5                # これ未満の開度変化は無視（チャタリング防止）
+
+# ── 既存ルール（変更なし）──────────────────────────
 
 wind:
-  strong_wind_threshold_ms: 5.0  # 強風閾値 (m/s)
-  # 風向別の窓閉判定は channel_map.yaml の side_window.groups[].wind_close_directions に集約
+  strong_wind_threshold_ms: 5.0    # 強風閾値 (m/s)
 
 rain:
-  threshold_mm_h: 0.5           # 降雨閾値 (mm/h)
-  resume_delay_min: 30          # 降雨停止後の再開猶予 (分)
+  threshold_mm_h: 0.5              # 降雨閾値 (mm/h)
+  resume_delay_min: 30             # 降雨停止後の再開猶予 (分)
 
 irrigation:
-  channel: 4                    # 灌水電磁弁チャンネル
+  channel: 4                       # 灌水電磁弁チャンネル
   crop_config_path: "/etc/agriha/crop_irrigation.yaml"
 
 unipi_api:
@@ -27,5 +78,3 @@ location:
   latitude: 42.888
   longitude: 141.603
   elevation: 21
-
-custom_rules: []

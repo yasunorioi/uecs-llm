@@ -1,0 +1,197 @@
+{
+  "meta": {
+    "run_at": "2026-03-07T00:57:40.150912",
+    "model": "qwen3:1.7b",
+    "base_url": "http://localhost:11434/v1/",
+    "system_prompt": "/home/yasu/uecs-llm/config/system_prompt.txt",
+    "scenario_count": 7
+  },
+  "summary": {
+    "total_score": 35,
+    "max_score": 70,
+    "pass_count": 3,
+    "fail_count": 4,
+    "pct": 50.0
+  },
+  "results": [
+    {
+      "scenario_id": "S01",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 13.82,
+      "error": null
+    },
+    {
+      "scenario_id": "S02",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 9.83,
+      "error": null
+    },
+    {
+      "scenario_id": "S03",
+      "score": 10,
+      "max_score": 10,
+      "grade": "PASS",
+      "matched_criterion": "湿度を下げるため換気開始（ch5-ch8いずれかをON）",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [
+        {
+          "channel": 5,
+          "value": 1,
+          "duration_sec": 300
+        },
+        {
+          "channel": 6,
+          "value": 1,
+          "duration_sec": 300
+        },
+        {
+          "channel": 7,
+          "value": 1,
+          "duration_sec": 300
+        },
+        {
+          "channel": 8,
+          "value": 1,
+          "duration_sec": 300
+        }
+      ],
+      "elapsed_sec": 9.45,
+      "error": null
+    },
+    {
+      "scenario_id": "S04",
+      "score": 10,
+      "max_score": 10,
+      "grade": "PASS",
+      "matched_criterion": "duration_sec付きでset_relayを呼んだ（パルス換気を理解）",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [
+        {
+          "channel": 5,
+          "value": 1,
+          "duration_sec": 300
+        },
+        {
+          "channel": 6,
+          "value": 1,
+          "duration_sec": 300
+        }
+      ],
+      "elapsed_sec": 9.85,
+      "error": null
+    },
+    {
+      "scenario_id": "S05",
+      "score": 10,
+      "max_score": 10,
+      "grade": "PASS",
+      "matched_criterion": "全窓全開（ch5,ch6,ch7,ch8を全てON）",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [
+        {
+          "channel": 5,
+          "value": 1,
+          "duration_sec": 300
+        },
+        {
+          "channel": 6,
+          "value": 1,
+          "duration_sec": 300
+        },
+        {
+          "channel": 7,
+          "value": 1,
+          "duration_sec": 300
+        },
+        {
+          "channel": 8,
+          "value": 1,
+          "duration_sec": 300
+        },
+        {
+          "channel": 3,
+          "value": 0,
+          "duration_sec": 300
+        }
+      ],
+      "elapsed_sec": 10.1,
+      "error": null
+    },
+    {
+      "scenario_id": "S06",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 12.82,
+      "error": "invalid literal for int() with base 10: 'ch5'"
+    },
+    {
+      "scenario_id": "S07",
+      "score": 5,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "北窓を閉じた(ch7,ch8 OFF)。南窓の扱いは問わない",
+      "violations": [
+        "全窓閉にした（内温25.5℃で全閉は過剰、換気不足になる）"
+      ],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [
+        {
+          "channel": 5,
+          "value": 0,
+          "duration_sec": 300
+        },
+        {
+          "channel": 6,
+          "value": 0,
+          "duration_sec": 300
+        },
+        {
+          "channel": 7,
+          "value": 0,
+          "duration_sec": 300
+        },
+        {
+          "channel": 8,
+          "value": 0,
+          "duration_sec": 300
+        }
+      ],
+      "elapsed_sec": 12.53,
+      "error": null
+    }
+  ]
+}

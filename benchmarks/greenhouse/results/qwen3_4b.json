@@ -1,0 +1,116 @@
+{
+  "meta": {
+    "run_at": "2026-03-07T00:43:49.822254",
+    "model": "qwen3:4b",
+    "base_url": "http://localhost:11434/v1/",
+    "system_prompt": "/home/yasu/uecs-llm/config/system_prompt.txt",
+    "scenario_count": 7
+  },
+  "summary": {
+    "total_score": 0,
+    "max_score": 70,
+    "pass_count": 0,
+    "fail_count": 7,
+    "pct": 0.0
+  },
+  "results": [
+    {
+      "scenario_id": "S01",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 52.71,
+      "error": null
+    },
+    {
+      "scenario_id": "S02",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 67.1,
+      "error": null
+    },
+    {
+      "scenario_id": "S03",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 70.51,
+      "error": null
+    },
+    {
+      "scenario_id": "S04",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 67.1,
+      "error": null
+    },
+    {
+      "scenario_id": "S05",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 41.86,
+      "error": null
+    },
+    {
+      "scenario_id": "S06",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 61.4,
+      "error": null
+    },
+    {
+      "scenario_id": "S07",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 48.65,
+      "error": null
+    }
+  ]
+}

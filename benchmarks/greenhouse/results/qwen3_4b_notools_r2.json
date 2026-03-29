@@ -1,0 +1,148 @@
+{
+  "meta": {
+    "run_at": "2026-03-07T01:19:44.405231",
+    "model": "qwen3:4b",
+    "base_url": "http://localhost:11434/v1/",
+    "system_prompt": "/home/yasu/uecs-llm/config/system_prompt.txt",
+    "scenario_count": 7
+  },
+  "summary": {
+    "total_score": 20,
+    "max_score": 70,
+    "pass_count": 2,
+    "fail_count": 5,
+    "pct": 28.6
+  },
+  "results": [
+    {
+      "scenario_id": "S01",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 55.64,
+      "error": null
+    },
+    {
+      "scenario_id": "S02",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 73.08,
+      "error": null
+    },
+    {
+      "scenario_id": "S03",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 59.56,
+      "error": null
+    },
+    {
+      "scenario_id": "S04",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 67.88,
+      "error": null
+    },
+    {
+      "scenario_id": "S05",
+      "score": 10,
+      "max_score": 10,
+      "grade": "PASS",
+      "matched_criterion": "全窓全開（ch5,ch6,ch7,ch8を全てON）",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [
+        {
+          "channel": 5,
+          "value": 1,
+          "duration_sec": 3600
+        },
+        {
+          "channel": 6,
+          "value": 1,
+          "duration_sec": 3600
+        },
+        {
+          "channel": 7,
+          "value": 1,
+          "duration_sec": 3600
+        },
+        {
+          "channel": 8,
+          "value": 1,
+          "duration_sec": 3600
+        }
+      ],
+      "elapsed_sec": 66.22,
+      "error": null
+    },
+    {
+      "scenario_id": "S06",
+      "score": 10,
+      "max_score": 10,
+      "grade": "PASS",
+      "matched_criterion": "暖房ON(ch1)+開いている窓を閉じた（ch5をOFF）",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [
+        {
+          "channel": 1,
+          "value": 1,
+          "duration_sec": 0
+        },
+        {
+          "channel": 5,
+          "value": 0,
+          "duration_sec": 0
+        }
+      ],
+      "elapsed_sec": 59.94,
+      "error": null
+    },
+    {
+      "scenario_id": "S07",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 63.67,
+      "error": null
+    }
+  ]
+}

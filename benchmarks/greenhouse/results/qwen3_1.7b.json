@@ -1,0 +1,129 @@
+{
+  "meta": {
+    "run_at": "2026-03-07T00:18:25.963964",
+    "model": "qwen3:1.7b",
+    "base_url": "http://localhost:11434/v1/",
+    "system_prompt": "/home/yasu/uecs-llm/config/system_prompt.txt",
+    "scenario_count": 7
+  },
+  "summary": {
+    "total_score": 2,
+    "max_score": 70,
+    "pass_count": 0,
+    "fail_count": 7,
+    "pct": 2.9
+  },
+  "results": [
+    {
+      "scenario_id": "S01",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 36.18,
+      "error": null
+    },
+    {
+      "scenario_id": "S02",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 7.16,
+      "error": "int() argument must be a string, a bytes-like object or a real number, not 'list'"
+    },
+    {
+      "scenario_id": "S03",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 7.75,
+      "error": null
+    },
+    {
+      "scenario_id": "S04",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 7.72,
+      "error": null
+    },
+    {
+      "scenario_id": "S05",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 7.71,
+      "error": null
+    },
+    {
+      "scenario_id": "S06",
+      "score": 2,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "暖房ONのみ（窓を閉じなかったが最重要アクションは実施）",
+      "violations": [
+        "冬の低温時に窓をさらに開けた（致命的な誤り）"
+      ],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [
+        {
+          "channel": 1,
+          "value": 1,
+          "duration_sec": 300
+        },
+        {
+          "channel": 5,
+          "value": 1,
+          "duration_sec": 300
+        }
+      ],
+      "elapsed_sec": 21.18,
+      "error": null
+    },
+    {
+      "scenario_id": "S07",
+      "score": 0,
+      "max_score": 10,
+      "grade": "FAIL",
+      "matched_criterion": "",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [],
+      "elapsed_sec": 8.46,
+      "error": null
+    }
+  ]
+}

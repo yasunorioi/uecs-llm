@@ -1,0 +1,38 @@
+{
+  "meta": {
+    "run_at": "2026-03-07T02:02:33.318320",
+    "model": "qwen3:1.7b",
+    "base_url": "http://localhost:11434/v1/",
+    "system_prompt": "/home/yasu/uecs-llm/config/system_prompt.txt",
+    "scenario_count": 1
+  },
+  "summary": {
+    "total_score": 10,
+    "max_score": 10,
+    "pass_count": 1,
+    "fail_count": 0,
+    "pct": 100.0
+  },
+  "results": [
+    {
+      "scenario_id": "S02",
+      "score": 10,
+      "max_score": 10,
+      "grade": "PASS",
+      "matched_criterion": "予報を根拠に換気開始（ch5-ch8いずれかをON）",
+      "violations": [],
+      "timeline_linear": true,
+      "timeline_note": "",
+      "json_valid": true,
+      "relay_calls": [
+        {
+          "channel": 5,
+          "value": 1,
+          "duration_sec": 300
+        }
+      ],
+      "elapsed_sec": 10.79,
+      "error": null
+    }
+  ]
+}
