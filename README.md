@@ -106,7 +106,11 @@ sudo bash setup.sh
 sudo raspi-config nonint do_i2c 0
 sudo raspi-config nonint do_onewire 0
 
-# 4. 起動
+# 4. WireGuard VPN設定（setup.shでテンプレート配置済み）
+sudo nano /etc/wireguard/wg0.conf   # キー・IP設定を編集
+sudo systemctl enable --now wg-quick@wg0
+
+# 5. 起動
 sudo systemctl start agriha-nullclaw-proxy unipi-daemon agriha-ui
 ```
 
@@ -117,7 +121,7 @@ sudo systemctl start agriha-nullclaw-proxy unipi-daemon agriha-ui
 - agriha システムユーザー作成 + 所有権設定
 - systemd サービス有効化（unipi-daemon, agriha-ui, agriha-nullclaw-proxy）
 - 三層制御 cron 設定
-- USB SIMモデム検出時: ModemManager + NetworkManager APN自動設定
+- WireGuard VPNインストール + テンプレート配置
 - Nginx設定配置（LINE Bot外部公開用）
 
 ### DS18B20 温度センサー設定（HW接続後）

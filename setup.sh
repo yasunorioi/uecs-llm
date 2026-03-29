@@ -1,8 +1,8 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════
-# AgriHA v4 セットアップスクリプト
+# AgriHA v5 セットアップスクリプト
 # git clone 後にこれ1発で環境構築が完了する
-# Usage: sudo git clone https://github.com/yasunorioi/uecs-llm.git /opt/agriha && cd /opt/agriha && sudo bash setup.sh
+# Usage: git clone https://github.com/yasunorioi/uecs-llm.git ~/uecs-llm && cd ~/uecs-llm && sudo bash setup.sh
 # ═══════════════════════════════════════════════════
 set -euo pipefail
 
@@ -13,7 +13,7 @@ CONFIG_DIR="/etc/agriha"
 DATA_DIR="/var/lib/agriha"
 AGRIHA_USER="agriha"
 
-echo "=== AgriHA v4 セットアップ開始 ==="
+echo "=== AgriHA v5 セットアップ開始 ==="
 echo "リポジトリパス: ${SCRIPT_DIR}"
 
 # Step 1: Python venv作成 + pip install
@@ -84,18 +84,20 @@ echo "  → ダッシュボード編集対象ファイルの権限設定完了"
 # Step 4: systemd サービスファイルインストール + enable
 # __REPO_DIR__ を実際のリポジトリパスに置換してからインストール
 echo "[4/6] systemdサービスインストール..."
-for svc in unipi-daemon.service agriha-ui.service; do
-    sed "s|__REPO_DIR__|${SCRIPT_DIR}|g" "${SCRIPT_DIR}/systemd/${svc}" \
-        | sudo tee "/etc/systemd/system/${svc}" > /dev/null
+for svc in unipi-daemon.service agriha-ui.service agriha-nullclaw-proxy.service; do
+    if [ -f "${SCRIPT_DIR}/systemd/${svc}" ]; then
+        sed "s|__REPO_DIR__|${SCRIPT_DIR}|g" "${SCRIPT_DIR}/systemd/${svc}" \
+            | sudo tee "/etc/systemd/system/${svc}" > /dev/null
+    fi
 done
 sudo systemctl daemon-reload
-sudo systemctl enable unipi-daemon agriha-ui
-echo "  → unipi-daemon, agriha-ui を有効化（パス: ${SCRIPT_DIR}）"
+sudo systemctl enable unipi-daemon agriha-ui agriha-nullclaw-proxy
+echo "  → unipi-daemon, agriha-ui, agriha-nullclaw-proxy を有効化（パス: ${SCRIPT_DIR}）"
 
 # Step 5: cron設定（三層制御用）
 # cron内のハードコードパス（/home/agriha/uecs-llm）をこのリポジトリのパスに置換
 echo "[5/6] cron設定..."
-sudo sed "s|/home/agriha/uecs-llm|${SCRIPT_DIR}|g" \
+sudo sed "s|__REPO_DIR__|${SCRIPT_DIR}|g" \
     "${SCRIPT_DIR}/systemd/agriha-cron" \
     | sudo tee /etc/cron.d/agriha > /dev/null
 sudo chmod 644 /etc/cron.d/agriha
@@ -122,6 +124,30 @@ else
     echo "  → config/nginx.conf なし → スキップ"
 fi
 
+# Step 8: WireGuard VPNセットアップ（オプション）
+echo "[8] WireGuard VPN..."
+if ! command -v wg &>/dev/null; then
+    sudo apt-get install -y --no-install-recommends wireguard-tools
+    echo "  → wireguard-tools インストール完了"
+else
+    echo "  → wireguard-tools 既存 → スキップ"
+fi
+if [ ! -f /etc/wireguard/wg0.conf ]; then
+    if [ -f "${SCRIPT_DIR}/config/wg0.conf.template" ]; then
+        sudo cp "${SCRIPT_DIR}/config/wg0.conf.template" /etc/wireguard/wg0.conf
+        sudo chmod 600 /etc/wireguard/wg0.conf
+        echo "  → wg0.conf テンプレート配置済み（要編集: キー・IP設定）"
+        echo "    編集: sudo nano /etc/wireguard/wg0.conf"
+        echo "    有効化: sudo systemctl enable --now wg-quick@wg0"
+    fi
+else
+    echo "  → wg0.conf 既存 → スキップ"
+fi
+
 echo ""
-echo "=== AgriHA v4 セットアップ完了 ==="
-echo "セットアップ完了。.envにAPI KEYを設定後、sudo systemctl start unipi-daemon agriha-ui で起動"
+echo "=== AgriHA v5 セットアップ完了 ==="
+echo "セットアップ完了。"
+echo "  1. sudo nano .env  → API KEY設定（NullClawのみなら不要）"
+echo "  2. sudo nano /etc/wireguard/wg0.conf  → VPNキー・IP設定"
+echo "  3. sudo systemctl start agriha-nullclaw-proxy unipi-daemon agriha-ui"
+echo "  4. sudo systemctl enable --now wg-quick@wg0  → VPN有効化"
