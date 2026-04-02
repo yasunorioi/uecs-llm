@@ -1,3 +1,6 @@
+# TiDE models (binary, not committed)
+models/
+
 # Python
 __pycache__/
 *.py[cod]
