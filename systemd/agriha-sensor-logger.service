@@ -1,0 +1,30 @@
+[Unit]
+Description=AgriHA Sensor Logger (MQTT → SQLite time-series)
+Documentation=https://github.com/yasunorioi/uecs-llm
+After=network.target mosquitto.service
+Wants=mosquitto.service
+
+[Service]
+Type=simple
+User=agriha
+Group=agriha
+WorkingDirectory=__REPO_DIR__
+EnvironmentFile=__REPO_DIR__/.env
+Environment="PATH=__REPO_DIR__/.venv/bin:/usr/local/bin:/usr/bin"
+ExecStart=__REPO_DIR__/.venv/bin/python3 -m agriha.daemon.sensor_logger
+
+Restart=always
+RestartSec=5s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agriha-sensor-logger
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=/var/log/agriha /tmp /var/lib/agriha
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
