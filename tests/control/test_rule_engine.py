@@ -27,6 +27,7 @@ from agriha.control.rule_engine import (
     is_layer1_locked_out,
     is_nighttime,
     load_solar_accumulator,
+    load_tide_forecast,
     opening_to_relay_duration,
     post_relay,
     run,
@@ -799,3 +800,109 @@ def test_temp_above_target_opens_window(base_cfg, base_crop_cfg, status_normal, 
     assert "temp_schedule" in result["triggered_rules"]
     # 外気温22℃ → テーブル補間で ~49%
     assert result["target_opening_pct"] > 0
+
+
+# ──────────────────────────────────────────────
+# TiDE 先行換気テスト (P3.5)
+# ──────────────────────────────────────────────
+
+def _make_forecast(humid_1h: float = 75.0, temp_1h: float = 24.0, age_sec: int = 60) -> dict:
+    """テスト用 tide_forecast dict を生成。"""
+    from datetime import timezone
+    generated_at = (
+        datetime.now(tz=ZoneInfo("Asia/Tokyo"))
+        - timedelta(seconds=age_sec)
+    ).isoformat(timespec="seconds")
+    return {
+        "generated_at": generated_at,
+        "model": "agriha_tide_v1",
+        "horizon_hours": 6,
+        "predictions": {
+            "InAirTemp":  [temp_1h]  + [temp_1h]  * 5,
+            "InAirHumid": [humid_1h] + [humid_1h] * 5,
+            "InAirCO2":   [400.0]    + [400.0]    * 5,
+        },
+        "alerts": [],
+    }
+
+
+def _sensors_normal() -> dict:
+    return {
+        "sensors": {
+            "agriha/h01/ccm/InAirTemp":  {"value": 24.0},
+            "agriha/h01/ccm/InSolar":    {"value": 100.0},
+            "agriha/farm/weather/misol": {
+                "temperature_c": 18.0,
+                "wind_speed_ms": 1.0,
+                "wind_direction": 5,
+                "rainfall": 0.0,
+            },
+        }
+    }
+
+
+def test_tide_preemptive_vent_triggered(
+    base_cfg, base_crop_cfg, status_normal, channel_map_file
+):
+    """1時間後の湿度予測 > 80% → tide_preemptive_vent トリガー + 開度≥30%。"""
+    forecast = _make_forecast(humid_1h=83.0)
+    solar_acc = {"date": "2026-07-01", "accumulated_mj": 0.0, "irrigations_today": 0}
+    result = evaluate_rules(
+        base_cfg, base_crop_cfg, _sensors_normal(), status_normal, solar_acc,
+        now=DAYTIME, channel_map_path=channel_map_file,
+        tide_forecast=forecast,
+    )
+    assert "tide_preemptive_vent" in result["triggered_rules"]
+    assert result["target_opening_pct"] >= 30
+
+
+def test_tide_preemptive_vent_not_triggered_below_threshold(
+    base_cfg, base_crop_cfg, status_normal, channel_map_file
+):
+    """1時間後の湿度予測 ≤ 80% → tide_preemptive_vent はトリガーされない。"""
+    forecast = _make_forecast(humid_1h=79.9)
+    solar_acc = {"date": "2026-07-01", "accumulated_mj": 0.0, "irrigations_today": 0}
+    result = evaluate_rules(
+        base_cfg, base_crop_cfg, _sensors_normal(), status_normal, solar_acc,
+        now=DAYTIME, channel_map_path=channel_map_file,
+        tide_forecast=forecast,
+    )
+    assert "tide_preemptive_vent" not in result["triggered_rules"]
+
+
+def test_tide_preemptive_vent_skipped_when_no_forecast(
+    base_cfg, base_crop_cfg, status_normal, channel_map_file
+):
+    """tide_forecast=None の場合、先行換気はスキップ → 既存動作を壊さない。"""
+    solar_acc = {"date": "2026-07-01", "accumulated_mj": 0.0, "irrigations_today": 0}
+    result = evaluate_rules(
+        base_cfg, base_crop_cfg, _sensors_normal(), status_normal, solar_acc,
+        now=DAYTIME, channel_map_path=channel_map_file,
+        tide_forecast=None,
+    )
+    assert "tide_preemptive_vent" not in result["triggered_rules"]
+
+
+def test_load_tide_forecast_returns_none_when_file_missing(tmp_path):
+    """ファイルが存在しない場合は None を返す。"""
+    result = load_tide_forecast(str(tmp_path / "nonexistent.json"))
+    assert result is None
+
+
+def test_load_tide_forecast_returns_none_when_stale(tmp_path):
+    """30分以上古い予測は None を返す。"""
+    old_forecast = _make_forecast(age_sec=1900)  # 31分以上前
+    p = tmp_path / "tide_forecast.json"
+    p.write_text(json.dumps(old_forecast))
+    result = load_tide_forecast(str(p), max_age_sec=1800)
+    assert result is None
+
+
+def test_load_tide_forecast_returns_dict_when_fresh(tmp_path):
+    """新鮮な予測（1分前）は dict を返す。"""
+    fresh_forecast = _make_forecast(age_sec=60)
+    p = tmp_path / "tide_forecast.json"
+    p.write_text(json.dumps(fresh_forecast))
+    result = load_tide_forecast(str(p), max_age_sec=1800)
+    assert result is not None
+    assert "predictions" in result

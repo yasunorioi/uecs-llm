@@ -57,6 +57,11 @@ DEFAULT_WINDOW_POS_PATH = os.environ.get(
 DEFAULT_API_BASE = os.environ.get("UNIPI_API_BASE", "http://localhost:8080")
 LOG_PATH = os.environ.get("RULE_ENGINE_LOG", "/var/log/agriha/rule_engine.log")
 FLAG_DIR = os.environ.get("AGRIHA_FLAG_DIR", "/var/lib/agriha")
+DEFAULT_TIDE_FORECAST_PATH = os.environ.get(
+    "TIDE_FORECAST_PATH", "/var/lib/agriha/tide_forecast.json"
+)
+TIDE_FORECAST_MAX_AGE_SEC = 1800  # 30分以上古い予測はスキップ
+TIDE_HUMIDITY_PREVENT_THRESHOLD = 80.0  # % — 先行換気トリガー湿度閾値
 
 # ──────────────────────────────────────────────
 # ロガー設定
@@ -287,6 +292,45 @@ def opening_to_relay_duration(
 
 
 # ──────────────────────────────────────────────
+# TiDE 予測 JSON 読み込み
+# ──────────────────────────────────────────────
+
+def load_tide_forecast(
+    path: str = DEFAULT_TIDE_FORECAST_PATH,
+    max_age_sec: int = TIDE_FORECAST_MAX_AGE_SEC,
+) -> dict[str, Any] | None:
+    """
+    tide_forecast.json を読み込む。
+
+    Returns:
+        dict: 予測データ
+        None: ファイルが存在しない、JSON 不正、または max_age_sec 以上古い場合
+    """
+    try:
+        data = json.loads(Path(path).read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+    generated_at_str = data.get("generated_at")
+    if not generated_at_str:
+        return None
+
+    try:
+        generated_at = datetime.fromisoformat(generated_at_str)
+        now = datetime.now(tz=generated_at.tzinfo or ZoneInfo("Asia/Tokyo"))
+        age_sec = (now - generated_at).total_seconds()
+        if age_sec > max_age_sec:
+            logger.info(
+                "TiDE予測が古い (%.0f秒 > %d秒) → スキップ", age_sec, max_age_sec
+            )
+            return None
+    except (ValueError, TypeError):
+        return None
+
+    return data
+
+
+# ──────────────────────────────────────────────
 # v5: 朝換気（急昇温監視）
 # ──────────────────────────────────────────────
 
@@ -440,6 +484,7 @@ def evaluate_rules(
     channel_map_path: str | Path | None = None,
     temp_history: list[dict[str, Any]] | None = None,
     current_window_pct: int = 0,
+    tide_forecast: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     ルール評価（v5: priority chain順）。
@@ -541,6 +586,24 @@ def evaluate_rules(
             logger.info(
                 "P3 rapid_rise: %.1f℃/h > %.1f → 強制換気 開度%d%%",
                 rise_rate, max_rate, target_opening_pct,
+            )
+
+    # ═══════════════════════════════════════════
+    # Priority 3.5: TiDE 予測先行換気
+    # 1時間後の湿度予測が TIDE_HUMIDITY_PREVENT_THRESHOLD(80%) 超なら先行換気
+    # ═══════════════════════════════════════════
+    if not window_skip and tide_forecast is not None:
+        humid_preds = (
+            tide_forecast.get("predictions", {}).get("InAirHumid", [])
+        )
+        if len(humid_preds) >= 1 and humid_preds[0] > TIDE_HUMIDITY_PREVENT_THRESHOLD:
+            triggered_rules.append("tide_preemptive_vent")
+            target_opening_pct = max(target_opening_pct, 30)
+            logger.info(
+                "P3.5 TiDE予測: 1h後湿度%.1f%% > %.0f%% → 先行換気 開度≥%d%%",
+                humid_preds[0],
+                TIDE_HUMIDITY_PREVENT_THRESHOLD,
+                target_opening_pct,
             )
 
     # ═══════════════════════════════════════════
@@ -823,6 +886,7 @@ def run(
             solar_acc = load_solar_accumulator(solar_acc_path)
             temp_history = load_temp_history(temp_history_path)
             current_window_pct = load_window_position(window_pos_path)
+            tide_forecast = load_tide_forecast()
 
             # Step 5: ルール評価
             result = evaluate_rules(
@@ -830,6 +894,7 @@ def run(
                 channel_map_path=channel_map_path,
                 temp_history=temp_history,
                 current_window_pct=current_window_pct,
+                tide_forecast=tide_forecast,
             )
 
             # Step 6: アクション実行

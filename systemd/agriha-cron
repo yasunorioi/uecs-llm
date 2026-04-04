@@ -8,6 +8,10 @@
 # Layer 2: ルールベース制御（10分毎）— .env不要（ローカル演算のみ、API呼び出しゼロ）
 */10 * * * * agriha cd __REPO_DIR__ && . .env && __REPO_DIR__/.venv/bin/python3 -m agriha.control.rule_engine 2>&1 | logger -t agriha-rule
 
+# TiDE 予測（10分毎）— rule_engine と同周期で先行換気用予測を更新
+# Open-Meteo API を使用（失敗時は自動スキップ）
+*/10 * * * * agriha cd __REPO_DIR__ && __REPO_DIR__/.venv/bin/python3 -m agriha.control.tide_forecaster 2>&1 | logger -t agriha-tide
+
 # Layer 3: LLMルールコンパイラ 週次レビュー（月曜07:00）
 # v5: リアルタイム予報(forecast_engine)は廃止。方針変更時 or 週次レビュー時のみLLM起動
 0 7 * * 1 agriha cd __REPO_DIR__ && . .env && __REPO_DIR__/.venv/bin/python3 -m agriha.control.rule_compiler review >> /var/log/agriha/rule_compiler.log 2>&1
