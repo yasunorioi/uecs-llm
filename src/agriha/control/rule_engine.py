@@ -316,7 +316,16 @@ def load_tide_forecast(
         return None
 
     try:
-        generated_at = datetime.fromisoformat(generated_at_str)
+        # Python 3.10 互換: fromisoformat は 3.11 以降でのみ +HH:MM 付き文字列を
+        # 完全サポートする。3.10 以下向けに手動で JST を付与するフォールバックを用意。
+        try:
+            generated_at = datetime.fromisoformat(generated_at_str)
+        except ValueError:
+            # +09:00 / +00:00 などの UTC offset を除去して JST として解釈
+            ts_clean = generated_at_str[:19]  # YYYY-MM-DDTHH:MM:SS
+            generated_at = datetime.fromisoformat(ts_clean).replace(
+                tzinfo=ZoneInfo("Asia/Tokyo")
+            )
         now = datetime.now(tz=generated_at.tzinfo or ZoneInfo("Asia/Tokyo"))
         age_sec = (now - generated_at).total_seconds()
         if age_sec > max_age_sec:

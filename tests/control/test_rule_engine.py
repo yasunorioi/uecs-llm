@@ -906,3 +906,25 @@ def test_load_tide_forecast_returns_dict_when_fresh(tmp_path):
     result = load_tide_forecast(str(p), max_age_sec=1800)
     assert result is not None
     assert "predictions" in result
+
+
+def test_load_tide_forecast_py310_compat(tmp_path):
+    """+09:00付きISO文字列を Python 3.10互換フォールバックで正しくパースできる。"""
+    # Python 3.10 では datetime.fromisoformat("+09:00付き") が失敗する場合があるが
+    # フォールバックにより JST として正しくパースされることを確認
+    # 5分前の JST タイムスタンプ（+09:00付き）
+    from datetime import timezone as tz
+    ts = (datetime.now(tz=ZoneInfo("Asia/Tokyo")) - timedelta(minutes=5)).isoformat(timespec="seconds")
+    # generated_at_str は "+09:00" を含むはず
+    forecast = {
+        "generated_at": ts,
+        "model": "agriha_tide_v1",
+        "horizon_hours": 6,
+        "predictions": {"InAirTemp": [24.0]*6, "InAirHumid": [70.0]*6, "InAirCO2": [400.0]*6},
+        "alerts": [],
+    }
+    p = tmp_path / "tide_forecast.json"
+    p.write_text(json.dumps(forecast))
+    result = load_tide_forecast(str(p), max_age_sec=1800)
+    assert result is not None, "新鮮な予測が None になってはいけない"
+    assert "predictions" in result

@@ -352,3 +352,109 @@ class TestRunForecast:
 
         for val in result["predictions"]["InAirTemp"]:
             assert abs(val - 28.0) < 0.01, f"期待値28.0、実際={val}"
+
+    def test_om_forecast_reflected_in_past_matrix(self, tmp_path):
+        """Open-Meteo 予報が取得できた場合、past_matrix の om_* 列に反映される。"""
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        self._make_norm_params(model_dir)
+        (model_dir / "agriha_tide.tflite").write_bytes(b"dummy")
+
+        db_path = tmp_path / "sensor_log.db"
+        _make_db(str(db_path), [])
+        output_path = tmp_path / "tide_forecast.json"
+
+        fake_pred = np.zeros((1, 6, 3), dtype=np.float32)
+        captured_inputs = {}
+
+        def fake_run_tflite(interp, past_x, future_cov):
+            captured_inputs["past_x"] = past_x.copy()
+            return fake_pred
+
+        fake_om = {
+            "om_temp2m":    [12.5] * 6,
+            "om_humidity2m": [55.0] * 6,
+            "om_radiation":  [300.0] * 6,
+            "om_precip":     [0.1] * 6,
+            "om_wind10m":    [4.0] * 6,
+        }
+
+        mock_interp = mock.MagicMock()
+
+        with mock.patch(
+            "agriha.control.tide_forecaster._get_interpreter",
+            return_value=mock_interp,
+        ), mock.patch(
+            "agriha.control.tide_forecaster._run_tflite",
+            side_effect=fake_run_tflite,
+        ), mock.patch(
+            "agriha.control.tide_forecaster.fetch_openmeteo_forecast",
+            return_value=fake_om,
+        ):
+            run_forecast(
+                db_path=str(db_path),
+                model_dir=str(model_dir),
+                output_path=str(output_path),
+            )
+
+        assert "past_x" in captured_inputs, "推論が呼ばれなかった"
+        past_x = captured_inputs["past_x"]  # [1, 48, 16] (正規化後)
+
+        # om_temp2m は columns index 7、norm: mean=15.0, std=5.0
+        # 実値 12.5 → 正規化 = (12.5-15.0)/5.0 = -0.5
+        # すべての行が -0.5 になっているはず
+        om_temp_col = past_x[0, :, 7]
+        assert np.allclose(om_temp_col, -0.5, atol=1e-4), (
+            f"om_temp2m 列が正しく反映されていない: {om_temp_col[:3]}"
+        )
+
+        # om_humidity2m は index 8、mean=65.0, std=15.0
+        # 実値 55.0 → 正規化 = (55.0-65.0)/15.0 ≈ -0.6667
+        om_hum_col = past_x[0, :, 8]
+        expected = (55.0 - 65.0) / 15.0
+        assert np.allclose(om_hum_col, expected, atol=1e-4), (
+            f"om_humidity2m 列が正しく反映されていない: {om_hum_col[:3]}"
+        )
+
+    def test_om_forecast_none_keeps_zeros(self, tmp_path):
+        """Open-Meteo 取得失敗時は om_* 列はゼロ埋めのまま（フォールバック確認）。"""
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        self._make_norm_params(model_dir)
+        (model_dir / "agriha_tide.tflite").write_bytes(b"dummy")
+
+        db_path = tmp_path / "sensor_log.db"
+        _make_db(str(db_path), [])
+        output_path = tmp_path / "tide_forecast.json"
+
+        fake_pred = np.zeros((1, 6, 3), dtype=np.float32)
+        captured_inputs = {}
+
+        def fake_run_tflite(interp, past_x, future_cov):
+            captured_inputs["past_x"] = past_x.copy()
+            return fake_pred
+
+        mock_interp = mock.MagicMock()
+
+        with mock.patch(
+            "agriha.control.tide_forecaster._get_interpreter",
+            return_value=mock_interp,
+        ), mock.patch(
+            "agriha.control.tide_forecaster._run_tflite",
+            side_effect=fake_run_tflite,
+        ), mock.patch(
+            "agriha.control.tide_forecaster.fetch_openmeteo_forecast",
+            return_value=None,  # 取得失敗
+        ):
+            run_forecast(
+                db_path=str(db_path),
+                model_dir=str(model_dir),
+                output_path=str(output_path),
+            )
+
+        # DBが空 + om_forecast なし → om_* 列は正規化後も (0-mean)/std になる
+        # om_temp2m: (0-15.0)/5.0 = -3.0
+        past_x = captured_inputs["past_x"]
+        om_temp_col = past_x[0, :, 7]
+        expected_norm = (0.0 - 15.0) / 5.0  # = -3.0
+        assert np.allclose(om_temp_col, expected_norm, atol=1e-4)
