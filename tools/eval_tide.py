@@ -97,19 +97,30 @@ def main() -> None:
 
     # ── 1. Load model and normalization params ─────────────────────────
     logger.info("Loading model: %s", args.model)
+    onnx_path = args.model / "agriha_tide.onnx"
     keras_path = args.model / "model.keras"
     saved_model_path = args.model / "saved_model"
     model = None
     infer = None
-    if keras_path.exists():
-        model = tf.keras.models.load_model(
-            str(keras_path),
-            custom_objects={"TiDE": TiDE, "ResidualBlock": ResidualBlock},
-            compile=False,
-        )
-    elif saved_model_path.exists():
-        sm = tf.saved_model.load(str(saved_model_path))
-        infer = sm.signatures.get("serving_default") or sm
+    onnx_session = None
+    if onnx_path.exists():
+        # ONNX Runtime 優先（Python 3.13 対応）
+        try:
+            import onnxruntime as ort
+            onnx_session = ort.InferenceSession(str(onnx_path))
+            logger.info("ONNX Runtime でモデルロード: %s", onnx_path)
+        except ImportError:
+            logger.warning("onnxruntime が未インストール → Keras/TFLite にフォールバック")
+    if onnx_session is None:
+        if keras_path.exists():
+            model = tf.keras.models.load_model(
+                str(keras_path),
+                custom_objects={"TiDE": TiDE, "ResidualBlock": ResidualBlock},
+                compile=False,
+            )
+        elif saved_model_path.exists():
+            sm = tf.saved_model.load(str(saved_model_path))
+            infer = sm.signatures.get("serving_default") or sm
 
     norm_path = args.model / "norm_params.json"
     with open(norm_path) as f:
@@ -136,9 +147,16 @@ def main() -> None:
 
     logger.info("Test samples: %d", len(past_x))
 
-    # ── 3. Predict ────────────────────────────────────────────────────
-    # Use Keras model directly if saved as keras format
-    if model is not None:
+    # ── 3. Predict ──────────────────────────────────────��─────────────
+    if onnx_session is not None:
+        # ONNX Runtime 推論（バッチ処理）
+        inputs = onnx_session.get_inputs()
+        tg_pred = onnx_session.run(None, {
+            inputs[0].name: past_x,
+            inputs[1].name: future_cov,
+        })[0]  # [N, pred_len, n_targets]
+        model_keras = None
+    elif model is not None:
         model_keras = model
         tg_pred = model_keras((past_x, future_cov), training=False).numpy()
     else:
@@ -214,10 +232,17 @@ def main() -> None:
 
     # ── 8. 共変量あり/なし比較 ────────────────────────────────────────
     cov_comparison = {}
-    if n_future_cov > 0 and model_keras is not None:
+    if n_future_cov > 0 and (model_keras is not None or onnx_session is not None):
         # 共変量をゼロにして予測
         zero_cov = np.zeros_like(future_cov)
-        tg_pred_nocov = model_keras((past_x, zero_cov), training=False).numpy()
+        if onnx_session is not None:
+            inputs = onnx_session.get_inputs()
+            tg_pred_nocov = onnx_session.run(None, {
+                inputs[0].name: past_x,
+                inputs[1].name: zero_cov,
+            })[0]
+        else:
+            tg_pred_nocov = model_keras((past_x, zero_cov), training=False).numpy()
 
         tg_pred_nocov_real = tg_pred_nocov * target_std + target_mean
         for i, tname in enumerate(targets):

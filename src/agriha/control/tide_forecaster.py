@@ -1,7 +1,12 @@
 """tide_forecaster.py — TiDE 予測モジュール (Phase 3)。
 
-sensor_log.db から直近48時間のセンサーデータを読み込み、TFLite モデルで
+sensor_log.db から直近48時間のセンサーデータを読み込み、ONNX Runtime で
 InAirTemp/InAirHumid/InAirCO2 を6時間先まで予測し tide_forecast.json に書き出す。
+
+推論ランタイム優先順位:
+  1. onnxruntime (Python 3.13 aarch64 対応、RPi5 で推奨)
+  2. tflite_runtime (Python 3.10/3.11 aarch64、後方互換)
+  3. tensorflow (x86_64 開発環境フォールバック)
 
 設計書: context/agriha-tide.md §3.4
 Usage:
@@ -57,8 +62,28 @@ _DB_COL_MAP: dict[tuple[str, str], str] = {
 }
 
 
-# ── TFLite ロード（tflite-runtime 優先、なければ tensorflow）──────────────
-def _get_interpreter(model_path: str):
+# ── 推論セッション ─────────────────────────────────────────────────────
+# ONNX Runtime 優先（Python 3.13 aarch64 対応）。
+# 後方互換: ONNX モデルが存在しない場合は tflite_runtime/tensorflow にフォールバック。
+
+def _get_session(onnx_path: str):
+    """ONNX Runtime の InferenceSession を返す。"""
+    import onnxruntime as ort
+    return ort.InferenceSession(onnx_path)
+
+
+def _run_onnx(session, past_x: np.ndarray, future_cov: np.ndarray) -> np.ndarray:
+    """ONNX 推論。past_x:[1,48,16], future_cov:[1,6,4] → [1,6,3]"""
+    inputs = session.get_inputs()
+    result = session.run(None, {
+        inputs[0].name: past_x.astype(np.float32),
+        inputs[1].name: future_cov.astype(np.float32),
+    })
+    return result[0]  # [1, pred_len, n_targets]
+
+
+def _get_tflite_interpreter(model_path: str):
+    """後方互換: tflite_runtime または tensorflow の Interpreter を返す。"""
     try:
         import tflite_runtime.interpreter as tflite
         interp = tflite.Interpreter(model_path=model_path)
@@ -70,10 +95,9 @@ def _get_interpreter(model_path: str):
 
 
 def _run_tflite(interp, past_x: np.ndarray, future_cov: np.ndarray) -> np.ndarray:
-    """TFLite 推論。past_x:[1,48,16], future_cov:[1,6,4] → [1,6,3]"""
+    """TFLite 推論（後方互換）。past_x:[1,48,16], future_cov:[1,6,4] → [1,6,3]"""
     in_details = interp.get_input_details()
     out_details = interp.get_output_details()
-
     interp.set_tensor(in_details[0]["index"], past_x.astype(np.float32))
     interp.set_tensor(in_details[1]["index"], future_cov.astype(np.float32))
     interp.invoke()
@@ -284,12 +308,15 @@ def run_forecast(
     """
     model_dir_p = Path(model_dir)
     norm_path = model_dir_p / "norm_params.json"
+    onnx_path = model_dir_p / "agriha_tide.onnx"
     tflite_path = model_dir_p / "agriha_tide.tflite"
 
     if not norm_path.exists():
         raise FileNotFoundError(f"norm_params.json not found: {norm_path}")
-    if not tflite_path.exists():
-        raise FileNotFoundError(f"agriha_tide.tflite not found: {tflite_path}")
+    if not onnx_path.exists() and not tflite_path.exists():
+        raise FileNotFoundError(
+            f"モデルファイルが見つかりません: {onnx_path} または {tflite_path}"
+        )
 
     # ── 1. norm_params 読み込み ─────────────────────────────────────────
     with open(norm_path) as f:
@@ -344,10 +371,15 @@ def run_forecast(
     future_cov = _build_future_cov(pred_len, now_utc)
     future_cov = future_cov[np.newaxis, :, :]  # [1, pred_len, 4]
 
-    # ── 6. TFLite 推論 ───────────────────────────────────────────────
-    logger.info("TFLite推論: %s", tflite_path)
-    interp = _get_interpreter(str(tflite_path))
-    pred_norm = _run_tflite(interp, past_x_norm, future_cov)  # [1, pred_len, n_targets]
+    # ── 6. 推論（ONNX Runtime 優先、TFLite フォールバック）────────────
+    if onnx_path.exists():
+        logger.info("ONNX推論: %s", onnx_path)
+        session = _get_session(str(onnx_path))
+        pred_norm = _run_onnx(session, past_x_norm, future_cov)  # [1, pred_len, n_targets]
+    else:
+        logger.info("TFLite推論（後方互換）: %s", tflite_path)
+        interp = _get_tflite_interpreter(str(tflite_path))
+        pred_norm = _run_tflite(interp, past_x_norm, future_cov)
 
     # ── 7. 逆正規化 ─────────────────────────────────────────────────
     target_mean = mean[:n_targets]

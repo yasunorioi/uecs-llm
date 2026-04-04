@@ -43,10 +43,9 @@ daemon = [
 ]
 tide = [
     "numpy>=1.24",
-    # RPi4/5 (aarch64): tflite-runtime を使用（軽量、TensorFlow全体不要）
-    "tflite-runtime>=2.14 ; platform_machine == 'aarch64'",
-    # x86_64 開発環境: tensorflow にフォールバック
-    "tensorflow>=2.14 ; platform_machine != 'aarch64'",
+    # onnxruntime: Python 3.13 aarch64 対応（RPi5 推奨）
+    # tflite-runtime は Python 3.13 の aarch64 wheel がないため廃止
+    "onnxruntime>=1.18",
 ]
 dev = [
     "pytest>=7.0",

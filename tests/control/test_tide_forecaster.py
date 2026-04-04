@@ -15,6 +15,7 @@ import pytest
 from agriha.control.tide_forecaster import (
     _build_alerts,
     _build_future_cov,
+    _run_onnx,
     fetch_openmeteo_forecast,
     load_sensor_window,
     run_forecast,
@@ -262,7 +263,7 @@ class TestRunForecast:
         mock_interp.get_tensor.return_value = fake_pred
 
         with mock.patch(
-            "agriha.control.tide_forecaster._get_interpreter",
+            "agriha.control.tide_forecaster._get_tflite_interpreter",
             return_value=mock_interp,
         ), mock.patch(
             "agriha.control.tide_forecaster.fetch_openmeteo_forecast",
@@ -303,7 +304,7 @@ class TestRunForecast:
         mock_interp.get_tensor.return_value = fake_pred
 
         with mock.patch(
-            "agriha.control.tide_forecaster._get_interpreter",
+            "agriha.control.tide_forecaster._get_tflite_interpreter",
             return_value=mock_interp,
         ), mock.patch(
             "agriha.control.tide_forecaster.fetch_openmeteo_forecast",
@@ -338,7 +339,7 @@ class TestRunForecast:
         mock_interp.get_tensor.return_value = fake_pred
 
         with mock.patch(
-            "agriha.control.tide_forecaster._get_interpreter",
+            "agriha.control.tide_forecaster._get_tflite_interpreter",
             return_value=mock_interp,
         ), mock.patch(
             "agriha.control.tide_forecaster.fetch_openmeteo_forecast",
@@ -382,7 +383,7 @@ class TestRunForecast:
         mock_interp = mock.MagicMock()
 
         with mock.patch(
-            "agriha.control.tide_forecaster._get_interpreter",
+            "agriha.control.tide_forecaster._get_tflite_interpreter",
             return_value=mock_interp,
         ), mock.patch(
             "agriha.control.tide_forecaster._run_tflite",
@@ -437,7 +438,7 @@ class TestRunForecast:
         mock_interp = mock.MagicMock()
 
         with mock.patch(
-            "agriha.control.tide_forecaster._get_interpreter",
+            "agriha.control.tide_forecaster._get_tflite_interpreter",
             return_value=mock_interp,
         ), mock.patch(
             "agriha.control.tide_forecaster._run_tflite",
@@ -458,3 +459,157 @@ class TestRunForecast:
         om_temp_col = past_x[0, :, 7]
         expected_norm = (0.0 - 15.0) / 5.0  # = -3.0
         assert np.allclose(om_temp_col, expected_norm, atol=1e-4)
+
+
+# ────────────────────────────────────────────────────────────────
+# ONNX Runtime 推論パステスト
+# ────────────────────────────────────────────────────────────────
+
+class TestOnnxInference:
+    """_get_session / _run_onnx / run_forecast ONNX パスのテスト。"""
+
+    def _make_norm_params(self, tmp_dir: Path) -> None:
+        norm = {
+            "mean": [25.0, 70.0, 400.0] + [15.0, 65.0, 3.0, 0.0] + [15.0, 65.0, 100.0, 0.0, 3.0] + [0.0, 0.0, 0.0, 0.0],
+            "std":  [3.0,  10.0, 100.0] + [5.0,  15.0, 2.0, 1.0] + [5.0,  15.0, 200.0, 1.0, 2.0] + [1.0, 1.0, 1.0, 1.0],
+            "columns": [
+                "InAirTemp", "InAirHumid", "InAirCO2",
+                "WTemp", "WAirHumid", "WWindSpeed", "WRainfall",
+                "om_temp2m", "om_humidity2m", "om_radiation", "om_precip", "om_wind10m",
+                "hour_sin", "hour_cos", "doy_sin", "doy_cos",
+            ],
+            "targets": ["InAirTemp", "InAirHumid", "InAirCO2"],
+            "lookback": 48,
+            "pred_len": 6,
+            "n_targets": 3,
+            "n_future_cov": 4,
+        }
+        (tmp_dir / "norm_params.json").write_text(json.dumps(norm))
+
+    def test_run_onnx_output_shape(self):
+        """_run_onnx が正しい shape を返す。"""
+        fake_pred = np.zeros((1, 6, 3), dtype=np.float32)
+
+        mock_session = mock.MagicMock()
+        mock_input = mock.MagicMock()
+        mock_input.name = "input_0"
+        mock_session.get_inputs.return_value = [mock_input, mock.MagicMock()]
+        mock_session.run.return_value = [fake_pred]
+
+        past_x = np.zeros((1, 48, 16), dtype=np.float32)
+        future_cov = np.zeros((1, 6, 4), dtype=np.float32)
+        result = _run_onnx(mock_session, past_x, future_cov)
+        assert result.shape == (1, 6, 3)
+
+    def test_run_forecast_uses_onnx_when_onnx_exists(self, tmp_path):
+        """ONNX ファイルが存在する場合、_get_session が呼ばれ ONNX パスで推論する。"""
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        self._make_norm_params(model_dir)
+        # ONNX ファイルを配置（dummy）
+        (model_dir / "agriha_tide.onnx").write_bytes(b"dummy_onnx")
+
+        db_path = tmp_path / "sensor_log.db"
+        _make_db(str(db_path), [])
+        output_path = tmp_path / "tide_forecast.json"
+
+        fake_pred = np.zeros((1, 6, 3), dtype=np.float32)
+        mock_session = mock.MagicMock()
+        mock_input_0 = mock.MagicMock()
+        mock_input_0.name = "serving_default_args_0:0"
+        mock_input_1 = mock.MagicMock()
+        mock_input_1.name = "serving_default_args_0_1:0"
+        mock_session.get_inputs.return_value = [mock_input_0, mock_input_1]
+        mock_session.run.return_value = [fake_pred]
+
+        with mock.patch(
+            "agriha.control.tide_forecaster._get_session",
+            return_value=mock_session,
+        ), mock.patch(
+            "agriha.control.tide_forecaster.fetch_openmeteo_forecast",
+            return_value=None,
+        ):
+            result = run_forecast(
+                db_path=str(db_path),
+                model_dir=str(model_dir),
+                output_path=str(output_path),
+            )
+
+        assert output_path.exists()
+        assert "predictions" in result
+        # _get_session が呼ばれたことを確認（TFLite パスではなく ONNX パス）
+        mock_session.run.assert_called_once()
+
+    def test_run_forecast_falls_back_to_tflite_when_no_onnx(self, tmp_path):
+        """ONNX ファイルが存在しない場合、TFLite 後方互換パスで推論する。"""
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        self._make_norm_params(model_dir)
+        # TFLite のみ配置（ONNX なし）
+        (model_dir / "agriha_tide.tflite").write_bytes(b"dummy_tflite")
+
+        db_path = tmp_path / "sensor_log.db"
+        _make_db(str(db_path), [])
+        output_path = tmp_path / "tide_forecast.json"
+
+        fake_pred = np.zeros((1, 6, 3), dtype=np.float32)
+        mock_interp = mock.MagicMock()
+        mock_interp.get_input_details.return_value = [{"index": 0}, {"index": 1}]
+        mock_interp.get_output_details.return_value = [{"index": 2}]
+        mock_interp.get_tensor.return_value = fake_pred
+
+        with mock.patch(
+            "agriha.control.tide_forecaster._get_tflite_interpreter",
+            return_value=mock_interp,
+        ), mock.patch(
+            "agriha.control.tide_forecaster.fetch_openmeteo_forecast",
+            return_value=None,
+        ):
+            result = run_forecast(
+                db_path=str(db_path),
+                model_dir=str(model_dir),
+                output_path=str(output_path),
+            )
+
+        assert "predictions" in result
+        # TFLite インタープリタが呼ばれたことを確認
+        mock_interp.invoke.assert_called_once()
+
+    def test_run_forecast_onnx_denormalization(self, tmp_path):
+        """ONNX パスでも逆正規化が正しく適用される。"""
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        self._make_norm_params(model_dir)
+        (model_dir / "agriha_tide.onnx").write_bytes(b"dummy_onnx")
+
+        db_path = tmp_path / "sensor_log.db"
+        _make_db(str(db_path), [])
+        output_path = tmp_path / "tide_forecast.json"
+
+        # InAirTemp norm=1.0 → real = 25 + 3*1 = 28
+        fake_pred = np.zeros((1, 6, 3), dtype=np.float32)
+        fake_pred[0, :, 0] = 1.0
+
+        mock_session = mock.MagicMock()
+        mock_input_0 = mock.MagicMock()
+        mock_input_0.name = "input_0"
+        mock_input_1 = mock.MagicMock()
+        mock_input_1.name = "input_1"
+        mock_session.get_inputs.return_value = [mock_input_0, mock_input_1]
+        mock_session.run.return_value = [fake_pred]
+
+        with mock.patch(
+            "agriha.control.tide_forecaster._get_session",
+            return_value=mock_session,
+        ), mock.patch(
+            "agriha.control.tide_forecaster.fetch_openmeteo_forecast",
+            return_value=None,
+        ):
+            result = run_forecast(
+                db_path=str(db_path),
+                model_dir=str(model_dir),
+                output_path=str(output_path),
+            )
+
+        for val in result["predictions"]["InAirTemp"]:
+            assert abs(val - 28.0) < 0.01, f"期待値28.0、実際={val}"
