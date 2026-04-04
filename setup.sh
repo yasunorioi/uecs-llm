@@ -16,6 +16,18 @@ AGRIHA_USER="agriha"
 echo "=== AgriHA v5 セットアップ開始 ==="
 echo "リポジトリパス: ${SCRIPT_DIR}"
 
+# Step 0: apt 依存パッケージインストール（冪等 — 既存なら何もしない）
+echo "[0/6] apt 依存パッケージインストール..."
+sudo apt-get update -qq
+sudo apt-get install -y --no-install-recommends \
+    python3-venv \
+    python3-dev \
+    build-essential \
+    nginx \
+    mosquitto \
+    mosquitto-clients
+echo "  → apt パッケージインストール完了"
+
 # Step 1: Python venv作成 + pip install
 if [ ! -d "$VENV_DIR" ]; then
     echo "[1/6] venv作成中..."
