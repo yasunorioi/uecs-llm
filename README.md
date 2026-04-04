@@ -195,6 +195,7 @@ journalctl -u unipi-daemon -f
 |--------|------|------|
 | emergency_guard.sh | 毎分 | Layer 1: 緊急制御 |
 | rule_engine.py | 10分毎 | Layer 2: ルールベース制御 |
+| tide_forecaster.py | 10分毎 | TiDE予測更新 (InAirTemp/InAirHumid/InAirCO2 6h先行予測) |
 | rule_compiler.py review | 週次 月曜07:00 | Layer 3 (v5): ルール候補レビュー・自動更新 |
 | distiller.py | 週次 月曜03:00 | ルール候補蒸留 |
 | reflection.py | 週次 月曜07:00 | LINE反省会（⚠ ファイル削除済み・要修復） |
@@ -266,6 +267,22 @@ forecast_engine.py は OpenAI SDK 互換クライアントを使用。
 pip install -e ".[dev]"
 pytest tests/ -v
 ```
+
+## 依存インストール
+
+```bash
+# 通常（daemon + TiDE予測）
+pip install -e ".[daemon,tide]"
+
+# RPi4/5 (aarch64): tflite-runtime が自動選択される
+# x86_64 開発環境: tensorflow にフォールバック
+
+# TiDE関連（numpy + tflite-runtime/tensorflow）
+pip install -e ".[tide]"
+```
+
+> **RPi4補足**: `tflite-runtime` は `tensorflow` 全体より軽量（~50MB vs ~500MB）。
+> setup.sh は自動で `[daemon,tide]` をインストールする。
 
 ## ライセンス
 

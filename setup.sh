@@ -23,16 +23,16 @@ if [ ! -d "$VENV_DIR" ]; then
 else
     echo "[1/6] venv既存 → スキップ"
 fi
-echo "[1/6] pip install（daemon extras）..."
+echo "[1/6] pip install（daemon + tide extras）..."
 "$VENV_DIR/bin/pip" install --upgrade pip --quiet
-"$VENV_DIR/bin/pip" install -e "${SCRIPT_DIR}[daemon]" --quiet
+"$VENV_DIR/bin/pip" install -e "${SCRIPT_DIR}[daemon,tide]" --quiet
 echo "  → pip install 完了"
 
 # Step 2: /etc/agriha/ ディレクトリ作成 + 設定ファイルコピー
 echo "[2/6] 設定ディレクトリ作成..."
 sudo mkdir -p "$CONFIG_DIR"
 # 既存ファイルは上書きしない（農家が手動編集した設定を守る）
-for f in config/emergency.conf config/rules.yaml config/forecast.yaml config/channel_map.yaml config/crop_irrigation.yaml config/thresholds.yaml; do
+for f in config/emergency.conf config/rules.yaml config/forecast.yaml config/channel_map.yaml config/crop_irrigation.yaml config/thresholds.yaml config/agri_knowledge.yaml config/rule_candidates.yaml; do
     fname=$(basename "$f")
     if [ ! -f "${CONFIG_DIR}/${fname}" ]; then
         sudo cp "${SCRIPT_DIR}/${f}" "${CONFIG_DIR}/${fname}"
@@ -72,27 +72,31 @@ sudo chown "${AGRIHA_USER}:${AGRIHA_USER}" /var/log/agriha
 echo "  → /var/log/agriha 作成完了"
 find "${SCRIPT_DIR}" -path "${SCRIPT_DIR}/.git" -prune -o -print0 | xargs -0 sudo chown "${AGRIHA_USER}:${AGRIHA_USER}"
 echo "  → ${SCRIPT_DIR} 所有権を ${AGRIHA_USER} に変更（.git除外）"
+# /etc/agriha/ ディレクトリ自体の所有権を agriha に変更（読み取り可能にする）
+sudo chown "${AGRIHA_USER}:${AGRIHA_USER}" "$CONFIG_DIR"
+sudo chmod 755 "$CONFIG_DIR"
 # ダッシュボードから編集するファイルはagrihaユーザーに書き込み権限を付与
-for f in rules.yaml channel_map.yaml system_prompt.txt crop_irrigation.yaml forecast.yaml thresholds.yaml; do
+for f in rules.yaml channel_map.yaml system_prompt.txt crop_irrigation.yaml forecast.yaml thresholds.yaml agri_knowledge.yaml rule_candidates.yaml; do
     if [ -f "${CONFIG_DIR}/${f}" ]; then
         sudo chown "${AGRIHA_USER}:${AGRIHA_USER}" "${CONFIG_DIR}/${f}"
         sudo chmod 664 "${CONFIG_DIR}/${f}"
     fi
 done
-echo "  → ダッシュボード編集対象ファイルの権限設定完了"
+echo "  → /etc/agriha/ パーミッション設定完了"
 
 # Step 4: systemd サービスファイルインストール + enable
 # __REPO_DIR__ を実際のリポジトリパスに置換してからインストール
 echo "[4/6] systemdサービスインストール..."
-for svc in unipi-daemon.service agriha-ui.service agriha-nullclaw-proxy.service; do
+for svc in unipi-daemon.service agriha-ui.service agriha-nullclaw-proxy.service agriha-sensor-logger.service; do
     if [ -f "${SCRIPT_DIR}/systemd/${svc}" ]; then
         sed "s|__REPO_DIR__|${SCRIPT_DIR}|g" "${SCRIPT_DIR}/systemd/${svc}" \
             | sudo tee "/etc/systemd/system/${svc}" > /dev/null
     fi
 done
 sudo systemctl daemon-reload
-sudo systemctl enable unipi-daemon agriha-ui agriha-nullclaw-proxy
-echo "  → unipi-daemon, agriha-ui, agriha-nullclaw-proxy を有効化（パス: ${SCRIPT_DIR}）"
+sudo systemctl enable unipi-daemon agriha-ui agriha-nullclaw-proxy agriha-sensor-logger
+sudo systemctl start agriha-sensor-logger || true  # 初回: MQTT未起動でも継続
+echo "  → unipi-daemon, agriha-ui, agriha-nullclaw-proxy, agriha-sensor-logger を有効化（パス: ${SCRIPT_DIR}）"
 
 # Step 5: cron設定（三層制御用）
 # cron内のハードコードパス（/home/agriha/uecs-llm）をこのリポジトリのパスに置換
@@ -111,6 +115,9 @@ if [ ! -f "$ENV_FILE" ]; then
 else
     echo "[6/6] .env 既存 → スキップ"
 fi
+# .env は agriha ユーザーが EnvironmentFile= で読む → 読み取り権限付与
+sudo chown "${AGRIHA_USER}:${AGRIHA_USER}" "$ENV_FILE"
+sudo chmod 640 "$ENV_FILE"  # 所有者(agriha)読み書き可、グループ読み取り可、他者不可
 
 # Step 7: Nginx設定デプロイ
 echo "[7/7] Nginx設定..."
