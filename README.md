@@ -4,39 +4,112 @@ LLM による温室環境制御システム — 三層自律制御アーキテ�
 
 ## アーキテクチャ
 
-```
-┌─────────────────────────────────────────────────────────┐
-│ Raspberry Pi 5 (AgriHA) — 全制御をオンボード実行         │
-│                                                         │
-│  ┌── Layer 1: 緊急制御 ──────────────────────────────┐  │
-│  │ emergency_guard.sh (cron 1分)                     │  │
-│  │ 高温/低温→即時開窓・ロックアウト                   │  │
-│  └──────────────────────────────────────────────────┘  │
-│  ┌── Layer 2: ルールベース制御 ──────────────────────┐  │
-│  │ rule_engine.py (cron 10分)                        │  │
-│  │ YAML定義ルール→灌水・換気・強風・降雨制御         │  │
-│  └──────────────────────────────────────────────────┘  │
-│  ┌── Layer 3: LLMルールコンパイラ (v5) ─────────────┐  │
-│  │ rule_compiler.py (週次レビュー 月曜07:00)          │  │
-│  │ NullClaw Proxy (port 3001): オフラインLLM推論      │  │
-│  │ → ルール候補レビュー・rules.yaml自動更新           │  │
-│  │ ※ forecast_engine / plan_executor は v4 legacy    │  │
-│  └──────────────────────────────────────────────────┘  │
-│                                                         │
-│  NullClaw Proxy (port 3001): オフラインLLM推論          │
-│  unipi-daemon: センサー・リレー・MQTT・REST API         │
-│  agriha-ui: ローカルWebUI (FastAPI+htmx, ポート8501)   │
-│  Mosquitto: MQTT broker (ポート1883)                    │
-├─────────────────────────────────────────────────────────┤
-│ UniPi 1.1 ハードウェア                                  │
-│  MCP23008 リレー(8ch) + DS18B20 + GPIO DI + Misol RS485│
-│                                                         │
-│ USB SIMモデム (オプション): 固定回線不要な圃場向け       │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+
+subgraph group_group_runtime["Runtime stack"]
+  node_node_mqtt["Mosquitto<br/>mqtt broker<br/>[mosquitto.conf]"]
+end
+
+subgraph group_group_control["Control layers"]
+  node_node_emergency["Emergency guard<br/>safety cron<br/>[emergency_guard.sh]"]
+  node_node_rule_engine["Rule engine<br/>deterministic control<br/>[rule_engine.py]"]
+  node_node_rule_manager["Rule manager<br/>rules state<br/>[rule_manager.py]"]
+  node_node_plan_executor["Plan executor<br/>action runner<br/>[plan_executor.py]"]
+  node_node_rule_compiler["Rule compiler<br/>llm-assisted<br/>[rule_compiler.py]"]
+  node_node_nullclaw(("NullClaw proxy<br/>llm gateway<br/>[nullclaw_proxy.py]"))
+end
+
+subgraph group_group_daemon["Hardware daemon"]
+  node_node_daemon_main(("UniPi daemon<br/>[main.py]"))
+  node_node_sensors["Sensors<br/>device inputs<br/>[sensor_loop.py]"]
+  node_node_actuation["Actuators<br/>relay control<br/>[i2c_relay.py]"]
+  node_node_rest_api["REST API<br/>http api<br/>[rest_api.py]"]
+end
+
+subgraph group_group_chat["UI and bot"]
+  node_node_ui["Agriha UI<br/>web app<br/>[app.py]"]
+  node_node_linebot["LINE bot<br/>chat handler<br/>[linebot_handler.py]"]
+end
+
+subgraph group_group_ml["Forecasting and offline ML"]
+  node_node_forecast["Tide forecaster<br/>prediction<br/>[tide_forecaster.py]"]
+  node_node_forecast_engine["Forecast engine<br/>ml integration<br/>[forecast_engine.py]"]
+  node_node_dataset["Sensor data<br/>dataset<br/>[sensor_hourly.csv]"]
+  node_node_tools["ML tools<br/>offline pipeline<br/>[train_tide.py]"]
+end
+
+subgraph group_group_ops["Deployment and config"]
+  node_node_config["Runtime config<br/>yaml/conf<br/>[rules.yaml]"]
+  node_node_systemd["Systemd units<br/>service orchestration"]
+  node_node_setup["Install tools<br/>bootstrap<br/>[setup.sh]"]
+end
+
+node_node_sensors -->|"feeds"| node_node_daemon_main
+node_node_daemon_main -->|"controls"| node_node_actuation
+node_node_daemon_main -->|"serves"| node_node_rest_api
+node_node_daemon_main -->|"publishes"| node_node_mqtt
+node_node_mqtt -->|"events"| node_node_rule_engine
+node_node_emergency -->|"forces safe state"| node_node_actuation
+node_node_emergency -.->|"suppresses"| node_node_rule_engine
+node_node_rule_engine -->|"loads rules"| node_node_rule_manager
+node_node_rule_engine -->|"dispatches"| node_node_plan_executor
+node_node_plan_executor -->|"issues actions"| node_node_rest_api
+node_node_rule_compiler -->|"queries"| node_node_nullclaw
+node_node_rule_compiler -->|"writes rules"| node_node_config
+node_node_nullclaw -.->|"indirectly decouples"| node_node_mqtt
+node_node_ui -->|"edits"| node_node_config
+node_node_ui -->|"monitors"| node_node_daemon_main
+node_node_linebot -->|"shares service"| node_node_ui
+node_node_forecast -->|"runs in"| node_node_forecast_engine
+node_node_tools -->|"trains on"| node_node_dataset
+node_node_tools -->|"deploys"| node_node_forecast
+node_node_systemd -->|"starts"| node_node_daemon_main
+node_node_systemd -->|"starts"| node_node_ui
+node_node_systemd -->|"starts"| node_node_nullclaw
+node_node_systemd -->|"starts"| node_node_mqtt
+node_node_setup -.->|"installs"| node_node_systemd
+node_node_config -->|"configures"| node_node_emergency
+node_node_config -->|"configures"| node_node_rule_engine
+node_node_config -->|"guides"| node_node_rule_compiler
+node_node_config -->|"backing store"| node_node_ui
+
+click node_node_daemon_main "https://github.com/yasunorioi/uecs-llm/blob/v5/src/agriha/daemon/main.py"
+click node_node_sensors "https://github.com/yasunorioi/uecs-llm/blob/v5/src/agriha/daemon/sensor_loop.py"
+click node_node_actuation "https://github.com/yasunorioi/uecs-llm/blob/v5/src/agriha/daemon/i2c_relay.py"
+click node_node_rest_api "https://github.com/yasunorioi/uecs-llm/blob/v5/src/agriha/daemon/rest_api.py"
+click node_node_mqtt "https://github.com/yasunorioi/uecs-llm/blob/v5/docker/mosquitto/mosquitto.conf"
+click node_node_emergency "https://github.com/yasunorioi/uecs-llm/blob/v5/src/agriha/control/emergency_guard.sh"
+click node_node_rule_engine "https://github.com/yasunorioi/uecs-llm/blob/v5/src/agriha/control/rule_engine.py"
+click node_node_rule_manager "https://github.com/yasunorioi/uecs-llm/blob/v5/src/agriha/control/rule_manager.py"
+click node_node_plan_executor "https://github.com/yasunorioi/uecs-llm/blob/v5/src/agriha/control/plan_executor.py"
+click node_node_rule_compiler "https://github.com/yasunorioi/uecs-llm/blob/v5/src/agriha/control/rule_compiler.py"
+click node_node_nullclaw "https://github.com/yasunorioi/uecs-llm/blob/v5/src/agriha/control/nullclaw_proxy.py"
+click node_node_ui "https://github.com/yasunorioi/uecs-llm/blob/v5/src/agriha/chat/app.py"
+click node_node_linebot "https://github.com/yasunorioi/uecs-llm/blob/v5/src/agriha/chat/linebot_handler.py"
+click node_node_forecast "https://github.com/yasunorioi/uecs-llm/blob/v5/src/agriha/control/tide_forecaster.py"
+click node_node_forecast_engine "https://github.com/yasunorioi/uecs-llm/blob/v5/src/agriha/control/forecast_engine.py"
+click node_node_dataset "https://github.com/yasunorioi/uecs-llm/blob/v5/data/sensor_hourly.csv"
+click node_node_tools "https://github.com/yasunorioi/uecs-llm/blob/v5/tools/train_tide.py"
+click node_node_config "https://github.com/yasunorioi/uecs-llm/blob/v5/config/rules.yaml"
+click node_node_systemd "https://github.com/yasunorioi/uecs-llm/blob/v5/systemd/unipi-daemon.service"
+click node_node_setup "https://github.com/yasunorioi/uecs-llm/blob/v5/setup.sh"
+
+classDef toneNeutral fill:#f8fafc,stroke:#334155,stroke-width:1.5px,color:#0f172a
+classDef toneBlue fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#172554
+classDef toneAmber fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
+classDef toneMint fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
+classDef toneRose fill:#ffe4e6,stroke:#e11d48,stroke-width:1.5px,color:#881337
+classDef toneIndigo fill:#e0e7ff,stroke:#4f46e5,stroke-width:1.5px,color:#312e81
+classDef toneTeal fill:#ccfbf1,stroke:#0f766e,stroke-width:1.5px,color:#134e4a
+class node_node_mqtt toneBlue
+class node_node_emergency,node_node_rule_engine,node_node_rule_manager,node_node_plan_executor,node_node_rule_compiler,node_node_nullclaw toneAmber
+class node_node_daemon_main,node_node_sensors,node_node_actuation,node_node_rest_api toneMint
+class node_node_ui,node_node_linebot toneRose
+class node_node_forecast,node_node_forecast_engine,node_node_dataset,node_node_tools toneIndigo
+class node_node_config,node_node_systemd,node_node_setup toneTeal
 ```
 
-> **v5移行状況**: Layer 3はリアルタイム予報制御(forecast_engine, v4)から週次ルールコンパイル(rule_compiler, v5)に移行中。
-> forecast_engine.py と plan_executor.py は v4 legacy として残存しているが、cronでの定期実行は停止済み。
 
 ## 設計原則
 
