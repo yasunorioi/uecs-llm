@@ -906,6 +906,24 @@ def run(
                 tide_forecast=tide_forecast,
             )
 
+            # Step 5.5: shadow-run (env AGRIHA_SHADOW_RUN=1 のときのみ)
+            # DSL interpreter を並行実行して action 一致を verify。
+            # read-only + log-only、失敗しても本流に影響しない。
+            if os.environ.get("AGRIHA_SHADOW_RUN") == "1":
+                try:
+                    from agriha.control.automation_shadow import run_shadow
+                    run_shadow(
+                        cfg=cfg,
+                        crop_cfg=crop_cfg,
+                        sensors=sensors,
+                        solar_acc=result["solar_acc"],
+                        temp_history=result["temp_history"],
+                        live_result=result,
+                        tide_forecast=tide_forecast,
+                    )
+                except Exception as e:
+                    logger.warning("shadow_run hook failed (non-fatal): %s", e)
+
             # Step 6: アクション実行
             relay_actions = result["relay_actions"]
             if relay_actions:

@@ -1,0 +1,105 @@
+# automations.yaml — P1〜P7 の DSL 化スキーマ (feature/dsl-interpreter)
+#
+# `rule_engine.py` から shadow-run (env AGRIHA_SHADOW_RUN=1) で読まれ、
+# `automation_interpreter` により並行評価される。実 relay 制御は
+# `evaluate_rules()` が担当し、interpreter は read-only + log-only。
+#
+# デプロイ先: /etc/agriha/automations.yaml (env AUTOMATIONS_SCHEMA_PATH で上書き可)
+# 設計書: docs/dsl_prototype.md
+
+automations:
+  # ═══════════════════════════════════════════
+  # Priority 1: 降雨 → 全窓閉 (hard_stop windows)
+  # ═══════════════════════════════════════════
+  - id: rain_close_all
+    priority: 100
+    trigger: rainfall > config.rain.threshold_mm_h
+    action: {kind: close_all_windows}
+    hard_stop: true
+
+  # ═══════════════════════════════════════════
+  # Priority 2: 強風 → 風向別閉 or 全閉 (hard_stop windows)
+  # ═══════════════════════════════════════════
+  - id: strong_wind
+    priority: 95
+    trigger: wind_speed > config.wind.strong_wind_threshold_ms
+    action: {kind: close_windows_by_wind_direction}
+    hard_stop: true
+
+  # ═══════════════════════════════════════════
+  # Priority 3: 急昇温 → 60% 強制換気
+  # ═══════════════════════════════════════════
+  - id: rapid_rise_vent
+    priority: 80
+    trigger: rise_rate() > config.morning_ventilation.max_rise_rate_per_hour
+    action: {kind: set_min_opening, value: 60}
+
+  # ═══════════════════════════════════════════
+  # Priority 3.5: TiDE 1h 湿度予測 → 先行換気 30%
+  # 副次: TIDE_HUMIDITY_PREVENT_THRESHOLD(現状モジュール定数)を config に昇格
+  # ═══════════════════════════════════════════
+  - id: tide_preemptive_vent
+    priority: 75
+    trigger: tide_forecast_humidity_1h() > config.tide.humidity_prevent_threshold
+    action: {kind: set_min_opening, value: 30}
+
+  # ═══════════════════════════════════════════
+  # Priority 4: 湿度換気 (release で真ヒステリシス、
+  # evaluate_rules に未実装だった gap を interpreter で補完)
+  # ═══════════════════════════════════════════
+  - id: humidity_vent
+    priority: 60
+    trigger: indoor_humidity >= config.humidity.ventilation_start   # 85
+    release: indoor_humidity <= config.humidity.ventilation_stop    # 75
+    action: {kind: set_min_opening, value: 30}
+
+  # ═══════════════════════════════════════════
+  # Priority 5a: CO2 critical (300ppm 以下) → 60%
+  # ═══════════════════════════════════════════
+  - id: co2_critical_vent
+    priority: 55
+    trigger: indoor_co2 <= config.co2.critical_low   # 300
+    action: {kind: set_min_opening, value: 60}
+
+  # ═══════════════════════════════════════════
+  # Priority 5b: CO2 補充 (350ppm 以下) → 30%
+  # ═══════════════════════════════════════════
+  - id: co2_vent
+    priority: 50
+    trigger: indoor_co2 <= config.co2.ventilation_trigger   # 350
+    action: {kind: set_min_opening, value: 30}
+
+  # ═══════════════════════════════════════════
+  # Priority 6: 日中温度制御
+  # 夜間ブランチと寒冷ブランチは default opening=0 と max compose で自然消滅、
+  # 日中過温だけを active automation として書く
+  # ═══════════════════════════════════════════
+  - id: daytime_temp_too_warm_vent
+    priority: 40
+    trigger: not is_night() and indoor_temp > schedule_target_temp()
+    action:
+      kind: set_min_opening
+      value_expr: window_step_lookup(outdoor_temp)
+
+  # ═══════════════════════════════════════════
+  # Priority 7: 日射比例灌水 (pulse group、windows と独立に発火)
+  # ═══════════════════════════════════════════
+  - id: solar_irrigation
+    priority: 30
+    trigger: solar_accumulated_mj() >= solar_threshold()
+    action:
+      kind: pulse_relay
+      ch_expr: config.irrigation.channel
+      duration_expr: irrigation_duration()
+    on_fire:
+      reset: [solar_acc.accumulated_mj]
+      increment: [solar_acc.irrigations_today]
+      set_timestamp: [solar_acc.last_irrigation_at]
+
+# ═══════════════════════════════════════════
+# 補足: config.tide.humidity_prevent_threshold は rules.yaml に未追加。
+# 追加提案 (別 PR で):
+#   tide:
+#     humidity_prevent_threshold: 80
+# 未追加のままだと tide_preemptive_vent 評価時に AttributeError → strict=False で skip される。
+# ═══════════════════════════════════════════
