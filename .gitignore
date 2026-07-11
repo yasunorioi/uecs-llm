@@ -34,8 +34,10 @@ Thumbs.db
 wg0.conf
 
 # Docs (internal design docs — not for public)
-docs/
+# 個別 allow したいものは ! で再包含 (親ディレクトリ excl だと再包含できないので docs/* 形式)
+docs/*
 !docs/README.md
+!docs/shadow_report_deploy.md
 
 # Data
 *.db
