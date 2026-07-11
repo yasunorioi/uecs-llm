@@ -51,9 +51,17 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 # 集計モデル
 # ══════════════════════════════════════════════
 
+# entry.mode の 2 種:
+#   "shadow"  — interpreter vs evaluate_rules の A/B 比較 (live + delta 有り)
+#   "replay"  — 実センサから interpreter-only trace (live=null, delta=null, match=null)
+# mode 欠落は shadow 扱い (旧 log 互換)。
+
+
 @dataclass
 class Summary:
     total: int = 0
+    shadow_total: int = 0
+    replay_total: int = 0
     matched: int = 0
     diverged: int = 0
     first_ts: str | None = None
@@ -63,10 +71,18 @@ class Summary:
     interp_trigger_counts: Counter[str] = field(default_factory=Counter)
     live_trigger_counts: Counter[str] = field(default_factory=Counter)
     skipped_counts: Counter[str] = field(default_factory=Counter)
+    opening_pct_histogram: Counter[int] = field(default_factory=Counter)
 
     @property
     def match_rate(self) -> float:
-        return (self.matched / self.total) if self.total else 0.0
+        return (self.matched / self.shadow_total) if self.shadow_total else 0.0
+
+
+def _entry_mode(e: dict[str, Any]) -> str:
+    m = e.get("mode")
+    if m in ("shadow", "replay"):
+        return m
+    return "shadow"  # 旧 log 互換
 
 
 def summarize(entries: Iterable[dict[str, Any]]) -> Summary:
@@ -80,16 +96,23 @@ def summarize(entries: Iterable[dict[str, Any]]) -> Summary:
             if s.last_ts is None or ts > s.last_ts:
                 s.last_ts = ts
 
-        if e.get("match"):
-            s.matched += 1
+        mode = _entry_mode(e)
+        if mode == "shadow":
+            s.shadow_total += 1
+            if e.get("match"):
+                s.matched += 1
+            else:
+                s.diverged += 1
+            delta = e.get("delta") or {}
+            for key, pair in delta.items():
+                s.delta_key_counts[key] += 1
+                bucket = s.delta_pattern_counts.setdefault(key, Counter())
+                bucket[_format_pattern(pair)] += 1
+            live = e.get("live") or {}
+            for tid in live.get("triggered") or []:
+                s.live_trigger_counts[tid] += 1
         else:
-            s.diverged += 1
-
-        delta = e.get("delta") or {}
-        for key, pair in delta.items():
-            s.delta_key_counts[key] += 1
-            bucket = s.delta_pattern_counts.setdefault(key, Counter())
-            bucket[_format_pattern(pair)] += 1
+            s.replay_total += 1
 
         interp = e.get("interp") or {}
         for tid in interp.get("triggered") or []:
@@ -97,10 +120,9 @@ def summarize(entries: Iterable[dict[str, Any]]) -> Summary:
         for pair in interp.get("skipped") or []:
             aid = pair[0] if isinstance(pair, list) and pair else str(pair)
             s.skipped_counts[aid] += 1
-
-        live = e.get("live") or {}
-        for tid in live.get("triggered") or []:
-            s.live_trigger_counts[tid] += 1
+        pct = interp.get("target_opening_pct")
+        if isinstance(pct, int):
+            s.opening_pct_histogram[pct] += 1
 
     return s
 
@@ -122,21 +144,26 @@ def render_text(s: Summary, recent: list[dict[str, Any]]) -> str:
     lines.append("═" * 60)
     lines.append(f"range   : {s.first_ts}  →  {s.last_ts}")
     lines.append(
-        f"entries : total={s.total}  matched={s.matched}  "
-        f"diverged={s.diverged}  match_rate={s.match_rate:.1%}"
+        f"entries : total={s.total}  (shadow={s.shadow_total}  replay={s.replay_total})"
     )
+    if s.shadow_total:
+        lines.append(
+            f"          matched={s.matched}  diverged={s.diverged}  "
+            f"match_rate={s.match_rate:.1%}"
+        )
     lines.append("")
 
-    lines.append("── divergence by delta key ──")
-    if not s.delta_key_counts:
-        lines.append("  (none)")
-    else:
-        for key, n in s.delta_key_counts.most_common():
-            lines.append(f"  {key:30s} {n:6d}")
-            patterns = s.delta_pattern_counts.get(key, Counter())
-            for pat, pn in patterns.most_common(5):
-                lines.append(f"      {pn:5d} × {pat}")
-    lines.append("")
+    if s.shadow_total:
+        lines.append("── divergence by delta key ──")
+        if not s.delta_key_counts:
+            lines.append("  (none)")
+        else:
+            for key, n in s.delta_key_counts.most_common():
+                lines.append(f"  {key:30s} {n:6d}")
+                patterns = s.delta_pattern_counts.get(key, Counter())
+                for pat, pn in patterns.most_common(5):
+                    lines.append(f"      {pn:5d} × {pat}")
+        lines.append("")
 
     lines.append("── interp trigger counts (top 15) ──")
     for tid, n in s.interp_trigger_counts.most_common(15):
@@ -144,6 +171,14 @@ def render_text(s: Summary, recent: list[dict[str, Any]]) -> str:
     if not s.interp_trigger_counts:
         lines.append("  (none)")
     lines.append("")
+
+    if s.opening_pct_histogram:
+        lines.append("── interp target_opening_pct histogram ──")
+        for pct in sorted(s.opening_pct_histogram.keys()):
+            n = s.opening_pct_histogram[pct]
+            bar = "█" * min(40, n)
+            lines.append(f"  {pct:3d}%  {n:5d}  {bar}")
+        lines.append("")
 
     if s.skipped_counts:
         lines.append("── skipped automations (interpreter strict=False) ──")
@@ -194,6 +229,7 @@ _HTML_TEMPLATE = """<!doctype html>
  th{background:#eee}
  tr.match td:first-child{border-left:3px solid #2a7}
  tr.diverge td:first-child{border-left:3px solid #c33}
+ tr.replay td:first-child{border-left:3px solid #99a}
  details{margin:.6rem 0}
  .filter{margin:.6rem 0;display:flex;gap:.6rem;align-items:center;font-size:.9rem}
  code{font-family:ui-monospace,monospace;font-size:.85rem}
@@ -209,6 +245,8 @@ _HTML_TEMPLATE = """<!doctype html>
 
 <div class="cards">
   <div class="card">total <b>__TOTAL__</b></div>
+  <div class="card">shadow <b>__SHADOW__</b></div>
+  <div class="card">replay <b>__REPLAY__</b></div>
   <div class="card">matched <b class="ok">__MATCHED__</b></div>
   <div class="card">diverged <b class="ng">__DIVERGED__</b></div>
   <div class="card">match rate <b>__MATCHRATE__</b></div>
@@ -260,13 +298,24 @@ function render(){
     const interp = e.interp || {};
     const live = e.live || {};
     const delta = e.delta || {};
+    const mode = e.mode || "shadow";
     const dstr = Object.entries(delta).map(([k,v]) =>
       `<div><b>${esc(k)}</b>: <span class="pat">${esc(JSON.stringify(v))}</span></div>`
     ).join("") || "<span style=color:#999>—</span>";
     const trig = (interp.triggered||[]).join(", ");
-    const cls = e.match ? "match" : "diverge";
+    let matchCell, cls;
+    if (mode === "replay") {
+      matchCell = '<span style=color:#888>—</span>';
+      cls = "replay";
+    } else if (e.match) {
+      matchCell = '<span class=ok>OK</span>';
+      cls = "match";
+    } else {
+      matchCell = '<span class=ng>NG</span>';
+      cls = "diverge";
+    }
     return `<tr class="${cls}"><td>${esc(e.ts||"")}</td>`
-      + `<td>${e.match ? '<span class=ok>OK</span>' : '<span class=ng>NG</span>'}</td>`
+      + `<td>${matchCell}</td>`
       + `<td>${esc(interp.target_opening_pct ?? "")}</td>`
       + `<td>${esc(live.target_opening_pct ?? "")}</td>`
       + `<td>${esc(trig)}</td>`
@@ -309,9 +358,13 @@ def render_html(
         .replace("__GENERATED__", esc(generated_at))
         .replace("__RANGE__", esc(f"{s.first_ts} → {s.last_ts}"))
         .replace("__TOTAL__", esc(s.total))
+        .replace("__SHADOW__", esc(s.shadow_total))
+        .replace("__REPLAY__", esc(s.replay_total))
         .replace("__MATCHED__", esc(s.matched))
         .replace("__DIVERGED__", esc(s.diverged))
-        .replace("__MATCHRATE__", esc(f"{s.match_rate:.1%}"))
+        .replace("__MATCHRATE__", esc(
+            f"{s.match_rate:.1%}" if s.shadow_total else "—"
+        ))
         .replace("__DELTA_TABLE__", delta_table)
         .replace("__TRIGGER_TABLE__", trigger_table)
         .replace("__SKIPPED_BLOCK__", skipped_html)

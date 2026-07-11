@@ -133,6 +133,76 @@ def test_cli_html_writes_selfcontained_file(tmp_path, capsys):
     assert "<script src" not in doc
 
 
+# ── replay mode entries ─────────────────────────────
+
+def _entry(mode: str, ts: str, opening: int, triggered: list[str]):
+    return {
+        "ts": ts,
+        "mode": mode,
+        "match": None if mode == "replay" else True,
+        "interp": {
+            "triggered": triggered,
+            "target_opening_pct": opening,
+            "close_all_windows": False,
+            "close_by_wind_direction": False,
+            "relay_pulses": [],
+            "skipped": [],
+            "active_after": [],
+        },
+        "live": None if mode == "replay" else {"triggered": triggered, "target_opening_pct": opening},
+        "delta": None if mode == "replay" else {},
+    }
+
+
+def test_summarize_replay_mode_not_counted_as_diverged():
+    entries = [
+        _entry("replay", "2026-07-11T10:00:00+09:00", 0, []),
+        _entry("replay", "2026-07-11T10:10:00+09:00", 30, ["humidity_vent"]),
+        _entry("shadow", "2026-07-11T10:20:00+09:00", 30, ["humidity_vent"]),
+    ]
+    s = sr.summarize(entries)
+    assert s.total == 3
+    assert s.shadow_total == 1
+    assert s.replay_total == 2
+    assert s.matched == 1  # shadow エントリのみ
+    assert s.diverged == 0
+    assert s.match_rate == 1.0
+    # trigger 集計は両モード合算
+    assert s.interp_trigger_counts["humidity_vent"] == 2
+    # opening histogram も両モード合算
+    assert s.opening_pct_histogram[0] == 1
+    assert s.opening_pct_histogram[30] == 2
+
+
+def test_summarize_missing_mode_treated_as_shadow():
+    """既存 log (mode 無し) は shadow 扱いで後方互換。"""
+    old_entry = {
+        "ts": "t", "match": True,
+        "interp": {"triggered": [], "target_opening_pct": 0},
+        "live": {"triggered": [], "target_opening_pct": 0},
+        "delta": {},
+    }
+    s = sr.summarize([old_entry])
+    assert s.shadow_total == 1
+    assert s.replay_total == 0
+    assert s.matched == 1
+
+
+def test_html_replay_only_shows_dash_for_match_rate(tmp_path):
+    entries = [_entry("replay", "t1", 30, ["humidity_vent"])]
+    log = tmp_path / "log.jsonl"
+    with log.open("w", encoding="utf-8") as f:
+        for e in entries:
+            f.write(json.dumps(e, ensure_ascii=False) + "\n")
+    out = tmp_path / "r.html"
+    sr.main(["html", "--log", str(log), "--out", str(out)])
+    doc = out.read_text(encoding="utf-8")
+    # replay only なので match rate は "—"
+    assert "match rate <b>—</b>" in doc
+    # entries table には replay エントリが載る
+    assert '"mode": "replay"' in doc or '"mode":"replay"' in doc
+
+
 def test_load_jsonl_skips_malformed_line(tmp_path, capsys):
     p = tmp_path / "log.jsonl"
     p.write_text(
