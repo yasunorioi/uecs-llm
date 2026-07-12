@@ -38,6 +38,7 @@ wg0.conf
 docs/*
 !docs/README.md
 !docs/shadow_report_deploy.md
+!docs/dsl_prototype.md
 
 # Data
 *.db
