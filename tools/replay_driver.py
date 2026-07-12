@@ -49,76 +49,85 @@ except ImportError:
 _JST = ZoneInfo("Asia/Tokyo")
 
 # ══════════════════════════════════════════════
-# sensor_log.db metric → interpreter sensor 名 マッピング
+# MQTT topic → interpreter sensor 名 マッピング
 # ══════════════════════════════════════════════
 #
-# sensor_log.db は agriha-logger.service (Pi4) が CCM→MQTT を SQLite に流したもの。
-# 現状は 3 メトリクス (temp_inside / humidity / co2) のみだが、将来的に
-# 増えたら _METRIC_MAP に追記するだけで対応する。
-_METRIC_MAP = {
-    "temp_inside": "indoor_temp",
-    "temp_outside": "outdoor_temp",
-    "humidity": "indoor_humidity",
-    "co2": "indoor_co2",
-    "rainfall": "rainfall",
-    "wind_speed": "wind_speed",
-    "wind_direction": "wind_direction",
-    "insolar": "insolar",
-    "solar": "insolar",
-}
+# 実データ source は Pi4 の /home/pi/agriha_history.db (agriha_logger.py が
+# agriha/# を wildcard subscribe して SQLite series/samples に蓄積したもの)。
+# 旧設計は uecs-llm の /var/lib/agriha/sensor_log.db (3 metric しか無い劣化コピー)
+# を読んでいたが、DSL の replay 実データ充実のため 2026-07-12 に切替。
+#
+# house_id を引数に取り、per-house sensor topic + farm 共通 weather topic を
+# interpreter sensor 名 (indoor_temp / outdoor_temp / ...) にマップする。
+
+def build_metric_map(house_id: str) -> dict[str, str]:
+    """agriha_history.db series.key → interpreter sensor 名。"""
+    return {
+        # house 固有
+        f"agriha/{house_id}/sensor/InAirTemp":   "indoor_temp",
+        f"agriha/{house_id}/sensor/InAirHumid": "indoor_humidity",
+        f"agriha/{house_id}/sensor/InAirCO2":   "indoor_co2",
+        f"agriha/{house_id}/sensor/InRadiation": "insolar",  # 室内日射 (代替として)
+        # farm 共通
+        "agriha/farm/weather/WAirTemp":    "outdoor_temp",
+        "agriha/farm/weather/WWindSpeed":  "wind_speed",
+        "agriha/farm/weather/WWindDir16":  "wind_direction",
+        "agriha/farm/weather/WRainfallAmt": "rainfall",
+    }
+
 
 # ══════════════════════════════════════════════
-# sensor_log.db 読取
+# SQLite 読取
 # ══════════════════════════════════════════════
 
 def read_latest_snapshot(
-    db_path: Path, max_age_min: int = 60
-) -> tuple[dict[str, float], str | None]:
-    """
-    metric 毎に最新値を取り、interpreter sensor 名の dict を返す。
-    max_age_min より古い metric は破棄する (センサ dead を「値ある」と誤認しないため)。
+    db_path: Path, house_id: str = "1", max_age_min: int = 60
+) -> tuple[dict[str, float | None], str | None]:
+    """agriha_history.db の series/samples から最新値を取り、interpreter
+    sensor 名にマップした dict を返す。max_age_min を超えた series は捨てる。
 
     Returns: (sensors_dict, latest_ts_iso)
     """
+    mapping = build_metric_map(house_id)
+    now = int(datetime.now(_JST).timestamp())
+    max_age_sec = max_age_min * 60
+
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     cur = conn.cursor()
-    rows = cur.execute(
-        """
-        SELECT metric, value, timestamp FROM sensor_log
-        WHERE (metric, timestamp) IN (
-            SELECT metric, MAX(timestamp) FROM sensor_log GROUP BY metric
-        )
-        """
-    ).fetchall()
+    snapshot: dict[str, float | None] = {}
+    latest_ts_epoch = 0
+    for topic, sname in mapping.items():
+        row = cur.execute(
+            """
+            SELECT sa.value, sa.ts FROM samples sa
+            JOIN series s ON s.id = sa.sid
+            WHERE s.key = ?
+            ORDER BY sa.ts DESC LIMIT 1
+            """,
+            (topic,),
+        ).fetchone()
+        if row is None:
+            continue
+        value, ts = row
+        if (now - int(ts)) > max_age_sec:
+            continue  # stale
+        snapshot[sname] = float(value)
+        latest_ts_epoch = max(latest_ts_epoch, int(ts))
     conn.close()
 
-    now = datetime.now(_JST)
-    snapshot: dict[str, float] = {}
-    latest_ts: str | None = None
-    for metric, value, ts in rows:
-        sname = _METRIC_MAP.get(metric)
-        if not sname:
-            continue
-        try:
-            ts_dt = datetime.fromisoformat(ts).replace(tzinfo=_JST)
-        except ValueError:
-            continue
-        age_min = (now - ts_dt).total_seconds() / 60.0
-        if age_min > max_age_min:
-            continue  # stale — skip
-        snapshot[sname] = float(value)
-        if latest_ts is None or ts > latest_ts:
-            latest_ts = ts
-
-    # 現状 CCM から流れないセンサはデフォルト値で埋める。
-    # P1/P2 が誤発火しないよう rainfall/wind は 0 固定、
-    # P3.5/P6/P7 は該当 primitive が None を返して strict=False で skip されるのを許容。
+    # 欠損は interpreter が strict=False で skip できるよう defaults を埋める。
+    # rain/wind は 0 固定 (P1/P2 が誤発火しないため)、outdoor/insolar は None
     snapshot.setdefault("rainfall", 0.0)
     snapshot.setdefault("wind_speed", 0.0)
     snapshot.setdefault("wind_direction", 0)
     snapshot.setdefault("outdoor_temp", None)
     snapshot.setdefault("insolar", None)
-    return snapshot, latest_ts
+
+    latest_ts_iso = (
+        datetime.fromtimestamp(latest_ts_epoch, _JST).isoformat(timespec="seconds")
+        if latest_ts_epoch else None
+    )
+    return snapshot, latest_ts_iso
 
 
 # ══════════════════════════════════════════════
@@ -255,7 +264,10 @@ def save_active_state(path: Path, active: set[str]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="replay_driver")
-    p.add_argument("--sensor-db", required=True, help="sensor_log.db path")
+    p.add_argument("--sensor-db", required=True,
+                   help="agriha_history.db path (Pi4 /home/pi/agriha_history.db)")
+    p.add_argument("--house", default="1",
+                   help="対象ハウス ID (agriha/{house}/sensor/... を読む)")
     p.add_argument("--automations", required=True, help="automations.yaml path")
     p.add_argument("--config", required=True, help="rules.yaml path")
     p.add_argument("--crop", required=True, help="crop_irrigation.yaml path")
@@ -274,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
     automations = load_automations(automations_data.get("automations", []))
 
     sensors, snapshot_ts = read_latest_snapshot(
-        Path(args.sensor_db), max_age_min=args.max_age_min
+        Path(args.sensor_db), house_id=args.house, max_age_min=args.max_age_min
     )
 
     active_path = Path(args.active_state) if args.active_state else None

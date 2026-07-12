@@ -1,6 +1,7 @@
 """tools/replay_driver.py の pytest.
 
-sensor_log.db 読取, primitive stub, entry shape の 3 レイヤをテスト。
+agriha_history.db 読取, primitive stub, entry shape の 3 レイヤをテスト。
+(旧 sensor_log.db スキーマは 2026-07-12 廃止)
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ import importlib.util
 import json
 import sqlite3
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -25,73 +27,126 @@ _spec.loader.exec_module(rd)
 _JST = ZoneInfo("Asia/Tokyo")
 
 
-def _write_sensor_db(path: Path, rows: list[tuple[str, str, str, float]]) -> None:
+def _write_history_db(
+    path: Path,
+    series: list[tuple[str, str]],  # (key, unit)
+    samples: list[tuple[str, int, float]],  # (key, ts_epoch, value)
+) -> None:
+    """agriha_history.db 相当を作る (series + samples)。"""
     conn = sqlite3.connect(path)
     conn.executescript(
         """
-        CREATE TABLE sensor_log (
-            timestamp TEXT NOT NULL,
-            source    TEXT NOT NULL,
-            metric    TEXT NOT NULL,
-            value     REAL NOT NULL
-        )
+        CREATE TABLE series(id INTEGER PRIMARY KEY, key TEXT UNIQUE, unit TEXT);
+        CREATE TABLE samples(sid INTEGER, ts INTEGER, value REAL);
+        CREATE INDEX ix_samples ON samples(sid, ts);
         """
     )
+    sid_map: dict[str, int] = {}
+    for key, unit in series:
+        cur = conn.execute("INSERT INTO series(key, unit) VALUES(?,?)", (key, unit))
+        sid_map[key] = cur.lastrowid
     conn.executemany(
-        "INSERT INTO sensor_log(timestamp, source, metric, value) VALUES (?,?,?,?)",
-        rows,
+        "INSERT INTO samples(sid, ts, value) VALUES(?,?,?)",
+        [(sid_map[k], ts, v) for (k, ts, v) in samples],
     )
     conn.commit()
     conn.close()
 
 
+# ── build_metric_map ────────────────────────────────
+
+def test_metric_map_house_templated():
+    m = rd.build_metric_map("2")
+    assert m["agriha/2/sensor/InAirTemp"] == "indoor_temp"
+    assert m["agriha/2/sensor/InAirCO2"] == "indoor_co2"
+    # farm 共通は house に依存しない
+    assert m["agriha/farm/weather/WWindSpeed"] == "wind_speed"
+
+
 # ── read_latest_snapshot ────────────────────────────
 
-def test_read_latest_snapshot_picks_max_ts_per_metric(tmp_path):
-    now = datetime.now(_JST)
-    ts_old = (now - timedelta(minutes=30)).replace(microsecond=0).isoformat(timespec="seconds").replace("+09:00","")
-    ts_new = (now - timedelta(minutes=5)).replace(microsecond=0).isoformat(timespec="seconds").replace("+09:00","")
-    db = tmp_path / "s.db"
-    _write_sensor_db(db, [
-        (ts_old, "ccm", "temp_inside", 20.0),
-        (ts_new, "ccm", "temp_inside", 22.5),  # newer wins
-        (ts_new, "ccm", "humidity", 80.0),
-        (ts_new, "ccm", "co2", 400.0),
-    ])
-    snapshot, latest_ts = rd.read_latest_snapshot(db)
-    assert snapshot["indoor_temp"] == 22.5
+def test_read_latest_snapshot_picks_max_ts_per_topic(tmp_path):
+    now = int(time.time())
+    db = tmp_path / "h.db"
+    _write_history_db(
+        db,
+        series=[
+            ("agriha/1/sensor/InAirTemp", "C"),
+            ("agriha/1/sensor/InAirHumid", "%"),
+            ("agriha/1/sensor/InAirCO2", "ppm"),
+            ("agriha/farm/weather/WWindSpeed", "m s-1"),
+        ],
+        samples=[
+            ("agriha/1/sensor/InAirTemp", now - 1800, 20.0),  # 30 分前 (old)
+            ("agriha/1/sensor/InAirTemp", now - 300, 22.5),   # 5 分前 (new)
+            ("agriha/1/sensor/InAirHumid", now - 300, 80.0),
+            ("agriha/1/sensor/InAirCO2",  now - 300, 400.0),
+            ("agriha/farm/weather/WWindSpeed", now - 300, 3.5),
+        ],
+    )
+    snapshot, latest_ts = rd.read_latest_snapshot(db, house_id="1")
+    assert snapshot["indoor_temp"] == 22.5     # 新しい方が勝つ
     assert snapshot["indoor_humidity"] == 80.0
     assert snapshot["indoor_co2"] == 400.0
-    # 欠損は 0 埋め (rainfall/wind) / None (outdoor/insolar)
+    assert snapshot["wind_speed"] == 3.5       # farm 共通も拾える
+    # 欠損 defaults
     assert snapshot["rainfall"] == 0.0
-    assert snapshot["wind_speed"] == 0.0
     assert snapshot["outdoor_temp"] is None
-    assert snapshot["insolar"] is None
-    assert latest_ts == ts_new
+    assert latest_ts is not None
+    assert "+09:00" in latest_ts
 
 
 def test_read_latest_snapshot_drops_stale(tmp_path):
-    now = datetime.now(_JST)
-    ts_stale = (now - timedelta(hours=3)).replace(microsecond=0).isoformat(timespec="seconds").replace("+09:00","")
-    db = tmp_path / "s.db"
-    _write_sensor_db(db, [
-        (ts_stale, "ccm", "temp_inside", 20.0),
-    ])
-    snapshot, _ = rd.read_latest_snapshot(db, max_age_min=60)
-    assert "indoor_temp" not in snapshot  # 3h > 60min → skip
+    now = int(time.time())
+    db = tmp_path / "h.db"
+    _write_history_db(
+        db,
+        series=[("agriha/1/sensor/InAirTemp", "C")],
+        samples=[("agriha/1/sensor/InAirTemp", now - 3 * 3600, 20.0)],  # 3h old
+    )
+    snapshot, _ = rd.read_latest_snapshot(db, house_id="1", max_age_min=60)
+    assert "indoor_temp" not in snapshot
 
 
-def test_read_latest_snapshot_ignores_unknown_metric(tmp_path):
-    now = datetime.now(_JST)
-    ts = (now - timedelta(minutes=1)).replace(microsecond=0).isoformat(timespec="seconds").replace("+09:00","")
-    db = tmp_path / "s.db"
-    _write_sensor_db(db, [
-        (ts, "ccm", "temp_inside", 21.0),
-        (ts, "ccm", "unknown_metric", 99.0),
-    ])
-    snapshot, _ = rd.read_latest_snapshot(db)
+def test_read_latest_snapshot_house_isolation(tmp_path):
+    """house=1 なら h2 のセンサは拾わない。"""
+    now = int(time.time())
+    db = tmp_path / "h.db"
+    _write_history_db(
+        db,
+        series=[
+            ("agriha/1/sensor/InAirTemp", "C"),
+            ("agriha/2/sensor/InAirTemp", "C"),
+        ],
+        samples=[
+            ("agriha/1/sensor/InAirTemp", now - 60, 21.0),
+            ("agriha/2/sensor/InAirTemp", now - 60, 25.0),
+        ],
+    )
+    s1, _ = rd.read_latest_snapshot(db, house_id="1")
+    s2, _ = rd.read_latest_snapshot(db, house_id="2")
+    assert s1["indoor_temp"] == 21.0
+    assert s2["indoor_temp"] == 25.0
+
+
+def test_read_latest_snapshot_ignores_unmapped_series(tmp_path):
+    now = int(time.time())
+    db = tmp_path / "h.db"
+    _write_history_db(
+        db,
+        series=[
+            ("agriha/1/sensor/InAirTemp", "C"),
+            ("agriha/2/actuator/VenSdWinopr", ""),  # DSL 対象外
+        ],
+        samples=[
+            ("agriha/1/sensor/InAirTemp", now - 60, 21.0),
+            ("agriha/2/actuator/VenSdWinopr", now - 60, 42.0),
+        ],
+    )
+    snapshot, _ = rd.read_latest_snapshot(db, house_id="1")
     assert snapshot["indoor_temp"] == 21.0
-    assert "unknown_metric" not in snapshot
+    # actuator 系は snapshot に載らない (defaults 除く)
+    assert "VenSdWinopr" not in snapshot
 
 
 # ── time-of-day period ──────────────────────────────
@@ -174,19 +229,27 @@ def test_cli_e2e_writes_replay_entry(tmp_path):
     rules_yaml = repo / "config" / "rules.yaml"
     crop_yaml  = repo / "config" / "crop_irrigation.yaml"
 
-    # 手作り sensor_log.db: 湿度スパイクで P4 発火する状況
-    now = datetime.now(_JST)
-    ts = (now - timedelta(minutes=2)).replace(microsecond=0).isoformat(timespec="seconds").replace("+09:00","")
-    db = tmp_path / "s.db"
-    _write_sensor_db(db, [
-        (ts, "ccm", "temp_inside", 26.0),
-        (ts, "ccm", "humidity", 92.0),   # ≥85 → humidity_vent 発火
-        (ts, "ccm", "co2", 420.0),       # >350 → co2 系は発火せず
-    ])
+    # 手作り agriha_history.db: 湿度スパイクで P4 発火する状況 (house=1)
+    now = int(time.time())
+    db = tmp_path / "h.db"
+    _write_history_db(
+        db,
+        series=[
+            ("agriha/1/sensor/InAirTemp", "C"),
+            ("agriha/1/sensor/InAirHumid", "%"),
+            ("agriha/1/sensor/InAirCO2",  "ppm"),
+        ],
+        samples=[
+            ("agriha/1/sensor/InAirTemp", now - 120, 26.0),
+            ("agriha/1/sensor/InAirHumid", now - 120, 92.0),  # ≥85 → humidity_vent
+            ("agriha/1/sensor/InAirCO2",  now - 120, 420.0),  # >350 → co2 系不発
+        ],
+    )
 
     log_out = tmp_path / "log.jsonl"
     rc = rd.main([
         "--sensor-db", str(db),
+        "--house", "1",
         "--automations", str(autos_yaml),
         "--config", str(rules_yaml),
         "--crop", str(crop_yaml),
@@ -197,5 +260,5 @@ def test_cli_e2e_writes_replay_entry(tmp_path):
     assert len(lines) == 1
     entry = json.loads(lines[0])
     assert entry["mode"] == "replay"
-    assert entry["interp"]["target_opening_pct"] >= 30  # humidity_vent の 30 が floor
+    assert entry["interp"]["target_opening_pct"] >= 30
     assert "humidity_vent" in entry["interp"]["triggered"]
