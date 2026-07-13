@@ -907,11 +907,11 @@ def run(
             )
 
             # Step 5.5: shadow-run (env AGRIHA_SHADOW_RUN=1 のときのみ)
-            # DSL interpreter を並行実行して action 一致を verify。
+            # ogms-dsl interpreter を並行実行して action 一致を verify。
             # read-only + log-only、失敗しても本流に影響しない。
             if os.environ.get("AGRIHA_SHADOW_RUN") == "1":
                 try:
-                    from agriha.control.automation_shadow import run_shadow
+                    from ogms_dsl.shadow import run_shadow
                     run_shadow(
                         cfg=cfg,
                         crop_cfg=crop_cfg,
@@ -920,6 +920,9 @@ def run(
                         temp_history=result["temp_history"],
                         live_result=result,
                         tide_forecast=tide_forecast,
+                        schema_path="/etc/agriha/automations.yaml",
+                        active_state_path="/var/lib/agriha/shadow_active_state.json",
+                        log_path="/var/lib/agriha/shadow_log.jsonl",
                     )
                 except Exception as e:
                     logger.warning("shadow_run hook failed (non-fatal): %s", e)

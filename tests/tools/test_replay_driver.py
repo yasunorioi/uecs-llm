@@ -199,7 +199,7 @@ def test_window_step_lookup_linear_interpolation():
 # ── entry shape ─────────────────────────────────────
 
 def test_build_entry_has_replay_mode_and_null_live(tmp_path):
-    from agriha.control.automation_interpreter import Interpreter, load_automations
+    from ogms_dsl.interpreter import Interpreter, load_automations
     autos = load_automations([
         {"id": "hum", "priority": 60,
          "trigger": "indoor_humidity >= 85",

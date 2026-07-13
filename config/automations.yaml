@@ -1,11 +1,11 @@
 # automations.yaml — P1〜P7 の DSL 化スキーマ (feature/dsl-interpreter)
 #
 # `rule_engine.py` から shadow-run (env AGRIHA_SHADOW_RUN=1) で読まれ、
-# `automation_interpreter` により並行評価される。実 relay 制御は
+# ogms-dsl の `Interpreter` により並行評価される。実 relay 制御は
 # `evaluate_rules()` が担当し、interpreter は read-only + log-only。
 #
-# デプロイ先: /etc/agriha/automations.yaml (env AUTOMATIONS_SCHEMA_PATH で上書き可)
-# 設計書: docs/dsl_prototype.md
+# デプロイ先: /etc/agriha/automations.yaml (rule_engine.py の run_shadow 呼び出しで明示指定)
+# 設計書: ogms-DSL/docs/spec.md (private repo)
 
 automations:
   # ═══════════════════════════════════════════

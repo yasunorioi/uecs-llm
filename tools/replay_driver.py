@@ -8,7 +8,7 @@ interpreter vs evaluate_rules の A/B は成立しない。代わりにこの dr
 エントリは `shadow_report.py` が読む jsonl フォーマットで、mode="replay" を立てる。
 Report 側は shadow モードとは別 lane で集計する。
 
-依存: 標準ライブラリ + pyyaml + automation_interpreter (同ディレクトリに配置)。
+依存: 標準ライブラリ + pyyaml + ogms-dsl (pip install / ~/ogms-DSL editable / rsync deploy)。
 """
 
 from __future__ import annotations
@@ -24,27 +24,20 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
-# 配置想定は 2 通り:
-#   1) yasu-hp: automation_interpreter.py をこのファイルと同ディレクトリに配置
-#   2) dev (uecs-llm repo): src/agriha/control/automation_interpreter.py を参照
+# ogms-dsl 探索順:
+#   1) 通常 import (pip install 済 or PYTHONPATH に含まれる場合)
+#   2) yasu-hp deploy: ~/ogms-DSL/src を rsync で置いておく
+#   3) dev (uecs-llm repo): sibling の ~/ogms-DSL/src を探す
 _HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(_HERE))
-_REPO_SRC = _HERE.parent / "src"
-if _REPO_SRC.is_dir():
-    sys.path.insert(0, str(_REPO_SRC))
+for _cand in (Path.home() / "ogms-DSL" / "src", _HERE.parent.parent / "ogms-DSL" / "src"):
+    if _cand.is_dir() and str(_cand) not in sys.path:
+        sys.path.insert(0, str(_cand))
 
-try:
-    from automation_interpreter import (  # noqa: E402
-        Interpreter,
-        Result,
-        load_automations,
-    )
-except ImportError:
-    from agriha.control.automation_interpreter import (  # type: ignore  # noqa: E402
-        Interpreter,
-        Result,
-        load_automations,
-    )
+from ogms_dsl.interpreter import (  # noqa: E402
+    Interpreter,
+    Result,
+    load_automations,
+)
 
 _JST = ZoneInfo("Asia/Tokyo")
 

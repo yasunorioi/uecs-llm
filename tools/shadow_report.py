@@ -1,6 +1,6 @@
 """shadow_report.py — DSL shadow-run 差分ログの集計/表示ツール.
 
-`automation_shadow.log_shadow_result` が吐く jsonl (通常
+ogms-dsl の `shadow.log_shadow_result` が吐く jsonl (通常
 `/var/lib/agriha/shadow_log.jsonl`) を読み、interpreter と evaluate_rules の
 action 一致率・divergence の傾向を集計する。
 

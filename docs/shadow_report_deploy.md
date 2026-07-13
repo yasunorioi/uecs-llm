@@ -26,7 +26,7 @@ trace のみを取り、日中/夜間/湿度スパイクでの発火傾向を眺
 ## 配置状態 (2026-07-11 現在)
 
 - `~yasu/shadow-report/` に `shadow_report.py`, `replay_driver.py`,
-  `automation_interpreter.py`, `tick.sh`, `config/*.yaml`
+  `tick.sh`, `config/*.yaml` (interpreter は ogms-DSL を rsync deploy か pip install)
 - `/srv/shadow/` に `sensor_log.db`, `log.jsonl`, `report.html`, `active_state.json`
 - nginx `/etc/nginx/sites-enabled/docs` に `location /shadow/`
 - user crontab (yasu@yasu-hp): `*/5 * * * * /home/yasu/shadow-report/tick.sh`
