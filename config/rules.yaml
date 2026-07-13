@@ -65,6 +65,9 @@ rain:
   threshold_mm_h: 0.5              # 降雨閾値 (mm/h)
   resume_delay_min: 30             # 降雨停止後の再開猶予 (分)
 
+tide:
+  humidity_prevent_threshold: 80   # TiDE 1h 湿度予測がこれを超えたら先行換気 (旧 module 定数 TIDE_HUMIDITY_PREVENT_THRESHOLD)
+
 irrigation:
   channel: 4                       # 灌水電磁弁チャンネル
   crop_config_path: "/etc/agriha/crop_irrigation.yaml"

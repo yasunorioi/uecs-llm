@@ -28,19 +28,20 @@ automations:
 
   # ═══════════════════════════════════════════
   # Priority 3: 急昇温 → 60% 強制換気
+  # rise_rate() は temp_history 不足時に None を返すので明示 gate
   # ═══════════════════════════════════════════
   - id: rapid_rise_vent
     priority: 80
-    trigger: rise_rate() > config.morning_ventilation.max_rise_rate_per_hour
+    trigger: rise_rate() is not None and rise_rate() > config.morning_ventilation.max_rise_rate_per_hour
     action: {kind: set_min_opening, value: 60}
 
   # ═══════════════════════════════════════════
   # Priority 3.5: TiDE 1h 湿度予測 → 先行換気 30%
-  # 副次: TIDE_HUMIDITY_PREVENT_THRESHOLD(現状モジュール定数)を config に昇格
+  # tide_forecast_humidity_1h() は TiDE モデル未 load 時に None、閾値は rules.yaml
   # ═══════════════════════════════════════════
   - id: tide_preemptive_vent
     priority: 75
-    trigger: tide_forecast_humidity_1h() > config.tide.humidity_prevent_threshold
+    trigger: tide_forecast_humidity_1h() is not None and tide_forecast_humidity_1h() > config.tide.humidity_prevent_threshold
     action: {kind: set_min_opening, value: 30}
 
   # ═══════════════════════════════════════════
@@ -97,9 +98,6 @@ automations:
       set_timestamp: [solar_acc.last_irrigation_at]
 
 # ═══════════════════════════════════════════
-# 補足: config.tide.humidity_prevent_threshold は rules.yaml に未追加。
-# 追加提案 (別 PR で):
-#   tide:
-#     humidity_prevent_threshold: 80
-# 未追加のままだと tide_preemptive_vent 評価時に AttributeError → strict=False で skip される。
+# 補足: config.tide.humidity_prevent_threshold は rules.yaml で tide: セクションに追加済。
+# 未 load 時の tide_forecast_humidity_1h() None 返却は上記 trigger で明示 gate。
 # ═══════════════════════════════════════════
