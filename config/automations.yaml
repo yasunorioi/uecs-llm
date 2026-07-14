@@ -7,9 +7,40 @@
 # デプロイ先: /etc/agriha/automations.yaml (rule_engine.py の run_shadow 呼び出しで明示指定)
 # 設計書: ogms-DSL/docs/spec.md (private repo)
 
+# ═══════════════════════════════════════════
+# fault tier: health rule 宣言 (ogms-DSL v0.3.0+)
+# ═══════════════════════════════════════════
+# per-source 健全性を判定、requires_healthy で normal tier を gate。
+# stuck_over は内部 accumulator (v0.6.0+)、gates.json 永続化 (v0.5.0+)。
+# recovery_after=5m で chatter 防止。
+health:
+  indoor_humidity:
+    healthy: indoor_humidity is not None and 0 < indoor_humidity < 100
+    stuck_over: "30m"
+    recovery_after: "5m"
+
+  indoor_temp:
+    healthy: indoor_temp is not None and -20 < indoor_temp < 60
+    stuck_over: "30m"
+    recovery_after: "5m"
+
+  indoor_co2:
+    healthy: indoor_co2 is not None and 200 < indoor_co2 < 5000
+    stuck_over: "30m"
+    recovery_after: "5m"
+
+  outdoor_temp:
+    healthy: outdoor_temp is not None and -30 < outdoor_temp < 60
+    stuck_over: "1h"
+    recovery_after: "5m"
+
+
 automations:
   # ═══════════════════════════════════════════
   # Priority 1: 降雨 → 全窓閉 (hard_stop windows)
+  # 意図的に requires_healthy 省略: rain sensor 死んでも fail-safe せず fire したいが、
+  # rainfall センサは MQTT 起点で欠損時 None なので trigger 評価は None > threshold で False、
+  # 発火しない。将来 tier=safety に格上げすれば fail-safe fire される
   # ═══════════════════════════════════════════
   - id: rain_close_all
     priority: 100
@@ -47,9 +78,11 @@ automations:
   # ═══════════════════════════════════════════
   # Priority 4: 湿度換気 (release で真ヒステリシス、
   # evaluate_rules に未実装だった gap を interpreter で補完)
+  # requires_healthy: RH センサ張り付き/欠損時は skip (現地 RH=100 誤発火対応)
   # ═══════════════════════════════════════════
   - id: humidity_vent
     priority: 60
+    requires_healthy: [indoor_humidity]
     trigger: indoor_humidity >= config.humidity.ventilation_start   # 85
     release: indoor_humidity <= config.humidity.ventilation_stop    # 75
     action: {kind: set_min_opening, value: 30}
@@ -59,6 +92,7 @@ automations:
   # ═══════════════════════════════════════════
   - id: co2_critical_vent
     priority: 55
+    requires_healthy: [indoor_co2]
     trigger: indoor_co2 <= config.co2.critical_low   # 300
     action: {kind: set_min_opening, value: 60}
 
@@ -67,6 +101,7 @@ automations:
   # ═══════════════════════════════════════════
   - id: co2_vent
     priority: 50
+    requires_healthy: [indoor_co2]
     trigger: indoor_co2 <= config.co2.ventilation_trigger   # 350
     action: {kind: set_min_opening, value: 30}
 
@@ -74,9 +109,11 @@ automations:
   # Priority 6: 日中温度制御
   # 夜間ブランチと寒冷ブランチは default opening=0 と max compose で自然消滅、
   # 日中過温だけを active automation として書く
+  # requires_healthy: indoor_temp + outdoor_temp (window_step_lookup で使う)
   # ═══════════════════════════════════════════
   - id: daytime_temp_too_warm_vent
     priority: 40
+    requires_healthy: [indoor_temp, outdoor_temp]
     trigger: not is_night() and indoor_temp > schedule_target_temp()
     action:
       kind: set_min_opening

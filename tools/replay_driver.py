@@ -37,7 +37,15 @@ from ogms_dsl.interpreter import (  # noqa: E402
     Interpreter,
     Result,
     load_automations,
+    load_health,
 )
+from ogms_dsl.gates import (  # noqa: E402
+    gates_to_state,
+    load_gates,
+    merge_result,
+    save_gates,
+)
+import time  # noqa: E402
 
 _JST = ZoneInfo("Asia/Tokyo")
 
@@ -221,7 +229,11 @@ def build_entry(
             "close_all_windows": result.close_all_windows,
             "close_by_wind_direction": result.close_by_wind_direction,
             "relay_pulses": result.relay_pulses,
+            "pulses": result.pulses,
             "skipped": result.skipped,
+            "skipped_for_health": result.skipped_for_health,
+            "health": result.health,
+            "alerts": result.alerts,
             "active_after": sorted(result.active_after),
         },
         "live": None,
@@ -267,6 +279,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", required=True, help="shadow_log.jsonl (append)")
     p.add_argument("--active-state", default=None,
                    help="active_state.json for hysteresis persistence")
+    p.add_argument("--gates", default=None,
+                   help="gates.json path for health/score/cooldown state persistence (v0.7 fault tier)")
     p.add_argument("--max-age-min", type=int, default=60,
                    help="センサ値の許容 age (min) — 超過は stale として drop")
     p.add_argument("--strict", action="store_true",
@@ -277,6 +291,7 @@ def main(argv: list[str] | None = None) -> int:
     crop_cfg = load_yaml(Path(args.crop))
     automations_data = load_yaml(Path(args.automations))
     automations = load_automations(automations_data.get("automations", []))
+    health_rules = load_health(automations_data.get("health"))
 
     sensors, snapshot_ts = read_latest_snapshot(
         Path(args.sensor_db), house_id=args.house, max_age_min=args.max_age_min
@@ -285,19 +300,29 @@ def main(argv: list[str] | None = None) -> int:
     active_path = Path(args.active_state) if args.active_state else None
     active_before = load_active_state(active_path) if active_path else set()
 
-    interp = Interpreter(automations)
+    # gates.json: 前 tick の health / score / cooldown / stuck_accumulator state 引継ぎ
+    gates_path = args.gates
+    gates = load_gates(gates_path) if gates_path else {}
+    state = gates_to_state(gates) if gates else {}
+
+    now = time.time()
+    interp = Interpreter(automations, health_rules=health_rules)
     result = interp.evaluate(
         sensors=sensors,
-        state={},  # replay: state 副作用は無視 (jsonl に載せて後で分析)
+        state=state,
         config=cfg,
         crop_config=crop_cfg,
         primitives=build_simple_primitives(cfg, crop_cfg),
         active_before=active_before,
+        now_ts=now,
         strict=args.strict,
     )
 
     if active_path:
         save_active_state(active_path, result.active_after)
+    if gates_path:
+        new_gates = merge_result(gates, result, now_ts=now)
+        save_gates(new_gates, gates_path)
 
     entry = build_entry(result, sensors, snapshot_ts)
     out = Path(args.out)
@@ -306,10 +331,12 @@ def main(argv: list[str] | None = None) -> int:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     # stderr に 1 行 summary (cron ログ用)
+    unhealthy = [n for n, s in result.health.items() if s == "unhealthy"]
     print(
         f"replay: sensors={list(sensors.keys())} "
         f"opening={result.target_opening_pct}% "
-        f"triggered={result.triggered} skipped={len(result.skipped)}",
+        f"triggered={result.triggered} skipped={len(result.skipped)} "
+        f"unhealthy={unhealthy} skipped_for_health={len(result.skipped_for_health)}",
         file=sys.stderr,
     )
     return 0
